@@ -1,25 +1,25 @@
 # AIDE: AI Development & Execution
 
-> Minimum best practice for human-AI collaboration in software development.
+> Minimum best practice workflow for human-AI collaboration on high-impact work.
 
-**AIDE** stands for **AI Instruction Definition & Execution** - a lightweight framework that keeps humans in control while leveraging AI capabilities for code development.
+**AIDE** stands for **AI Instruction Definition & Execution** - a lightweight framework that keeps humans in control while leveraging AI capabilities for complex, high-stakes tasks.
 
 ---
 
 ## Why AIDE?
 
-**The Problem**: Agentic AI is great for research and analysis, but code has severe impact. One bad change can cascade into broken production systems.
+**The Problem**: Agentic AI is great for research and analysis, but high-impact work requires careful control. One bad decision in code, infrastructure, legal docs, or financial analysis can cascade into serious consequences.
 
-**The Solution**: AIDE uses approval gates and sequential execution - slower than autonomous AI, but predictable, auditable, and safe for high-impact work.
+**The Solution**: AIDE uses approval gates and sequential execution - slower than autonomous AI, but predictable, auditable, and safe for work that matters.
 
 ### AIDE vs. Agentic AI
 
 | Approach | Best For | Risk Level |
 |----------|----------|------------|
-| **Agentic AI** | Research, data analysis, content generation | Low impact, reversible |
-| **AIDE** | Code development, infrastructure, production systems | High impact, careful control needed |
+| **Agentic AI** | Research, data analysis, content generation, brainstorming | Low impact, reversible |
+| **AIDE** | Code, infrastructure, legal docs, financial analysis, compliance, medical | High impact, careful control needed |
 
-**Trade-off**: AIDE sacrifices speed for safety and transparency. For code, this is a feature, not a bug.
+**Trade-off**: AIDE sacrifices speed for safety and transparency. For high-stakes work, this is a feature, not a bug.
 
 ---
 
@@ -132,9 +132,39 @@ your-project/
 
 ---
 
-## Real Example
+## Real Examples
 
-See [AIDE/DEMO_TASKS.md](AIDE/DEMO_TASKS.md)
+### Example 1: Software Development
+
+**Task**: Upgrade Python version for backend (v2.5.0)
+
+**What happened**:
+1. **Human**: "Start task 1: Upgrade Python"
+2. **AI**: "I'll check dependencies on Python 3.13 and 3.14..."
+3. **AI**: "All deps work on 3.13. Recommend 3.13 (stable) over 3.14 (alpha). 15-20% faster. Proceed?"
+4. **Human**: "Proceed with 3.13"
+5. **AI**: *[Updates Dockerfiles, pyproject.toml, tests app]* "✅ Complete. Python 3.13.7 installed, all tests passing."
+6. **Human**: "Confirmed. Next task."
+
+**Result**: 5 tasks completed, zero breaking changes, complete audit trail, human in control throughout.
+
+### Example 2: Other High-Impact Use Cases
+
+**Legal Contract Review**: AI analyzes contract → Flags risky clauses → Proposes redlines → Human approves each change
+
+**Financial Model Updates**: AI updates spreadsheet formulas → Explains assumptions → Human verifies before publishing
+
+**Infrastructure Changes**: AI proposes AWS config → Explains cost/security impact → Human approves before applying
+
+**Compliance Documentation**: AI drafts policy updates → Cites regulations → Human reviews before official release
+
+**Common pattern**: AI does analysis/drafting, human makes final decisions on anything with real-world impact.
+
+---
+
+## Task Examples
+
+See [DEMO_TASKS.md](DEMO_TASKS.md) for realistic task formats (including common human mistakes that AI should catch)
 
 ---
 
@@ -142,8 +172,7 @@ See [AIDE/DEMO_TASKS.md](AIDE/DEMO_TASKS.md)
 
 ### vs. Other AI Frameworks
 
-TODO: make update this description based on three laws
-Most frameworks assume "more autonomy = better." AIDE recognizes that for coding or other scentive works, human control is essential, challenging human is the second.
+Most frameworks assume "more autonomy = better." AIDE recognizes that for high-impact work, human control is essential.
 
 **AIDE encourages AI to:**
 

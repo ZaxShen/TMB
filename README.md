@@ -43,7 +43,7 @@ git clone https://github.com/ZaxShen/AIDE.git
 
 ### 2. Create Your Tasks
 
-Copy required part from `AIDE/DEMO_TASKS.md` to `AIDE/TASKS.md` and write your tasks, for example:
+Copy required part from [DEMO_TASKS.md](DEMO_TASKS.md) to [TASKS.md](TASKS.md) and write your tasks, for example:
 
 ```markdown
 ## v0.0.1
@@ -81,7 +81,7 @@ AIDE/AI_COLLABORATION_GUIDE.md
 Tell your AI assistant:
 
 ```
-"Read AIDE/AIDE.md, and AIDE/TASKS.md"
+"Read [AIDE/AIDE.md](AIDE.md), then start task 1 from [AIDE/TASKS.md](TASKS.md)"
 ```
 
 **What happens:**
@@ -98,7 +98,7 @@ Tell your AI assistant:
 
 ## The Three Laws of AIDE
 
-AIDE is built on three core principles, see more details at `AIDE/AIDE.md`:
+AIDE is built on three core principles (see [AIDE.md](AIDE.md) for full details):
 
 ### 1. Communication Before Action
 
@@ -134,7 +134,7 @@ your-project/
 
 ## Real Example
 
-See `AIDE/DEMO_TASKS.md`
+See [AIDE/DEMO_TASKS.md](AIDE/DEMO_TASKS.md)
 
 ---
 
@@ -184,15 +184,16 @@ See [AIDE.md](AIDE.md) for full technical specification.
 
 ### With Other Tools
 
-**AIDE + GitHub Copilot AGENTS.md**: Use AGENTS.md for project context, AIDE for task workflow
+**AIDE + GitHub Copilot [AGENTS.md](https://github.blog/news-insights/product-news/github-copilot-workspace/)**: Use AGENTS.md for project context, AIDE for task workflow
 
-**AIDE + Cursor .cursorrules**: Use .cursorrules for code style rules, AIDE for project tasks
+**AIDE + Cursor [.cursorrules](https://docs.cursor.com/context/rules-for-ai)**: Use .cursorrules for code style rules, AIDE for project tasks
 
 **AIDE + Your IDE**: Works with any AI assistant (Claude Code, Cursor, GitHub Copilot, ChatGPT, etc.)
 
 ### Multiple AI Assistants
 
 Each AI gets its own log:
+
 - `logs/v0.0.1_claude.log`
 - `logs/v0.0.1_gpt4.log`
 
@@ -206,10 +207,10 @@ Compare approaches, learn from different AI reasoning styles.
 → Remind: "One task at a time, wait for approval before proceeding"
 
 **"AI isn't challenging my ideas"**
-→ Point to AIDE.md First Law: "Never blindly agree - critical thinking required"
+→ Point to [AIDE.md First Law](AIDE.md#first-law-communication-before-action): "Never blindly agree - critical thinking required"
 
 **"AI isn't logging"**
-→ Check AIDE/logs/ directory exists, remind AI to follow logging format in AIDE.md
+→ Check AIDE/logs/ directory exists, remind AI to follow logging format in [AIDE.md](AIDE.md#log-structure)
 
 **"I want faster iteration"**
 → Batch approve subtasks: "Complete steps 1-3 then report" - but keep approval gates between major tasks

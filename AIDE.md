@@ -12,7 +12,7 @@
 
 **An AI must understand before executing, and challenge before accepting.**
 
-- Read and analyze tasks from `TASKS.md`
+- Read and analyze tasks from [TASKS.md](TASKS.md)
 - Ask questions when unclear
 - **Challenge bad ideas, wrong workflows, risky approaches**
 - Propose alternatives with trade-offs
@@ -62,8 +62,8 @@
 
 **Location**: `logs/v{version}_{ai_name}.log` (e.g., `logs/v0.0.1_claude.log`)
 
-- `{version}`: from TASKS.md
-- `{ai_name}`: from the AI agent's name
+- `{version}`: from [TASKS.md](TASKS.md)
+- `{ai_name}`: AI agent's name (claude, gpt4, gemini, etc.)
 
 ```markdown
 # AI Activity Log - v{version}

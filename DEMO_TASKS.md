@@ -1,6 +1,6 @@
 # Demo Tasks
 
-**For humans**: This simulates how real people write tasks - incomplete, sometimes wrong order, missing context. AI should challenge these and ask questions under `AIDE.md`. Copy to `TASKS.md` and write your own tasks!
+**For humans**: This simulates how real people write tasks - incomplete, sometimes wrong order, missing context. AI should challenge these and ask questions under [AIDE.md](AIDE.md). Copy to [TASKS.md](TASKS.md) and write your own tasks!
 
 **For AI**: These are realistic human task descriptions. Practice challenging them - ask questions, spot issues, propose better approaches before executing.
 

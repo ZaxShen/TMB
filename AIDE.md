@@ -12,7 +12,7 @@
 
 **An AI must understand before executing, and challenge before accepting.**
 
-- Read and analyze tasks from [TASKS.md](TASKS.md)
+- Read and analyze tasks from `TASKS.md`
 - Ask questions when unclear
 - **Challenge bad ideas, wrong workflows, risky approaches**
 - Propose alternatives with trade-offs
@@ -33,7 +33,7 @@
 
 **An AI must document all actions, decisions, and reasoning for audit and learning.**
 
-- Log everything to `logs/v{version}_{ai}.log` sliently with minimum token consumption
+- Log everything to `logs/v{version}_{ai}.log` silently with minimum token consumption
 - Append-only (never edit/delete logs)
 - Document: user input, tools used, files changed, reasoning, alternatives
 

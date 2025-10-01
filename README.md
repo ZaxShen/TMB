@@ -28,13 +28,21 @@
 ### 1. Get AIDE
 
 **Option A: Git Submodule** (Recommended)
+
 ```bash
+# Init
 cd your-project/
 git submodule add https://github.com/ZaxShen/AIDE.git
 git submodule update --init --recursive
+
+# Pull
+cd your-project/AIDE
+git fetch
+git pull
 ```
 
 **Option B: Direct Copy**
+
 ```bash
 cd your-project/
 git clone https://github.com/ZaxShen/AIDE.git
@@ -43,14 +51,14 @@ git clone https://github.com/ZaxShen/AIDE.git
 
 ### 2. Create Your Tasks
 
-Copy required part from [DEMO_TASKS.md](DEMO_TASKS.md) to [TASKS.md](TASKS.md) and write your tasks, for example:
+Copy required part from [DEMO_TASKS.md](DEMO_TASKS.md) to `TASKS.md` and write your tasks, for example:
 
 ```markdown
 ## v0.0.1
 
 ### 1. Upgrade Python
 
-Evaluate the dependcies and see which latest Python version we can upgrade to for better performance.
+Evaluate the dependencies and see which latest Python version we can upgrade to for better performance.
 
 ### 2. Update README
 
@@ -166,6 +174,10 @@ your-project/
 
 See [DEMO_TASKS.md](DEMO_TASKS.md) for realistic task formats (including common human mistakes that AI should catch)
 
+**For humans**: This file simulates how real people write tasks - incomplete, sometimes wrong order, missing context. AI should challenge these and ask questions under [AIDE.md](AIDE.md). Copy to `TASKS.md` and write your own tasks!
+
+**For AI**: These are realistic human task descriptions. Practice challenging them - ask questions, spot issues, propose better approaches before executing.
+
 ---
 
 ## What Makes AIDE Different?
@@ -213,7 +225,7 @@ See [AIDE.md](AIDE.md) for full technical specification.
 
 ### With Other Tools
 
-**AIDE + GitHub Copilot [AGENTS.md](https://github.blog/news-insights/product-news/github-copilot-workspace/)**: Use AGENTS.md for project context, AIDE for task workflow
+**AIDE + GitHub Copilot AGENTS.md**: AGENTS.md describes your codebase architecture; AIDE manages task execution with approval gates
 
 **AIDE + Cursor [.cursorrules](https://docs.cursor.com/context/rules-for-ai)**: Use .cursorrules for code style rules, AIDE for project tasks
 
@@ -285,4 +297,4 @@ MIT License - See [LICENSE](LICENSE)
 - [AIDE.md](AIDE.md) - Technical specification for AI assistants
 - [DEMO_TASKS.md](DEMO_TASKS.md) - Example tasks showing good/bad formats
 - [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution guidelines
-- [logs/EXAMPLE_v1.0.0_claude.log](logs/EXAMPLE_v1.0.0_claude.log) - Sample activity log
+- [logs/EXAMPLE_v1.0.0_claude.log](logs/EXAMPLE_v0.0.1_claude.log) - Sample activity log

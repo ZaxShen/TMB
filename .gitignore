@@ -1,0 +1,20 @@
+# Logs are project-specific, don't commit to AIDE repo
+logs/*.log
+
+# User-specific tasks
+TASKS.md
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class

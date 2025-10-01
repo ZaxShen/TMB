@@ -1,8 +1,8 @@
-# AIDE: AI Development & Execution
+# AIDE: AI Direction & Execution
 
 > Minimum best practice workflow for human-AI collaboration on high-impact work.
 
-**AIDE** stands for **AI Instruction Definition & Execution** - a lightweight framework that keeps humans in control while leveraging AI capabilities for complex, high-stakes tasks.
+**AIDE** stands for **AI Direction & Execution** - a lightweight framework that keeps humans in control while leveraging AI capabilities for complex, high-stakes tasks.
 
 ---
 

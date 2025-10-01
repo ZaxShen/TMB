@@ -1,4 +1,4 @@
-# AIDE: AI Development & Execution
+# AIDE: AI Direction & Execution
 
 **Version**: 0.0.1
 **For**: AI Assistants

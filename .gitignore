@@ -1,9 +1,6 @@
 # Logs are project-specific, don't commit to AIDE repo
 logs/*.log
 
-# User-specific tasks
-TASKS.md
-
 # macOS
 .DS_Store
 
@@ -18,3 +15,4 @@ TASKS.md
 __pycache__/
 *.py[cod]
 *$py.class
+TASKS.md

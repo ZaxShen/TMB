@@ -1,8 +1,8 @@
-# Demo Tasks
+# Tasks
 
-**For humans**: This simulates how real people write tasks - incomplete, sometimes wrong order, missing context. AI should challenge these and ask questions under [AIDE.md](AIDE.md). Copy to [TASKS.md](TASKS.md) and write your own tasks!
+**For humans**: Read [README.md](README.md) first to understand how to use AIDE.
 
-**For AI**: These are realistic human task descriptions. Practice challenging them - ask questions, spot issues, propose better approaches before executing.
+**For AI**: You MUST read and obey all rules from [AIDE.md](AIDE.md) before starting any task below.
 
 ---
 
@@ -10,11 +10,11 @@
 
 ### 1. Upgrade Python
 
-Evaluate the dependcies and see which latest Python version we can upgrade to for better performance.
+Evaluate the dependencies and see which latest Python version we can upgrade to for better performance.
 
 ---
 
-### 2. Remove uncessary files and configurations
+### 2. Remove unnecessary files and configurations
 
 There are a bunch of .bak files and old stuff from when we used Conda. Delete them.
 

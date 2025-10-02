@@ -144,9 +144,10 @@ your-project/
 
 ### Example 1: Software Development
 
-**Task**: Upgrade Python version for backend (v2.5.0)
+**Task**: Upgrade Python version for backend (v1.0.0)
 
 **What happened**:
+
 1. **Human**: "Start task 1: Upgrade Python"
 2. **AI**: "I'll check dependencies on Python 3.13 and 3.14..."
 3. **AI**: "All deps work on 3.13. Recommend 3.13 (stable) over 3.14 (alpha). 15-20% faster. Proceed?"
@@ -158,15 +159,11 @@ your-project/
 
 ### Example 2: Other High-Impact Use Cases
 
-**Legal Contract Review**: AI analyzes contract → Flags risky clauses → Proposes redlines → Human approves each change
-
-**Financial Model Updates**: AI updates spreadsheet formulas → Explains assumptions → Human verifies before publishing
-
-**Infrastructure Changes**: AI proposes AWS config → Explains cost/security impact → Human approves before applying
-
-**Compliance Documentation**: AI drafts policy updates → Cites regulations → Human reviews before official release
-
-**Common pattern**: AI does analysis/drafting, human makes final decisions on anything with real-world impact.
+- **Legal Contract Review**: AI analyzes contract → Flags risky clauses → Proposes redlines → Human approves each change
+- **Financial Model Updates**: AI updates spreadsheet formulas → Explains assumptions → Human verifies before publishing
+- **Infrastructure Changes**: AI proposes AWS config → Explains cost/security impact → Human approves before applying
+- **Compliance Documentation**: AI drafts policy updates → Cites regulations → Human reviews before official release
+- **Common pattern**: AI does analysis/drafting, human makes final decisions on anything with real-world impact.
 
 ---
 
@@ -174,9 +171,8 @@ your-project/
 
 See [DEMO_TASKS.md](DEMO_TASKS.md) for realistic task formats (including common human mistakes that AI should catch)
 
-**For humans**: This file simulates how real people write tasks - incomplete, sometimes wrong order, missing context. AI should challenge these and ask questions under [AIDE.md](AIDE.md). Copy to `TASKS.md` and write your own tasks!
-
-**For AI**: These are realistic human task descriptions. Practice challenging them - ask questions, spot issues, propose better approaches before executing.
+- **For humans**: This file simulates how real people write tasks - incomplete, sometimes wrong order, missing context. AI should challenge these and ask questions under [AIDE.md](AIDE.md).
+- **For AI**: These are realistic human task descriptions. Practice challenging them - ask questions, spot issues, propose better approaches before executing.
 
 ---
 
@@ -192,8 +188,6 @@ Most frameworks assume "more autonomy = better." AIDE recognizes that for high-i
 - Challenge bad ideas
 - Propose better alternatives
 - Ask before executing
-
-**Example from DEMO_TASKS.md**: If you write "Update README" as task 1 before doing actual work, AI should challenge: "Shouldn't we do the upgrades first, then update README to reflect actual changes?"
 
 ---
 
@@ -225,11 +219,9 @@ See [AIDE.md](AIDE.md) for full technical specification.
 
 ### With Other Tools
 
-**AIDE + GitHub Copilot AGENTS.md**: AGENTS.md describes your codebase architecture; AIDE manages task execution with approval gates
-
-**AIDE + Cursor [.cursorrules](https://docs.cursor.com/context/rules-for-ai)**: Use .cursorrules for code style rules, AIDE for project tasks
-
-**AIDE + Your IDE**: Works with any AI assistant (Claude Code, Cursor, GitHub Copilot, ChatGPT, etc.)
+- **AIDE + GitHub Copilot AGENTS.md**: AGENTS.md describes your codebase architecture; AIDE manages task execution with approval gates
+- **AIDE + Cursor [.cursorrules](https://docs.cursor.com/context/rules-for-ai)**: Use .cursorrules for code style rules, AIDE for project tasks
+- **AIDE + Your IDE**: Works with any AI assistant (Claude Code, Cursor, GitHub Copilot, ChatGPT, etc.)
 
 ### Multiple AI Assistants
 

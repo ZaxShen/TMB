@@ -22,5 +22,7 @@ build/
 *.swo
 *~
 
-# Checkpointer DB (generated at runtime)
+# Runtime data
 *.db
+doc/DISCUSSION.md
+doc/BLUEPRINT.md

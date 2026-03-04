@@ -4,21 +4,22 @@ from __future__ import annotations
 
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from aide.config import get_llm, load_prompt, load_nodes_config, load_project_config
+from aide.config import get_llm, load_prompt, load_nodes_config, get_project_root
 from aide.state import AgentState
 from aide.tools import get_tools_for_node
 
 
 def executor(state: AgentState) -> dict:
     node_cfg = load_nodes_config()["executor"]
-    project_cfg = load_project_config()
-    project_root = project_cfg.get("root_dir", ".")
+    project_root = str(get_project_root())
+    store = state.get("store")
+    issue_id = state.get("issue_id")
 
     llm = get_llm("executor")
     system_prompt = load_prompt("executor")
 
     tool_names = node_cfg.get("tools", [])
-    tools = get_tools_for_node(tool_names, project_root)
+    tools = get_tools_for_node(tool_names, project_root, node_name="executor")
 
     if tools:
         llm_with_tools = llm.bind_tools(tools)
@@ -35,14 +36,33 @@ def executor(state: AgentState) -> dict:
         }
 
     task = blueprint[idx]
+    task_id = task["task_id"]
     feedback = state.get("review_feedback", "")
+    is_retry = bool(feedback)
+
+    # Read task from DB (source of truth) if available, else fall back to state
+    db_task = store.get_task_row(issue_id, task_id) if store and issue_id else None
+    description = db_task["description"] if db_task else task["description"]
+    success_criteria = db_task["success_criteria"] if db_task else task["success_criteria"]
+
+    total = len(blueprint)
+    if is_retry:
+        print(f"[SWE] Task {task_id}/{total} — retrying: {description[:60]}")
+    else:
+        print(f"[SWE] Task {task_id}/{total} — starting: {description[:60]}")
+
+    if store and issue_id:
+        store.update_task_status(issue_id, task_id, "in_progress", increment_attempts=True)
+        store.log(issue_id, task_id, "executor", "task_started" if not is_retry else "task_retried", {
+            "description": description,
+        })
 
     task_prompt = (
         f"Execute the following task:\n\n"
-        f"Task ID: {task['task_id']}\n"
-        f"Description: {task['description']}\n"
-        f"Tools available: {task['tools_required']}\n"
-        f"Success criteria: {task['success_criteria']}\n"
+        f"Task ID: {task_id}\n"
+        f"Description: {description}\n"
+        f"Tools available: {task.get('tools_required', [])}\n"
+        f"Success criteria: {success_criteria}\n"
     )
 
     if feedback:
@@ -61,7 +81,6 @@ def executor(state: AgentState) -> dict:
 
     response = llm_with_tools.invoke(messages)
 
-    # Check for tool calls — if the LLM wants to use tools, execute them
     tool_outputs = []
     if hasattr(response, "tool_calls") and response.tool_calls:
         tool_map = {t.name: t for t in tools}
@@ -70,12 +89,27 @@ def executor(state: AgentState) -> dict:
             if tool_fn:
                 result = tool_fn.invoke(tc["args"])
                 tool_outputs.append(f"[{tc['name']}] {result}")
+                print(f"  [{tc['name']}] done")
 
     execution_log = response.content or ""
     if tool_outputs:
         execution_log += "\n\nTool outputs:\n" + "\n".join(tool_outputs)
 
     is_escalation = "escalate" in execution_log.lower()
+
+    if store and issue_id:
+        if is_escalation:
+            store.update_task_status(issue_id, task_id, "escalated")
+            store.log(issue_id, task_id, "executor", "task_escalated", {
+                "reason": execution_log[:1000],
+            })
+            print(f"[SWE] Task {task_id} — ESCALATED to Architect")
+        else:
+            store.log(issue_id, task_id, "executor", "task_executed", {
+                "output": execution_log[:2000],
+                "tool_calls": len(tool_outputs),
+            })
+            print(f"[SWE] Task {task_id} — execution complete, sending to QA")
 
     return {
         "execution_log": execution_log,

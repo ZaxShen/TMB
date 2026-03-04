@@ -1,4 +1,17 @@
 name: my-project
-root_dir: .
+root_dir: ..              # relative to AIDE/ directory — '..' means the parent project
 test_command: pytest
 max_retry_per_task: 3
+
+# Blacklist — agents can NEVER read, write, or search these paths.
+# Glob patterns relative to project root. Checked on every tool call.
+blacklist:
+  - ".env"
+  - ".env.*"
+  - "**/.env"
+  - "**/secrets/**"
+  - "**/credentials/**"
+  - "**/*.pem"
+  - "**/*.key"
+  - "**/*secret*"
+  - "AIDE/**"             # agents cannot touch the AIDE framework itself

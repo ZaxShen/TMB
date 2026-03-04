@@ -1,4 +1,4 @@
-"""Load YAML config and prompt files."""
+"""Load YAML config, prompt files, and environment variables."""
 
 from __future__ import annotations
 
@@ -6,9 +6,14 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import load_dotenv
 
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_AIDE_ROOT = Path(__file__).resolve().parent.parent
+
+# Load .env from AIDE root, then from parent project root (parent takes precedence)
+load_dotenv(_AIDE_ROOT / ".env")
+load_dotenv(_AIDE_ROOT / ".." / ".env", override=True)
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -17,16 +22,23 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 
 def load_prompt(name: str) -> str:
-    path = _PROJECT_ROOT / "prompts" / f"{name}.md"
+    path = _AIDE_ROOT / "prompts" / f"{name}.md"
     return path.read_text()
 
 
 def load_nodes_config() -> dict[str, Any]:
-    return load_yaml(_PROJECT_ROOT / "config" / "nodes.yaml")
+    return load_yaml(_AIDE_ROOT / "config" / "nodes.yaml")
 
 
 def load_project_config() -> dict[str, Any]:
-    return load_yaml(_PROJECT_ROOT / "config" / "project.yaml")
+    return load_yaml(_AIDE_ROOT / "config" / "project.yaml")
+
+
+def get_project_root() -> Path:
+    """Resolve the target project root relative to AIDE's own directory."""
+    cfg = load_project_config()
+    raw = cfg.get("root_dir", "..")
+    return (_AIDE_ROOT / raw).resolve()
 
 
 def get_llm(node_name: str):

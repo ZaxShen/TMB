@@ -13,12 +13,18 @@ def validator(state: AgentState) -> dict:
     system_prompt = load_prompt("validator")
     project_cfg = load_project_config()
     max_retries = project_cfg.get("max_retry_per_task", 3)
+    store = state.get("store")
+    issue_id = state.get("issue_id")
 
     blueprint = state["blueprint"]
     idx = state["current_task_idx"]
     task = blueprint[idx]
+    task_id = task["task_id"]
+    total = len(blueprint)
     execution_log = state.get("execution_log", "")
     iteration_count = state.get("iteration_count", 0)
+
+    print(f"[QA] Task {task_id}/{total} — reviewing...")
 
     verify_prompt = (
         f"Task ID: {task['task_id']}\n"
@@ -41,6 +47,18 @@ def validator(state: AgentState) -> dict:
     if is_pass:
         next_idx = idx + 1
         is_done = next_idx >= len(blueprint)
+
+        if store and issue_id:
+            store.update_task_status(issue_id, task_id, "completed")
+            store.log(issue_id, task_id, "validator", "verdict_pass", {
+                "evidence": verdict_text[:1000],
+            })
+
+        print(f"[QA] Task {task_id} — PASS")
+
+        if is_done:
+            print(f"\n[QA] All {total} tasks passed.")
+
         return {
             "current_task_idx": next_idx,
             "iteration_count": 0,
@@ -51,7 +69,21 @@ def validator(state: AgentState) -> dict:
         }
 
     new_iteration = iteration_count + 1
+
+    if store and issue_id:
+        store.log(issue_id, task_id, "validator", "verdict_fail", {
+            "attempt": new_iteration,
+            "max_retries": max_retries,
+            "feedback": verdict_text[:1000],
+        })
+
     if new_iteration >= max_retries:
+        if store and issue_id:
+            store.update_task_status(issue_id, task_id, "failed")
+            store.log(issue_id, task_id, "validator", "max_retries_exceeded", {
+                "attempts": new_iteration,
+            })
+        print(f"[QA] Task {task_id} — FAIL (attempt {new_iteration}/{max_retries}, escalating to Architect)")
         return {
             "iteration_count": new_iteration,
             "review_feedback": f"Max retries ({max_retries}) exceeded. Validator feedback:\n{verdict_text}",
@@ -59,6 +91,7 @@ def validator(state: AgentState) -> dict:
             "next_node": "architect",
         }
 
+    print(f"[QA] Task {task_id} — FAIL (attempt {new_iteration}/{max_retries}, retrying)")
     return {
         "iteration_count": new_iteration,
         "review_feedback": verdict_text,

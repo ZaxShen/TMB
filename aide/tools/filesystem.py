@@ -1,10 +1,12 @@
-"""File read/write tools — sandboxed to project root."""
+"""File read/write tools — sandboxed to project root, blacklist + node access enforced."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from langchain_core.tools import tool
+
+from aide.permissions import assert_not_blacklisted, assert_node_access
 
 
 def _resolve_safe(project_root: str, file_path: str) -> Path:
@@ -16,10 +18,12 @@ def _resolve_safe(project_root: str, file_path: str) -> Path:
     return target
 
 
-def create_file_read_tool(project_root: str):
+def create_file_read_tool(project_root: str, node_name: str = "executor"):
     @tool
     def file_read(file_path: str) -> str:
         """Read a file relative to the project root. Returns the file contents."""
+        assert_not_blacklisted(file_path)
+        assert_node_access(file_path, node_name)
         target = _resolve_safe(project_root, file_path)
         if not target.exists():
             return f"[error] File not found: {file_path}"
@@ -28,10 +32,12 @@ def create_file_read_tool(project_root: str):
     return file_read
 
 
-def create_file_write_tool(project_root: str):
+def create_file_write_tool(project_root: str, node_name: str = "executor"):
     @tool
     def file_write(file_path: str, content: str) -> str:
         """Write content to a file relative to the project root. Creates parent directories if needed."""
+        assert_not_blacklisted(file_path)
+        assert_node_access(file_path, node_name)
         target = _resolve_safe(project_root, file_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content)

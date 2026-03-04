@@ -1,4 +1,4 @@
-"""Sandboxed shell tool — all commands run within the project root."""
+"""Sandboxed shell tool — runs in project root, output scrubbed against blacklist."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import subprocess
 from pathlib import Path
 
 from langchain_core.tools import tool
+
+from aide.permissions import filter_blacklisted_output
 
 
 def create_shell_tool(project_root: str):
@@ -29,7 +31,8 @@ def create_shell_tool(project_root: str):
             if result.stderr:
                 output += f"\n[stderr]\n{result.stderr}"
             output += f"\n[exit_code: {result.returncode}]"
-            return output.strip()
+            output = output.strip()
+            return filter_blacklisted_output(output, str(root))
         except subprocess.TimeoutExpired:
             return "[error] Command timed out after 120 seconds."
 

@@ -2,95 +2,139 @@
 
 > A multi-agent workflow engine that simulates how an IT company ships software — CTO sets direction, Architect designs, SWEs execute, QA validates.
 
-## The Paradigm
-
-AIDE models a real engineering organization as a LangGraph state machine:
-
-| Role | Agent | Responsibility |
-|------|-------|---------------|
-| **CTO** | Human | Sets objectives. Reviews blueprints. Only cares about results. |
-| **Architect** | LLM Agent | Designs the blueprint — atomic tasks with success criteria. Handles escalations from SWEs. |
-| **SWE (Executor)** | LLM Agent | Executes tasks from the blueprint using tools (shell, filesystem, search). |
-| **QA (Validator)** | LLM Agent | Verifies each task against its success criteria. Pass or fail, no fixing. |
-
-### Why This Works
-
-Autonomous AI agents are unreliable for high-impact work. One bad decision cascades. AIDE solves this by **separating concerns** — the agent that plans never executes, the agent that executes never plans, and an independent agent validates everything. The human (CTO) only intervenes at the blueprint level.
-
-## Architecture
-
-```
-START → Architect → [CTO REVIEWS BLUEPRINT] → Executor → Validator
-             ↑              ↑                      │          │
-             │              │    (escalate)        ←┘          │
-             │              └──────────────────────────────────┘ (fail, max retries)
-             │              (pass + more tasks)  Executor  ←───┘
-             └───────────── (all tasks pass) → END
-```
-
-**Edges:**
-- **Architect → Human Interrupt**: CTO reviews the blueprint before any execution.
-- **Executor → Validator**: Normal path after task execution.
-- **Executor → Architect**: Escalation when a task is unclear or blocked.
-- **Validator → Executor**: On PASS (next task) or FAIL (retry with feedback).
-- **Validator → Architect**: On FAIL after max retries — the task needs re-design.
-- **Validator → END**: All tasks pass.
-
 ## Quick Start
 
+**Prerequisites**: [uv](https://docs.astral.sh/uv/) and an LLM API key (Anthropic or OpenAI).
+
 ```bash
-# Install
+# 1. Add AIDE to your project
+cd your-project/
 git clone https://github.com/ZaxShen/AIDE.git
+
+# 2. Setup
 cd AIDE
 uv sync
+uv run main.py setup
 
-# Configure
-cp config/project.yaml config/project.yaml   # Edit for your project
-# Set your API key
-export ANTHROPIC_API_KEY=sk-...
+# 3. Write your goals
+#    Edit doc/GOALS.md with what you want done
 
-# Run
-uv run python main.py "Upgrade the project to Python 3.13"
+# 4. Run
+uv run main.py
 ```
 
-## Project Structure
+That's it. AIDE reads your goals, the Architect discusses them with you, builds a blueprint, and the SWEs execute it — all logged to SQLite.
+
+---
+
+## How It Works
+
+### The Workflow
 
 ```
-AIDE/
-├── config/
-│   ├── nodes.yaml          # Per-node LLM provider, model, temperature, tools
-│   └── project.yaml        # Project root, test command, retry limits
-├── prompts/
-│   ├── architect.md        # Architect system prompt
-│   ├── executor.md         # Executor system prompt
-│   └── validator.md        # Validator system prompt
-├── aide/
-│   ├── engine.py           # LangGraph graph construction and compilation
-│   ├── state.py            # Shared state schema (AgentState)
-│   ├── config.py           # YAML config loader
-│   ├── nodes/
-│   │   ├── architect.py    # Architect node
-│   │   ├── executor.py     # Executor node
-│   │   └── validator.py    # Validator node
-│   └── tools/
-│       ├── shell.py        # Sandboxed shell (project root only)
-│       ├── filesystem.py   # File read/write (project root only)
-│       └── search.py       # Code search (ripgrep wrapper)
-├── main.py                 # CLI entry point
-├── pyproject.toml
-└── LICENSE
+  CTO writes doc/GOALS.md
+           │
+           ▼
+  ┌─── DISCUSSION ───┐
+  │  Architect ↔ CTO  │    Interactive Q&A in terminal
+  │  (clarify goals)  │    → saved to doc/DISCUSSION.md + SQLite
+  └────────┬──────────┘
+           ▼
+  ┌─── BLUEPRINT ────┐
+  │  Architect plans  │    Atomic tasks with success criteria
+  │  tasks            │    → saved to doc/BLUEPRINT.md + SQLite
+  └────────┬──────────┘
+           ▼
+    CTO reviews & approves
+           │
+           ▼
+  ┌─── EXECUTION ────┐
+  │  SWE runs task    │──→  QA validates
+  │  (shell, files)   │←──  PASS → next task
+  │                   │←──  FAIL → retry (max 3)
+  └────────┬──────────┘←──  MAX FAIL → Architect replans
+           ▼
+         DONE
 ```
+
+### The Roles
+
+| Role | Who | Does What |
+|------|-----|-----------|
+| **CTO** | You | Writes goals. Discusses with Architect. Reviews blueprints. |
+| **Architect** | LLM Agent | Discusses requirements. Designs the blueprint. Handles escalations. |
+| **SWE** | LLM Agent | Executes tasks using shell, filesystem, and search tools. |
+| **QA** | LLM Agent | Verifies each task against success criteria. Pass or fail. |
+
+### The Documents
+
+All artifacts live in `AIDE/doc/`:
+
+| File | Written By | Purpose |
+|------|-----------|---------|
+| `doc/GOALS.md` | CTO (you) | What you want done — plain language |
+| `doc/DISCUSSION.md` | System | Architect-CTO Q&A transcript (current only; history in DB) |
+| `doc/BLUEPRINT.md` | System | Task breakdown with success criteria |
+
+### Permissions
+
+| Resource | CTO | Architect | SWE (Executor) | QA (Validator) |
+|----------|-----|-----------|----------------|----------------|
+| `doc/GOALS.md` | Edit | Read | — | — |
+| `doc/DISCUSSION.md` | Read | Edit | — | — |
+| `doc/BLUEPRINT.md` | Read | Edit | — | — |
+| `aide_history.db` | Read | Read / Write | Read / Write | Read / Write |
+| DB: tasks | — | Write (create) | Read (own task only) | Read (current task) |
+| DB: ledger | Read | Write | Write | Write |
+| Project files | — | — | Edit | Read |
+| `.env`, secrets | — | — | — | — |
+| `AIDE/**` (engine, config, prompts) | Edit (manual) | — | — | — |
+
+**Key rules:**
+- SWEs never see GOALS.md or DISCUSSION.md — high-level context could mislead execution.
+- SWEs get only their assigned task (description + success criteria) from the DB.
+- Secrets and the AIDE engine itself are inaccessible to all agents.
+- Project files are the SWE's workspace; QA can read but not modify.
+
+### The Database
+
+Everything is also persisted in `aide_history.db` (SQLite + JSON):
+
+| Table | What's In It |
+|-------|-------------|
+| `issues` | Each run's objective, status, timestamps |
+| `discussions` | Full Architect-CTO Q&A exchange |
+| `tasks` | Blueprint items with status and attempt counts |
+| `ledger` | Every agent action — append-only audit trail |
+
+View history anytime:
+
+```bash
+uv run main.py log           # List recent issues
+uv run main.py log 1         # Full detail for issue #1
+```
+
+---
 
 ## Configuration
 
+### `config/project.yaml`
+
+```yaml
+name: my-project
+root_dir: ..                  # Your project root, relative to AIDE/
+test_command: pytest
+max_retry_per_task: 3
+```
+
 ### `config/nodes.yaml`
 
-Define the LLM and tools for each agent:
+Each agent gets its own LLM — mix providers freely:
 
 ```yaml
 architect:
   model:
-    provider: anthropic       # anthropic | openai | google
+    provider: anthropic
     name: claude-sonnet-4-20250514
     temperature: 0.3
   tools: []
@@ -110,31 +154,58 @@ validator:
   tools: [shell]
 ```
 
-### `config/project.yaml`
+### API Keys
 
-Project-specific settings:
+Set via `.env` (created by `setup`) or environment variables:
 
-```yaml
-name: my-project
-root_dir: .
-test_command: pytest
-max_retry_per_task: 3
+```bash
+# AIDE/.env
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### Prompts
+
+Agent prompts are Markdown files in `AIDE/prompts/`. Edit to change behavior without touching Python:
+
+```
+prompts/architect.md    # How the Architect thinks and plans
+prompts/executor.md     # How the SWE executes and reports
+prompts/validator.md    # How QA evaluates pass/fail
+```
+
+---
+
+## Project Structure
+
+```
+your-project/                # ← AIDE operates on this
+├── AIDE/                    # ← Framework lives here
+│   ├── doc/
+│   │   ├── GOALS.md         # You write this
+│   │   ├── DISCUSSION.md    # Generated: Architect-CTO Q&A
+│   │   └── BLUEPRINT.md     # Generated: task breakdown
+│   ├── config/
+│   │   ├── nodes.yaml
+│   │   └── project.yaml
+│   ├── prompts/
+│   │   ├── architect.md
+│   │   ├── executor.md
+│   │   └── validator.md
+│   ├── aide/                # Engine (don't edit)
+│   ├── main.py
+│   ├── aide_history.db      # SQLite audit trail
+│   └── .env
+├── src/
+└── ...
 ```
 
 ## Design Principles
 
-- **Config over code** — Change behavior through YAML and prompt files, never the engine source.
-- **Separation of concerns** — Planning, execution, and validation are isolated agents with no role overlap.
-- **Fail fast** — Validate config, connections, and prerequisites at startup before any work begins.
-- **Idempotent tasks** — Every task in the blueprint is safe to re-run.
-- **Sandboxed execution** — All shell and file operations are restricted to the project root directory.
-
-## Roadmap
-
-- [x] Phase 1: Static graph with 3 nodes, in-memory state, single run
-- [ ] Phase 2: SqliteSaver checkpointing + thread_id for resumability
-- [ ] Phase 3: LangGraph Studio compatibility
-- [ ] Phase 4: Plugin system for custom tools
+- **File-driven** — Write goals in Markdown, not CLI arguments.
+- **Discussion first** — Architect clarifies before planning. No blind execution.
+- **Full audit trail** — Every action logged to SQLite + JSON. Markdown docs for humans.
+- **Config over code** — YAML and Markdown control behavior. Engine is immutable.
+- **Sandboxed execution** — Tools restricted to the project root directory.
 
 ## License
 

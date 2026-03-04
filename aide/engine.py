@@ -1,4 +1,8 @@
-"""AIDE engine — builds and compiles the LangGraph workflow."""
+"""AIDE engine — builds and compiles the LangGraph workflow.
+
+The graph handles: Architect → [CTO review] → Executor ↔ Validator.
+Gatekeeper and Discussion run pre-graph (they need terminal I/O).
+"""
 
 from __future__ import annotations
 
@@ -24,7 +28,7 @@ def build_graph() -> StateGraph:
     graph.add_edge(START, "architect")
 
     graph.add_conditional_edges("architect", _route, {
-        "human_review": "executor",  # placeholder — interrupt inserted below
+        "human_review": "executor",
     })
 
     graph.add_conditional_edges("executor", _route, {

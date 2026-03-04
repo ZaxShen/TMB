@@ -1,5 +1,16 @@
-# Logs are project-specific, don't commit to AIDE repo
-logs/*.log
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# Environment / secrets
+.env
 
 # macOS
 .DS_Store
@@ -11,8 +22,5 @@ logs/*.log
 *.swo
 *~
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-TASKS.md
+# Checkpointer DB (generated at runtime)
+*.db

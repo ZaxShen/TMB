@@ -1,292 +1,143 @@
 # AIDE: AI Direction & Execution
 
-> Minimum best practice workflow for human-AI collaboration on high-impact work.
+> A multi-agent workflow engine that simulates how an IT company ships software — CTO sets direction, Architect designs, SWEs execute, QA validates.
 
-**AIDE** stands for **AI Direction & Execution** - a lightweight framework that keeps humans in control while leveraging AI capabilities for complex, high-stakes tasks.
+## The Paradigm
 
----
+AIDE models a real engineering organization as a LangGraph state machine:
 
-## Why AIDE?
+| Role | Agent | Responsibility |
+|------|-------|---------------|
+| **CTO** | Human | Sets objectives. Reviews blueprints. Only cares about results. |
+| **Architect** | LLM Agent | Designs the blueprint — atomic tasks with success criteria. Handles escalations from SWEs. |
+| **SWE (Executor)** | LLM Agent | Executes tasks from the blueprint using tools (shell, filesystem, search). |
+| **QA (Validator)** | LLM Agent | Verifies each task against its success criteria. Pass or fail, no fixing. |
 
-**The Problem**: Agentic AI is great for research and analysis, but high-impact work requires careful control. One bad decision in code, infrastructure, legal docs, or financial analysis can cascade into serious consequences.
+### Why This Works
 
-**The Solution**: AIDE uses approval gates and sequential execution - slower than autonomous AI, but predictable, auditable, and safe for work that matters.
+Autonomous AI agents are unreliable for high-impact work. One bad decision cascades. AIDE solves this by **separating concerns** — the agent that plans never executes, the agent that executes never plans, and an independent agent validates everything. The human (CTO) only intervenes at the blueprint level.
 
-### AIDE vs. Agentic AI
+## Architecture
 
-| Approach | Best For | Risk Level |
-|----------|----------|------------|
-| **Agentic AI** | Research, data analysis, content generation, brainstorming | Low impact, reversible |
-| **AIDE** | Code, infrastructure, legal docs, financial analysis, compliance, medical | High impact, careful control needed |
+```
+START → Architect → [CTO REVIEWS BLUEPRINT] → Executor → Validator
+             ↑              ↑                      │          │
+             │              │    (escalate)        ←┘          │
+             │              └──────────────────────────────────┘ (fail, max retries)
+             │              (pass + more tasks)  Executor  ←───┘
+             └───────────── (all tasks pass) → END
+```
 
-**Trade-off**: AIDE sacrifices speed for safety and transparency. For high-stakes work, this is a feature, not a bug.
-
----
+**Edges:**
+- **Architect → Human Interrupt**: CTO reviews the blueprint before any execution.
+- **Executor → Validator**: Normal path after task execution.
+- **Executor → Architect**: Escalation when a task is unclear or blocked.
+- **Validator → Executor**: On PASS (next task) or FAIL (retry with feedback).
+- **Validator → Architect**: On FAIL after max retries — the task needs re-design.
+- **Validator → END**: All tasks pass.
 
 ## Quick Start
 
-### 1. Get AIDE
-
-**Option A: Git Submodule** (Recommended)
-
 ```bash
-# Init
-cd your-project/
-git submodule add https://github.com/ZaxShen/AIDE.git
-git submodule update --init --recursive
-
-# Pull
-cd your-project/AIDE
-git fetch
-git pull
-```
-
-**Option B: Direct Copy**
-
-```bash
-cd your-project/
+# Install
 git clone https://github.com/ZaxShen/AIDE.git
-# Copy files you need, delete .git/
+cd AIDE
+uv sync
+
+# Configure
+cp config/project.yaml config/project.yaml   # Edit for your project
+# Set your API key
+export ANTHROPIC_API_KEY=sk-...
+
+# Run
+uv run python main.py "Upgrade the project to Python 3.13"
 ```
 
-### 2. Create Your Tasks
-
-Copy required part from [DEMO_TASKS.md](DEMO_TASKS.md) to `TASKS.md` and write your tasks, for example:
-
-```markdown
-## v0.0.1
-
-### 1. Upgrade Python
-
-Evaluate the dependencies and see which latest Python version we can upgrade to for better performance.
-
-### 2. Update README
-
-The README has outdated info. Update it.
-```
-
-**Don't overthink it** - write rough drafts. AI will ask questions.
-
-### 3. Update .gitignore
-
-Add to your project's `.gitignore` to exclude AIDE files from version control:
-
-```gitignore
-# AIDE framework (if using submodule, only ignore logs)
-AIDE/logs/
-AIDE/TASKS.md
-
-# Or if direct copy (ignore AIDE demo/docs, keep only what you need)
-AIDE/DEMO_TASKS.md
-AIDE/AI_TODO.md
-AIDE/AI_COLLABORATION_GUIDE.md
-```
-
-**Recommended**: Commit `AIDE/AIDE.md` and `AIDE/README.md` so team members get the framework. Only ignore logs and your specific `TASKS.md`.
-
-### 4. Start Working with AI
-
-Tell your AI assistant:
+## Project Structure
 
 ```
-"Read [AIDE/AIDE.md](AIDE.md), then start task 1 from [AIDE/TASKS.md](TASKS.md)"
+AIDE/
+├── config/
+│   ├── nodes.yaml          # Per-node LLM provider, model, temperature, tools
+│   └── project.yaml        # Project root, test command, retry limits
+├── prompts/
+│   ├── architect.md        # Architect system prompt
+│   ├── executor.md         # Executor system prompt
+│   └── validator.md        # Validator system prompt
+├── aide/
+│   ├── engine.py           # LangGraph graph construction and compilation
+│   ├── state.py            # Shared state schema (AgentState)
+│   ├── config.py           # YAML config loader
+│   ├── nodes/
+│   │   ├── architect.py    # Architect node
+│   │   ├── executor.py     # Executor node
+│   │   └── validator.py    # Validator node
+│   └── tools/
+│       ├── shell.py        # Sandboxed shell (project root only)
+│       ├── filesystem.py   # File read/write (project root only)
+│       └── search.py       # Code search (ripgrep wrapper)
+├── main.py                 # CLI entry point
+├── pyproject.toml
+└── LICENSE
 ```
 
-**What happens:**
+## Configuration
 
-1. AI reads the framework rules
-2. AI analyzes your task and asks clarifying questions
-3. AI proposes approach with options
-4. You approve
-5. AI executes and logs everything to `AIDE/logs/`
-6. You review changes and logs
-7. You say "next task" or request changes
+### `config/nodes.yaml`
 
----
+Define the LLM and tools for each agent:
 
-## The Three Laws of AIDE
+```yaml
+architect:
+  model:
+    provider: anthropic       # anthropic | openai | google
+    name: claude-sonnet-4-20250514
+    temperature: 0.3
+  tools: []
 
-AIDE is built on three core principles (see [AIDE.md](AIDE.md) for full details):
+executor:
+  model:
+    provider: anthropic
+    name: claude-sonnet-4-20250514
+    temperature: 0
+  tools: [shell, file_read, file_write, search]
 
-### 1. Communication Before Action
-
-AI must understand before executing, and challenge before accepting.
-
-### 2. Sequential Execution with Human Control
-
-AI must complete one task at a time, with approval gates between tasks.
-
-### 3. Complete Transparency
-
-AI must document all actions, decisions, and reasoning.
-
----
-
-## File Structure
-
-```
-your-project/
-├── AIDE/                    # Framework (submodule or direct copy)
-│   ├── AIDE.md              # Rules for AI (technical spec)
-│   ├── TASKS.md             # Your tasks (copy format from DEMO_TASKS.md)
-│   ├── DEMO_TASKS.md        # Example tasks showing good/bad formats
-│   ├── README.md            # This file (for humans)
-│   ├── LICENSE              # MIT License
-│   └── logs/
-│       └── v0.0.1_claude.log
-├── your-code/
-└── ...
+validator:
+  model:
+    provider: anthropic
+    name: claude-sonnet-4-20250514
+    temperature: 0
+  tools: [shell]
 ```
 
----
+### `config/project.yaml`
 
-## Real Examples
+Project-specific settings:
 
-### Example 1: Software Development
+```yaml
+name: my-project
+root_dir: .
+test_command: pytest
+max_retry_per_task: 3
+```
 
-**Task**: Upgrade Python version for backend (v1.0.0)
+## Design Principles
 
-**What happened**:
+- **Config over code** — Change behavior through YAML and prompt files, never the engine source.
+- **Separation of concerns** — Planning, execution, and validation are isolated agents with no role overlap.
+- **Fail fast** — Validate config, connections, and prerequisites at startup before any work begins.
+- **Idempotent tasks** — Every task in the blueprint is safe to re-run.
+- **Sandboxed execution** — All shell and file operations are restricted to the project root directory.
 
-1. **Human**: "Start task 1: Upgrade Python"
-2. **AI**: "I'll check dependencies on Python 3.13 and 3.14..."
-3. **AI**: "All deps work on 3.13. Recommend 3.13 (stable) over 3.14 (alpha). 15-20% faster. Proceed?"
-4. **Human**: "Proceed with 3.13"
-5. **AI**: *[Updates Dockerfiles, pyproject.toml, tests app]* "✅ Complete. Python 3.13.7 installed, all tests passing."
-6. **Human**: "Confirmed. Next task."
+## Roadmap
 
-**Result**: 5 tasks completed, zero breaking changes, complete audit trail, human in control throughout.
-
-### Example 2: Other High-Impact Use Cases
-
-- **Legal Contract Review**: AI analyzes contract → Flags risky clauses → Proposes redlines → Human approves each change
-- **Financial Model Updates**: AI updates spreadsheet formulas → Explains assumptions → Human verifies before publishing
-- **Infrastructure Changes**: AI proposes AWS config → Explains cost/security impact → Human approves before applying
-- **Compliance Documentation**: AI drafts policy updates → Cites regulations → Human reviews before official release
-- **Common pattern**: AI does analysis/drafting, human makes final decisions on anything with real-world impact.
-
----
-
-## Task Examples
-
-See [DEMO_TASKS.md](DEMO_TASKS.md) for realistic task formats (including common human mistakes that AI should catch)
-
-- **For humans**: This file simulates how real people write tasks - incomplete, sometimes wrong order, missing context. AI should challenge these and ask questions under [AIDE.md](AIDE.md).
-- **For AI**: These are realistic human task descriptions. Practice challenging them - ask questions, spot issues, propose better approaches before executing.
-
----
-
-## What Makes AIDE Different?
-
-### vs. Other AI Frameworks
-
-Most frameworks assume "more autonomy = better." AIDE recognizes that for high-impact work, human control is essential.
-
-**AIDE encourages AI to:**
-
-- Question your assumptions
-- Challenge bad ideas
-- Propose better alternatives
-- Ask before executing
-
----
-
-## Best Practices
-
-### For Humans
-
-**Do:**
-
-- Write rough task descriptions - AI will clarify
-- Include context when relevant ("Update Python with all compatibilty")
-- Mark destructive operations ("Verify before deleting")
-- Ask for options ("Give me choices before doing it")
-- Let AI challenge your ideas
-
-**Don't:**
-
-- Overthink task descriptions
-- Skip reading logs
-- Rush approvals without review
-
-### For AI Assistants
-
-See [AIDE.md](AIDE.md) for full technical specification.
-
----
-
-## Integration
-
-### With Other Tools
-
-- **AIDE + GitHub Copilot AGENTS.md**: AGENTS.md describes your codebase architecture; AIDE manages task execution with approval gates
-- **AIDE + Cursor [.cursorrules](https://docs.cursor.com/context/rules-for-ai)**: Use .cursorrules for code style rules, AIDE for project tasks
-- **AIDE + Your IDE**: Works with any AI assistant (Claude Code, Cursor, GitHub Copilot, ChatGPT, etc.)
-
-### Multiple AI Assistants
-
-Each AI gets its own log:
-
-- `logs/v0.0.1_claude.log`
-- `logs/v0.0.1_gpt4.log`
-
-Compare approaches, learn from different AI reasoning styles.
-
----
-
-## Troubleshooting
-
-**"AI is doing too much at once"**
-→ Remind: "One task at a time, wait for approval before proceeding"
-
-**"AI isn't challenging my ideas"**
-→ Point to [AIDE.md First Law](AIDE.md#first-law-communication-before-action): "Never blindly agree - critical thinking required"
-
-**"AI isn't logging"**
-→ Check AIDE/logs/ directory exists, remind AI to follow logging format in [AIDE.md](AIDE.md#log-structure)
-
-**"I want faster iteration"**
-→ Batch approve subtasks: "Complete steps 1-3 then report" - but keep approval gates between major tasks
-
----
-
-## Contributing
-
-This framework is open source and evolving. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-**Quick ways to help:**
-
-- 🐛 [Report issues](https://github.com/ZaxShen/AIDE/issues/new?template=bug_report.md): What worked? What didn't?
-- 💡 [Suggest improvements](https://github.com/ZaxShen/AIDE/issues/new?template=feature_request.md): Better workflows, clearer docs
-- 📝 **Share examples**: Your task templates, real-world results
-- ⭐ **Star if useful**: Help others discover AIDE
-
----
+- [x] Phase 1: Static graph with 3 nodes, in-memory state, single run
+- [ ] Phase 2: SqliteSaver checkpointing + thread_id for resumability
+- [ ] Phase 3: LangGraph Studio compatibility
+- [ ] Phase 4: Plugin system for custom tools
 
 ## License
 
-MIT License - See [LICENSE](LICENSE)
+MIT License — See [LICENSE](LICENSE)
 
 **Author**: Zax S ([@ZaxShen](https://github.com/ZaxShen))
-
-**Repository**: https://github.com/ZaxShen/AIDE
-
----
-
-## Version
-
-**v0.0.1** (2025-10-01)
-
-- Three Laws of AIDE established
-- Sequential workflow with approval gates
-- Enhanced logging format (ANALYSIS → APPROVAL → EXECUTION → REASONING)
-- Framework optimized for code development (vs. agentic AI for research)
-
----
-
-## Project Files
-
-- [AIDE.md](AIDE.md) - Technical specification for AI assistants
-- [DEMO_TASKS.md](DEMO_TASKS.md) - Example tasks showing good/bad formats
-- [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution guidelines
-- [logs/EXAMPLE_v1.0.0_claude.log](logs/EXAMPLE_v0.0.1_claude.log) - Sample activity log

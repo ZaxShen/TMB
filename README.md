@@ -175,8 +175,9 @@ Everything is persisted in `aide_history.db` (SQLite + JSON):
 |-------|-------------|
 | `issues` | Each run's objective, status, `parent_issue_id` for cross-issue links |
 | `discussions` | Full Architect–Chief Architect Q&A exchange |
-| `tasks` | Blueprint items with hierarchical `task_id`, `parent_task_id`, lightweight `title` |
+| `tasks` | Blueprint items with hierarchical `branch_id`, `parent_branch_id`, lightweight `title`, `skills_required` |
 | `ledger` | Every agent action with a `summary` one-liner — full JSON detail stored but never bulk-read |
+| `skills` | Registered skill files — name, description, tags, file path |
 
 #### Branch IDs
 
@@ -202,6 +203,37 @@ uv run main.py log 1         # Full detail for issue #1
 uv run main.py report 1      # Export full markdown report
 uv run main.py "fix X"       # Quick task (Architect only)
 ```
+
+### Skills
+
+Skills are **reusable knowledge artifacts** — concise markdown guides that agents load on demand instead of re-deriving patterns or reading large source files every time.
+
+```
+AIDE/skills/
+├── db-operations.md        # Store API: lightweight vs. full queries
+├── branch-operations.md    # Hierarchical branch ID patterns
+└── file-access.md          # Permission model rules
+```
+
+**How it works:**
+
+1. **Architect assigns skills per task** — sees available skills with effectiveness scores and applicability conditions, assigns relevant ones to `skills_required`
+2. **SWE and QA load only assigned skills** — skill content is injected into context alongside the task prompt. No irrelevant knowledge, no wasted tokens
+3. **Agents can create new skills** — SWE has a `skill_create` tool. New skills start as `draft` and must pass Architect review before becoming available
+4. **Built-in skills auto-seed** — on first run, AIDE registers all `.md` files in `skills/` as curated, trusted skills
+
+**Validation and trust:**
+
+| Aspect | Mechanism |
+|---|---|
+| **Trust tiers** | `curated` (system/human — always trusted) vs. `agent` (created during execution — requires review) |
+| **Status lifecycle** | `draft` → `pending_review` → `active` → `deprecated` |
+| **Quality gate** | Agent-created skills are auto-submitted for Architect review. The Architect approves or rejects before the skill becomes assignable |
+| **Effectiveness tracking** | Every task verdict (PASS/FAIL) updates counters on assigned skills. Effectiveness = successes / uses |
+| **Auto-deprecation** | Agent-tier skills with 5+ uses and < 30% effectiveness are automatically deprecated and excluded from future assignment |
+| **Applicability conditions** | Each skill has `when_to_use` and `when_not_to_use` metadata — the Architect sees these when deciding which skills to assign |
+
+This design follows the agentic skills lifecycle from research (Voyager 2023, SoK 2026): discovery → practice → distillation → storage → evaluation → update. The key insight from the literature: **curated skills improve agent success rates by +16pp, while unvalidated self-generated skills can degrade them** — hence the mandatory review gate.
 
 ---
 
@@ -233,7 +265,7 @@ executor:
     provider: anthropic
     name: claude-sonnet-4-20250514
     temperature: 0
-  tools: [shell, file_read, file_write, search]
+  tools: [shell, file_read, file_write, search, skill_create]
 
 validator:
   model:
@@ -283,6 +315,10 @@ your-project/                # ← AIDE operates on this
 │   │   ├── architect.md
 │   │   ├── executor.md
 │   │   └── validator.md
+│   ├── skills/              # Reusable knowledge artifacts
+│   │   ├── db-operations.md
+│   │   ├── branch-operations.md
+│   │   └── file-access.md
 │   ├── aide/                # Engine (don't edit)
 │   ├── main.py
 │   ├── aide_history.db      # SQLite audit trail
@@ -298,6 +334,7 @@ your-project/                # ← AIDE operates on this
 - **Layered documents** — Strategic docs (BLUEPRINT, FLOWCHART) for Chief Architect review; operational docs (EXECUTION, QA_PLAN) for agent consumption.
 - **Living execution plan** — EXECUTION.md shrinks as tasks complete; completed work archived in SQLite.
 - **Full audit trail** — Every action logged to SQLite with lightweight summaries. Full JSON stored but never bulk-read.
+- **Skills over re-reading** — Agents compress discovered patterns into reusable skills, loaded on demand instead of re-scanning source files.
 - **Config over code** — YAML and Markdown control behavior. Engine is immutable.
 - **Sandboxed execution** — Tools restricted to the project root directory.
 

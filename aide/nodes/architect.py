@@ -92,7 +92,7 @@ BLUEPRINT_INSTRUCTION = (
     "Based on the goals, discussion, codebase exploration, and any feedback, "
     "produce a Blueprint as a JSON array.\n\n"
     "Each element must have: branch_id (str), description (str), tools_required (list[str]), "
-    "success_criteria (str).\n\n"
+    "skills_required (list[str]), success_criteria (str).\n\n"
     "## Branch ID Convention\n"
     "Branch IDs are **hierarchical strings** that encode semantic relationships:\n"
     "- Root branches: \"1\", \"2\", \"3\"\n"
@@ -102,6 +102,10 @@ BLUEPRINT_INSTRUCTION = (
     "- New work extending existing branch \"2\" → use \"2.1\", \"2.2\"\n"
     "- Completely new, unrelated work → use the next unused root ID\n\n"
     "If NO existing tasks exist, start from \"1\".\n\n"
+    "## Skills\n"
+    "If AVAILABLE SKILLS are listed below, assign relevant skill names to each task's "
+    "`skills_required` array. Only assign skills genuinely useful for the task. "
+    "If no skill fits, leave the array empty.\n\n"
     "Return ONLY the JSON array, no other text."
 )
 
@@ -194,8 +198,55 @@ def architect_plan(state: AgentState) -> dict:
     else:
         print("[ARCHITECT] Building blueprint from discussion...")
 
+    # ── 0b. Review pending skills ─────────────────────────────
+    pending_skills = store.get_skills_pending_review()
+    if pending_skills:
+        print(f"[ARCHITECT] Reviewing {len(pending_skills)} pending skills...")
+        for ps in pending_skills:
+            review_prompt = (
+                f"An agent created a skill during execution. Review it and decide "
+                f"whether to APPROVE or REJECT.\n\n"
+                f"**Name**: {ps['name']}\n"
+                f"**Description**: {ps['description']}\n"
+                f"**When to use**: {ps.get('when_to_use', '(not specified)')}\n"
+                f"**When not to use**: {ps.get('when_not_to_use', '(not specified)')}\n"
+                f"**Created by**: {ps['created_by']}\n"
+                f"**Tags**: {ps.get('tags', '[]')}\n\n"
+            )
+            skill_path = _AIDE_ROOT / ps.get("file_path", "")
+            if skill_path.exists():
+                content = skill_path.read_text()
+                if len(content) > 3000:
+                    content = content[:3000] + "\n... (truncated)"
+                review_prompt += f"**Content**:\n```\n{content}\n```\n\n"
+            review_prompt += (
+                "Reply with ONLY one of:\n"
+                "- APPROVE — if the skill is accurate, useful, and well-scoped\n"
+                "- REJECT — if it's inaccurate, too vague, redundant, or could mislead agents\n"
+                "Then a one-line reason."
+            )
+            review_msgs = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=review_prompt),
+            ]
+            review_resp = llm.invoke(review_msgs)
+            verdict = _normalize_content(review_resp.content).strip().upper()
+            if verdict.startswith("APPROVE"):
+                store.activate_skill(ps["name"])
+                store.log(issue_id, None, "architect", "skill_approved", {
+                    "skill": ps["name"],
+                }, summary=f"Approved skill: {ps['name']}")
+                print(f"  [ARCHITECT] Approved skill: {ps['name']}")
+            else:
+                store.deprecate_skill(ps["name"])
+                store.log(issue_id, None, "architect", "skill_rejected", {
+                    "skill": ps["name"], "reason": verdict[:200],
+                }, summary=f"Rejected skill: {ps['name']}")
+                print(f"  [ARCHITECT] Rejected skill: {ps['name']}")
+
     # ── 1. Generate Blueprint ────────────────────────────────
     existing_tree = store.get_all_root_tasks()
+    available_skills = store.get_all_skills()
     parts = []
     if project_context:
         parts.append(f"## Project Context\n{project_context}")
@@ -208,6 +259,21 @@ def architect_plan(state: AgentState) -> dict:
         tree_lines = [f"- **{t['branch_id']}**: {t['title']} [{t['status']}] (issue #{t['issue_id']}: {t['objective'][:60]})"
                       for t in existing_tree]
         parts.append(f"## Existing Task Tree\n" + "\n".join(tree_lines))
+    if available_skills:
+        skill_lines = []
+        for s in available_skills:
+            eff = s.get("effectiveness")
+            eff_str = f"{eff:.0%}" if eff is not None else "n/a"
+            tier = s.get("trust_tier", "curated")
+            line = f"- **{s['name']}** [{tier}] (eff: {eff_str}, uses: {s.get('uses', 0)}): {s['description']}"
+            if s.get("when_to_use"):
+                line += f"\n  - Use when: {s['when_to_use']}"
+            if s.get("when_not_to_use"):
+                line += f"\n  - Avoid when: {s['when_not_to_use']}"
+            skill_lines.append(line)
+        parts.append("## Available Skills\n" + "\n".join(skill_lines)
+                      + "\n\nPrefer skills with higher effectiveness. "
+                      "Avoid assigning skills with low effectiveness (< 30%).")
     if feedback:
         parts.append(f"## Previous Feedback / Escalation\n{feedback}")
     if escalation_log:

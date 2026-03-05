@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
 from aide.config import get_llm, load_prompt, load_nodes_config, get_project_root, _AIDE_ROOT
@@ -51,6 +53,19 @@ def _normalize_content(content) -> str:
     return str(content)
 
 
+def _load_skills(store: Store, skill_names: list[str]) -> str:
+    """Load skill file contents for the given names, return combined text."""
+    if not skill_names:
+        return ""
+    skills = store.get_skills_by_names(skill_names)
+    parts = []
+    for s in skills:
+        skill_path = _AIDE_ROOT / s["file_path"]
+        if skill_path.exists():
+            parts.append(skill_path.read_text().strip())
+    return "\n\n---\n\n".join(parts)
+
+
 def executor(state: AgentState) -> dict:
     node_cfg = load_nodes_config()["executor"]
     project_root = str(get_project_root())
@@ -88,6 +103,15 @@ def executor(state: AgentState) -> dict:
 
     exec_plan_section = _read_execution_plan_section(branch_id)
 
+    skill_names = task.get("skills_required", [])
+    if not skill_names and db_task:
+        raw_sr = db_task.get("skills_required", "[]")
+        try:
+            skill_names = json.loads(raw_sr) if isinstance(raw_sr, str) else raw_sr
+        except (json.JSONDecodeError, TypeError):
+            skill_names = []
+    skills_text = _load_skills(store, skill_names) if skill_names else ""
+
     total = len(blueprint)
     if is_retry:
         print(f"[SWE] [{branch_id}] {total} tasks — retrying: {description[:60]}")
@@ -108,6 +132,9 @@ def executor(state: AgentState) -> dict:
         f"Tools available: {task.get('tools_required', [])}\n"
         f"Success criteria: {success_criteria}\n"
     )
+
+    if skills_text:
+        task_prompt += f"\n## Reference Skills\n{skills_text}\n"
 
     if exec_plan_section:
         task_prompt += f"\nDetailed execution plan:\n{exec_plan_section}\n"

@@ -42,10 +42,23 @@ Always explore before planning. Never assume the codebase structure — verify i
     "branch_id": "1",
     "description": "...",
     "tools_required": ["shell"],
+    "skills_required": ["db-operations"],
     "success_criteria": "..."
   }
 ]
 ```
+
+## Skills
+
+The system maintains a library of reusable knowledge artifacts in `skills/`. Each skill is a concise markdown guide covering patterns, APIs, or rules that agents need repeatedly.
+
+When the system provides an **Available Skills** list, assign relevant skill names to each task's `skills_required` array. The SWE and QA will load only those skills into their context window — keeping it focused and lightweight.
+
+- Only assign skills that are genuinely useful for the task — check `when_to_use` and `when_not_to_use` conditions.
+- Prefer skills with higher effectiveness scores. Avoid skills with low effectiveness (< 30%).
+- Prefer `curated` skills over `agent`-tier skills when both cover the same domain.
+- If no existing skill fits, leave the array empty — the SWE can create new skills during execution.
+- You are responsible for reviewing agent-created skills (status: `pending_review`). Approve if accurate and useful; reject if vague, redundant, or misleading.
 
 ## Branch ID Convention
 

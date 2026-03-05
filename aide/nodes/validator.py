@@ -70,6 +70,27 @@ def _read_qa_plan() -> str:
     return ""
 
 
+def _load_skills(store: Store, skill_names: list[str]) -> str:
+    """Load skill file contents for the given names, return combined text."""
+    if not skill_names:
+        return ""
+    skills = store.get_skills_by_names(skill_names)
+    parts = []
+    for s in skills:
+        skill_path = _AIDE_ROOT / s["file_path"]
+        if skill_path.exists():
+            parts.append(skill_path.read_text().strip())
+    return "\n\n---\n\n".join(parts)
+
+
+def _record_skill_outcomes(store: Store, skill_names: list[str], is_pass: bool):
+    """Update effectiveness counters for every skill used in this task."""
+    for name in skill_names:
+        msg = store.record_skill_outcome(name, is_pass)
+        if msg:
+            print(f"[QA] {msg}")
+
+
 def _archive_task_from_execution_md(store: Store, issue_id: int, branch_id: str):
     """Remove a completed task's section from EXECUTION.md and archive it in the DB."""
     exec_path = _AIDE_ROOT / "doc" / "EXECUTION.md"
@@ -132,12 +153,25 @@ def validator(state: AgentState) -> dict:
 
     qa_plan = _read_qa_plan()
 
+    skill_names = task.get("skills_required", [])
+    if not skill_names:
+        db_task = store.get_task_row(issue_id, branch_id)
+        if db_task:
+            raw_sr = db_task.get("skills_required", "[]")
+            try:
+                skill_names = json.loads(raw_sr) if isinstance(raw_sr, str) else raw_sr
+            except (json.JSONDecodeError, TypeError):
+                skill_names = []
+    skills_text = _load_skills(store, skill_names) if skill_names else ""
+
     print(f"[QA] [{branch_id}] {total} tasks — reviewing...")
 
     verify_prompt = (
         f"Branch ID: {branch_id}\n"
         f"Success criteria: {task['success_criteria']}\n\n"
     )
+    if skills_text:
+        verify_prompt += f"## Reference Skills\n{skills_text}\n\n"
     if qa_plan:
         verify_prompt += f"QA Plan (relevant sections):\n{qa_plan}\n\n"
     verify_prompt += (
@@ -181,6 +215,8 @@ def validator(state: AgentState) -> dict:
     verdict_text = _normalize_content(response.content)
 
     is_pass = _extract_verdict(verdict_text)
+
+    _record_skill_outcomes(store, skill_names, is_pass)
 
     if is_pass:
         next_idx = idx + 1

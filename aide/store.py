@@ -73,6 +73,7 @@ class Store:
                 title               TEXT    NOT NULL DEFAULT '',
                 description         TEXT    NOT NULL,
                 tools_required      TEXT    NOT NULL DEFAULT '[]',
+                skills_required     TEXT    NOT NULL DEFAULT '[]',
                 success_criteria    TEXT    NOT NULL,
                 status              TEXT    NOT NULL DEFAULT 'pending',
                 attempts            INTEGER NOT NULL DEFAULT 0,
@@ -93,6 +94,25 @@ class Store:
                 content     TEXT    NOT NULL DEFAULT '{}',
                 created_at  TEXT    NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS skills (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                name            TEXT    NOT NULL UNIQUE,
+                description     TEXT    NOT NULL,
+                file_path       TEXT    NOT NULL,
+                tags            TEXT    NOT NULL DEFAULT '[]',
+                created_by      TEXT    NOT NULL DEFAULT 'system',
+                trust_tier      TEXT    NOT NULL DEFAULT 'curated',
+                status          TEXT    NOT NULL DEFAULT 'active',
+                when_to_use     TEXT    NOT NULL DEFAULT '',
+                when_not_to_use TEXT    NOT NULL DEFAULT '',
+                uses            INTEGER NOT NULL DEFAULT 0,
+                successes       INTEGER NOT NULL DEFAULT 0,
+                failures        INTEGER NOT NULL DEFAULT 0,
+                effectiveness   REAL,
+                created_at      TEXT    NOT NULL,
+                updated_at      TEXT    NOT NULL
+            );
         """)
         self._migrate()
 
@@ -106,6 +126,7 @@ class Store:
             ("title", "''"),
             ("branch_id", "''"),
             ("parent_branch_id", "NULL"),
+            ("skills_required", "'[]'"),
             ("execution_plan_md", "''"),
             ("qa_results", "''"),
         ]:
@@ -133,7 +154,71 @@ class Store:
                 "ALTER TABLE ledger ADD COLUMN summary TEXT NOT NULL DEFAULT ''"
             )
 
+        skill_cols = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(skills)").fetchall()
+        } if self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='skills'"
+        ).fetchone() else set()
+
+        for col, spec in [
+            ("trust_tier", "TEXT NOT NULL DEFAULT 'curated'"),
+            ("status", "TEXT NOT NULL DEFAULT 'active'"),
+            ("when_to_use", "TEXT NOT NULL DEFAULT ''"),
+            ("when_not_to_use", "TEXT NOT NULL DEFAULT ''"),
+            ("uses", "INTEGER NOT NULL DEFAULT 0"),
+            ("successes", "INTEGER NOT NULL DEFAULT 0"),
+            ("failures", "INTEGER NOT NULL DEFAULT 0"),
+            ("effectiveness", "REAL"),
+        ]:
+            if col not in skill_cols:
+                self._conn.execute(f"ALTER TABLE skills ADD COLUMN {col} {spec}")
+
         self._conn.commit()
+        self._seed_skills()
+
+    _SEED_APPLICABILITY = {
+        "db-operations": {
+            "when_to_use": "Tasks involving SQLite queries, Store API calls, or ledger logging",
+            "when_not_to_use": "Tasks that only read/write project source files with no DB interaction",
+        },
+        "branch-operations": {
+            "when_to_use": "Tasks involving hierarchical task IDs, tree queries, or branch-level operations",
+            "when_not_to_use": "Simple single-task execution with no cross-task references",
+        },
+        "file-access": {
+            "when_to_use": "Tasks that read or write files across permission boundaries",
+            "when_not_to_use": "Tasks confined to a single source file with no doc/ or config/ interaction",
+        },
+    }
+
+    def _seed_skills(self):
+        """Register built-in skill files if not already in DB."""
+        from aide.config import _AIDE_ROOT
+        skills_dir = _AIDE_ROOT / "skills"
+        if not skills_dir.is_dir():
+            return
+        existing = {r["name"] for r in self.get_all_skills(include_inactive=True)}
+        for md in sorted(skills_dir.glob("*.md")):
+            name = md.stem
+            if name in existing:
+                continue
+            lines = md.read_text().splitlines()
+            desc = ""
+            for line in lines:
+                if line.startswith(">"):
+                    desc = line.lstrip("> ").strip()
+                    break
+            applicability = self._SEED_APPLICABILITY.get(name, {})
+            self.create_skill(
+                name=name,
+                description=desc or name,
+                file_path=str(md.relative_to(_AIDE_ROOT)),
+                created_by="system",
+                tags=["built-in"],
+                when_to_use=applicability.get("when_to_use", ""),
+                when_not_to_use=applicability.get("when_not_to_use", ""),
+            )
 
     # ── Issues ──────────────────────────────────────────────
 
@@ -257,8 +342,8 @@ class Store:
             parent = ".".join(bid.split(".")[:-1]) or None
             self._conn.execute(
                 "INSERT INTO tasks (issue_id, branch_id, parent_branch_id, title, description, "
-                "tools_required, success_criteria, status, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+                "tools_required, skills_required, success_criteria, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
                 (
                     issue_id,
                     bid,
@@ -266,6 +351,7 @@ class Store:
                     title,
                     desc,
                     json.dumps(task.get("tools_required", [])),
+                    json.dumps(task.get("skills_required", [])),
                     task["success_criteria"],
                     now,
                     now,
@@ -434,6 +520,156 @@ class Store:
             "SELECT id, issue_id, branch_id, from_node, event_type, summary, created_at "
             "FROM ledger WHERE issue_id = ? ORDER BY id",
             (issue_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── Skills ──────────────────────────────────────────────
+    #
+    # Trust tiers:
+    #   curated   — created by system or human; always trusted
+    #   agent     — created by an agent during execution; starts as draft
+    #
+    # Status lifecycle:
+    #   draft     → pending_review → active → deprecated
+    #   Curated skills skip draft/pending_review and start as active.
+    #
+    # Effectiveness:
+    #   Tracked per-skill via uses/successes/failures counters.
+    #   effectiveness = successes / uses (NULL until first use).
+    #   Auto-deprecated when uses >= 5 AND effectiveness < 0.3.
+
+    _EFFECTIVENESS_MIN_USES = 5
+    _EFFECTIVENESS_DEPRECATE_THRESHOLD = 0.3
+
+    def create_skill(self, name: str, description: str, file_path: str,
+                     created_by: str = "system", tags: list[str] | None = None,
+                     when_to_use: str = "", when_not_to_use: str = "") -> int:
+        is_curated = created_by in ("system", "human", "chief_architect")
+        trust_tier = "curated" if is_curated else "agent"
+        status = "active" if is_curated else "draft"
+        now = _now()
+        cur = self._conn.execute(
+            "INSERT OR REPLACE INTO skills "
+            "(name, description, file_path, tags, created_by, trust_tier, status, "
+            " when_to_use, when_not_to_use, uses, successes, failures, effectiveness, "
+            " created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, NULL, ?, ?)",
+            (name, description, file_path, json.dumps(tags or []),
+             created_by, trust_tier, status, when_to_use, when_not_to_use, now, now),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def update_skill(self, name: str, description: str | None = None,
+                     file_path: str | None = None, tags: list[str] | None = None,
+                     status: str | None = None,
+                     when_to_use: str | None = None,
+                     when_not_to_use: str | None = None):
+        parts, params = [], []
+        for field, val in [
+            ("description", description),
+            ("file_path", file_path),
+            ("status", status),
+            ("when_to_use", when_to_use),
+            ("when_not_to_use", when_not_to_use),
+        ]:
+            if val is not None:
+                parts.append(f"{field} = ?")
+                params.append(val)
+        if tags is not None:
+            parts.append("tags = ?")
+            params.append(json.dumps(tags))
+        if not parts:
+            return
+        parts.append("updated_at = ?")
+        params.append(_now())
+        params.append(name)
+        self._conn.execute(
+            f"UPDATE skills SET {', '.join(parts)} WHERE name = ?", params
+        )
+        self._conn.commit()
+
+    def activate_skill(self, name: str):
+        """Promote a draft/pending_review skill to active (Architect approval)."""
+        self.update_skill(name, status="active")
+
+    def deprecate_skill(self, name: str):
+        """Mark a skill as deprecated — excluded from future assignment."""
+        self.update_skill(name, status="deprecated")
+
+    def submit_skill_for_review(self, name: str):
+        """Move a draft skill to pending_review so the Architect can evaluate it."""
+        self.update_skill(name, status="pending_review")
+
+    def record_skill_outcome(self, skill_name: str, is_success: bool):
+        """Record a task outcome for effectiveness tracking.
+
+        Called after QA verdict — increments uses + (successes or failures),
+        recomputes effectiveness, and auto-deprecates if below threshold.
+        """
+        col = "successes" if is_success else "failures"
+        self._conn.execute(
+            f"UPDATE skills SET uses = uses + 1, {col} = {col} + 1, updated_at = ? "
+            f"WHERE name = ?",
+            (_now(), skill_name),
+        )
+        self._conn.execute(
+            "UPDATE skills SET effectiveness = CAST(successes AS REAL) / uses "
+            "WHERE name = ? AND uses > 0",
+            (skill_name,),
+        )
+        self._conn.commit()
+
+        row = self.get_skill(skill_name)
+        if row and row["trust_tier"] == "agent" and row["uses"] >= self._EFFECTIVENESS_MIN_USES:
+            if row["effectiveness"] is not None and row["effectiveness"] < self._EFFECTIVENESS_DEPRECATE_THRESHOLD:
+                self.deprecate_skill(skill_name)
+                return f"Auto-deprecated skill '{skill_name}' (effectiveness {row['effectiveness']:.0%})"
+        return None
+
+    def get_skill(self, name: str) -> dict | None:
+        row = self._conn.execute("SELECT * FROM skills WHERE name = ?", (name,)).fetchone()
+        return dict(row) if row else None
+
+    def get_all_skills(self, include_inactive: bool = False) -> list[dict]:
+        """Lightweight skill index for Architect assignment.
+
+        By default returns only active skills. Set include_inactive=True
+        to see draft/pending_review/deprecated skills too.
+        """
+        if include_inactive:
+            where = ""
+            params = ()
+        else:
+            where = "WHERE status = 'active'"
+            params = ()
+        rows = self._conn.execute(
+            f"SELECT id, name, description, tags, trust_tier, status, "
+            f"when_to_use, when_not_to_use, uses, successes, failures, effectiveness, "
+            f"created_by, updated_at FROM skills {where} ORDER BY name",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_skills_by_names(self, names: list[str]) -> list[dict]:
+        """Fetch full skill rows for a list of skill names.
+
+        Only returns active skills — draft/deprecated skills are silently excluded.
+        """
+        if not names:
+            return []
+        placeholders = ",".join("?" for _ in names)
+        rows = self._conn.execute(
+            f"SELECT * FROM skills WHERE name IN ({placeholders}) AND status = 'active' "
+            f"ORDER BY name", names
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_skills_pending_review(self) -> list[dict]:
+        """Skills created by agents awaiting Architect approval."""
+        rows = self._conn.execute(
+            "SELECT id, name, description, tags, trust_tier, when_to_use, when_not_to_use, "
+            "created_by, created_at FROM skills WHERE status = 'pending_review' ORDER BY created_at"
         ).fetchall()
         return [dict(r) for r in rows]
 

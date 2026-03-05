@@ -7,7 +7,8 @@ from langgraph.graph import MessagesState
 
 
 class Task(TypedDict):
-    task_id: int
+    branch_id: str
+    title: str
     description: str
     tools_required: list[str]
     success_criteria: str
@@ -23,4 +24,4 @@ class AgentState(MessagesState):
     execution_log: str
     review_feedback: str
     iteration_count: int
-    next_node: Literal["architect", "executor", "validator", "human_review", "__end__"]
+    next_node: Literal["architect", "architect_execution_plan", "executor", "validator", "human_review", "__end__"]

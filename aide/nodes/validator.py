@@ -7,7 +7,8 @@ import re
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from aide.config import get_llm, load_prompt, load_project_config, load_nodes_config, get_project_root
+from aide.config import get_llm, load_prompt, load_project_config, load_nodes_config, get_project_root, _AIDE_ROOT
+from aide.permissions import assert_aide_write
 from aide.state import AgentState
 from aide.store import Store
 from aide.tools import get_tools_for_node
@@ -61,6 +62,49 @@ def _extract_verdict(text: str) -> bool:
     return False
 
 
+def _read_qa_plan() -> str:
+    """Read doc/QA_PLAN.md if it exists."""
+    path = _AIDE_ROOT / "doc" / "QA_PLAN.md"
+    if path.exists():
+        return path.read_text()
+    return ""
+
+
+def _archive_task_from_execution_md(store: Store, issue_id: int, branch_id: str):
+    """Remove a completed task's section from EXECUTION.md and archive it in the DB."""
+    exec_path = _AIDE_ROOT / "doc" / "EXECUTION.md"
+    if not exec_path.exists():
+        return
+
+    content = exec_path.read_text()
+    task_header = f"## Task {branch_id}"
+    lines = content.split("\n")
+
+    task_start = None
+    task_end = None
+    for i, line in enumerate(lines):
+        if line.strip().startswith(task_header):
+            task_start = i
+        elif task_start is not None and line.strip().startswith("## Task "):
+            task_end = i
+            break
+
+    if task_start is None:
+        return
+
+    if task_end is None:
+        task_end = len(lines)
+
+    archived_section = "\n".join(lines[task_start:task_end]).strip()
+    store.archive_task_execution(issue_id, branch_id, archived_section)
+    store.log(issue_id, branch_id, "validator", "execution_task_archived", {},
+             summary=f"Archived [{branch_id}] from EXECUTION.md")
+
+    remaining = lines[:task_start] + lines[task_end:]
+    assert_aide_write(exec_path)
+    exec_path.write_text("\n".join(remaining))
+
+
 def validator(state: AgentState) -> dict:
     node_cfg = load_nodes_config().get("validator", {})
     project_root = str(get_project_root())
@@ -81,16 +125,22 @@ def validator(state: AgentState) -> dict:
     blueprint = state["blueprint"]
     idx = state["current_task_idx"]
     task = blueprint[idx]
-    task_id = task["task_id"]
+    branch_id = task["branch_id"]
     total = len(blueprint)
     execution_log = state.get("execution_log", "")
     iteration_count = state.get("iteration_count", 0)
 
-    print(f"[QA] Task {task_id}/{total} — reviewing...")
+    qa_plan = _read_qa_plan()
+
+    print(f"[QA] [{branch_id}] {total} tasks — reviewing...")
 
     verify_prompt = (
-        f"Task ID: {task['task_id']}\n"
+        f"Branch ID: {branch_id}\n"
         f"Success criteria: {task['success_criteria']}\n\n"
+    )
+    if qa_plan:
+        verify_prompt += f"QA Plan (relevant sections):\n{qa_plan}\n\n"
+    verify_prompt += (
         f"Executor's execution log:\n{execution_log}\n\n"
         "Evaluate whether the success criteria are met. "
         "Use your tools (e.g. shell) to run verification commands if needed. "
@@ -136,12 +186,15 @@ def validator(state: AgentState) -> dict:
         next_idx = idx + 1
         is_done = next_idx >= len(blueprint)
 
-        store.update_task_status(issue_id, task_id, "completed")
-        store.log(issue_id, task_id, "validator", "verdict_pass", {
+        store.update_task_status(issue_id, branch_id, "completed")
+        store.archive_task_qa_results(issue_id, branch_id, verdict_text[:2000])
+        store.log(issue_id, branch_id, "validator", "verdict_pass", {
             "evidence": verdict_text[:1000],
-        })
+        }, summary=f"PASS: [{branch_id}]")
 
-        print(f"[QA] Task {task_id} — PASS")
+        _archive_task_from_execution_md(store, issue_id, branch_id)
+
+        print(f"[QA] [{branch_id}] — PASS")
 
         if is_done:
             print(f"\n[QA] All {total} tasks passed.")
@@ -157,18 +210,18 @@ def validator(state: AgentState) -> dict:
 
     new_iteration = iteration_count + 1
 
-    store.log(issue_id, task_id, "validator", "verdict_fail", {
+    store.log(issue_id, branch_id, "validator", "verdict_fail", {
         "attempt": new_iteration,
         "max_retries": max_retries,
         "feedback": verdict_text[:1000],
-    })
+    }, summary=f"FAIL: [{branch_id}] (attempt {new_iteration}/{max_retries})")
 
     if new_iteration >= max_retries:
-        store.update_task_status(issue_id, task_id, "failed")
-        store.log(issue_id, task_id, "validator", "max_retries_exceeded", {
+        store.update_task_status(issue_id, branch_id, "failed")
+        store.log(issue_id, branch_id, "validator", "max_retries_exceeded", {
             "attempts": new_iteration,
-        })
-        print(f"[QA] Task {task_id} — FAIL (attempt {new_iteration}/{max_retries}, escalating to Architect)")
+        }, summary=f"Max retries hit for [{branch_id}]")
+        print(f"[QA] [{branch_id}] — FAIL (attempt {new_iteration}/{max_retries}, escalating to Architect)")
         return {
             "iteration_count": new_iteration,
             "review_feedback": f"Max retries ({max_retries}) exceeded. Validator feedback:\n{verdict_text}",
@@ -176,7 +229,7 @@ def validator(state: AgentState) -> dict:
             "next_node": "architect",
         }
 
-    print(f"[QA] Task {task_id} — FAIL (attempt {new_iteration}/{max_retries}, retrying)")
+    print(f"[QA] [{branch_id}] — FAIL (attempt {new_iteration}/{max_retries}, retrying)")
     return {
         "iteration_count": new_iteration,
         "review_feedback": verdict_text,

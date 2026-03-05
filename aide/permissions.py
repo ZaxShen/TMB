@@ -2,15 +2,15 @@
 
 Three layers:
 
-1. AIDE write allowlist — agents may only write doc/DISCUSSION.md and
-   doc/BLUEPRINT.md inside the AIDE directory.
+1. AIDE write allowlist — agents may only write specific doc files
+   inside the AIDE directory.
 
 2. Project blacklist — agents can NEVER access paths matching patterns
    in config/project.yaml → blacklist[]. Applies to all nodes.
 
 3. Node-level access — certain AIDE docs are restricted to specific nodes.
-   GOALS.md and DISCUSSION.md are architect-only. Executors and validators
-   get their task info from the DB, never from high-level docs.
+   High-level docs (GOALS, DISCUSSION, BLUEPRINT, FLOWCHART) are architect-only.
+   EXECUTION.md is readable by executor. QA_PLAN.md is readable by validator.
 """
 
 from __future__ import annotations
@@ -26,6 +26,9 @@ from aide.config import _AIDE_ROOT, load_project_config
 _AIDE_WRITABLE = {
     _AIDE_ROOT / "doc" / "DISCUSSION.md",
     _AIDE_ROOT / "doc" / "BLUEPRINT.md",
+    _AIDE_ROOT / "doc" / "FLOWCHART.md",
+    _AIDE_ROOT / "doc" / "EXECUTION.md",
+    _AIDE_ROOT / "doc" / "QA_PLAN.md",
 }
 
 
@@ -41,13 +44,13 @@ def assert_aide_write(path: Path):
 
 # ── Node-level access control ──────────────────────────────
 
-# Paths inside the project that only specific nodes may access.
-# If a path matches, only the listed nodes can read it.
-# Everyone else is blocked.
 _NODE_RESTRICTED: dict[str, set[str]] = {
     "AIDE/doc/GOALS.md": {"architect", "gatekeeper"},
     "AIDE/doc/DISCUSSION.md": {"architect"},
     "AIDE/doc/BLUEPRINT.md": {"architect", "cto"},
+    "AIDE/doc/FLOWCHART.md": {"architect", "cto"},
+    "AIDE/doc/EXECUTION.md": {"architect", "executor"},
+    "AIDE/doc/QA_PLAN.md": {"architect", "validator"},
 }
 
 

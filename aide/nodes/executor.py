@@ -4,12 +4,39 @@ from __future__ import annotations
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from aide.config import get_llm, load_prompt, load_nodes_config, get_project_root
+from aide.config import get_llm, load_prompt, load_nodes_config, get_project_root, _AIDE_ROOT
 from aide.state import AgentState
 from aide.store import Store
 from aide.tools import get_tools_for_node
 
 _MAX_TOOL_ROUNDS = 15
+
+
+def _read_execution_plan_section(branch_id: str) -> str:
+    """Extract the section for a specific task from doc/EXECUTION.md."""
+    path = _AIDE_ROOT / "doc" / "EXECUTION.md"
+    if not path.exists():
+        return ""
+    content = path.read_text()
+    task_header = f"## Task {branch_id}"
+    lines = content.split("\n")
+
+    task_start = None
+    task_end = None
+    for i, line in enumerate(lines):
+        if line.strip().startswith(task_header):
+            task_start = i
+        elif task_start is not None and line.strip().startswith("## Task "):
+            task_end = i
+            break
+
+    if task_start is None:
+        return ""
+
+    if task_end is None:
+        task_end = len(lines)
+
+    return "\n".join(lines[task_start:task_end]).strip()
 
 
 def _normalize_content(content) -> str:
@@ -51,38 +78,46 @@ def executor(state: AgentState) -> dict:
         }
 
     task = blueprint[idx]
-    task_id = task["task_id"]
+    branch_id = task["branch_id"]
     feedback = state.get("review_feedback", "")
     is_retry = bool(feedback)
 
-    db_task = store.get_task_row(issue_id, task_id)
+    db_task = store.get_task_row(issue_id, branch_id)
     description = db_task["description"] if db_task else task["description"]
     success_criteria = db_task["success_criteria"] if db_task else task["success_criteria"]
 
+    exec_plan_section = _read_execution_plan_section(branch_id)
+
     total = len(blueprint)
     if is_retry:
-        print(f"[SWE] Task {task_id}/{total} — retrying: {description[:60]}")
+        print(f"[SWE] [{branch_id}] {total} tasks — retrying: {description[:60]}")
     else:
-        print(f"[SWE] Task {task_id}/{total} — starting: {description[:60]}")
+        print(f"[SWE] [{branch_id}] {total} tasks — starting: {description[:60]}")
 
-    store.update_task_status(issue_id, task_id, "in_progress", increment_attempts=True)
-    store.log(issue_id, task_id, "executor", "task_started" if not is_retry else "task_retried", {
-        "description": description,
-    })
+    store.update_task_status(issue_id, branch_id, "in_progress", increment_attempts=True)
+    task_title = task.get("title") or description[:80]
+    store.log(issue_id, branch_id, "executor",
+              "task_started" if not is_retry else "task_retried",
+              {"description": description},
+              summary=f"{'Retry' if is_retry else 'Start'}: {task_title}")
 
     task_prompt = (
         f"Execute the following task:\n\n"
-        f"Task ID: {task_id}\n"
+        f"Branch ID: {branch_id}\n"
         f"Description: {description}\n"
         f"Tools available: {task.get('tools_required', [])}\n"
         f"Success criteria: {success_criteria}\n"
     )
+
+    if exec_plan_section:
+        task_prompt += f"\nDetailed execution plan:\n{exec_plan_section}\n"
 
     if feedback:
         task_prompt += f"\nPrevious attempt feedback:\n{feedback}\n"
 
     task_prompt += (
         "\nExecute the task. If the task is unclear or blocked, "
+        "or if the execution plan steps don't match reality, "
         "set status to 'escalate' with a reason. "
         "Return your structured log as specified in your instructions."
     )
@@ -126,17 +161,17 @@ def executor(state: AgentState) -> dict:
     is_escalation = "escalate" in execution_log.lower()
 
     if is_escalation:
-        store.update_task_status(issue_id, task_id, "escalated")
-        store.log(issue_id, task_id, "executor", "task_escalated", {
+        store.update_task_status(issue_id, branch_id, "escalated")
+        store.log(issue_id, branch_id, "executor", "task_escalated", {
             "reason": execution_log[:1000],
-        })
-        print(f"[SWE] Task {task_id} — ESCALATED to Architect")
+        }, summary=f"Escalated: {task_title}")
+        print(f"[SWE] [{branch_id}] — ESCALATED to Architect")
     else:
-        store.log(issue_id, task_id, "executor", "task_executed", {
+        store.log(issue_id, branch_id, "executor", "task_executed", {
             "output": execution_log[:2000],
             "tool_calls": len(tool_outputs),
-        })
-        print(f"[SWE] Task {task_id} — execution complete, sending to QA")
+        }, summary=f"Executed: {task_title} ({len(tool_outputs)} tool calls)")
+        print(f"[SWE] [{branch_id}] — execution complete, sending to QA")
 
     return {
         "execution_log": execution_log,

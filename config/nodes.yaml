@@ -3,7 +3,9 @@ architect:
     provider: anthropic
     name: claude-opus-4-6
     temperature: 0.3
-  tools: []
+  tools:
+    - file_read
+    - search
 
 executor:
   model:

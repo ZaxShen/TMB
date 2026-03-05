@@ -1,8 +1,8 @@
-"""Discussion node — file-based Architect-CTO Q&A before blueprint creation.
+"""Discussion node — file-based Architect–Chief Architect Q&A before blueprint creation.
 
 Flow:
   1. Architect writes questions to doc/DISCUSSION.md with an answer section
-  2. Terminal prompts CTO to edit the file, then press Enter
+  2. Terminal prompts Chief Architect to edit the file, then press Enter
   3. System reads the answer from below a marker in the file
   4. Repeat until Architect says READY TO BUILD
 
@@ -18,15 +18,15 @@ from aide.permissions import assert_aide_write
 from aide.store import Store
 
 
-_DISCUSSION_SYSTEM = """You are a Senior Systems Architect. The CTO has written goals in doc/GOALS.md.
-Your job is to discuss these goals with the CTO to clarify requirements before building a blueprint.
+_DISCUSSION_SYSTEM = """You are a Senior Systems Architect. The Chief Architect has written goals in doc/GOALS.md.
+Your job is to discuss these goals with the Chief Architect to clarify requirements before building a blueprint.
 
 Rules:
 - Ask focused, specific questions to eliminate ambiguity.
 - Challenge assumptions if you see risks or contradictions.
 - When you fully understand the requirements, say exactly: READY TO BUILD
 - Keep each response concise — max 3-4 questions at a time.
-- Number your questions so the CTO can answer by number.
+- Number your questions so the Chief Architect can answer by number.
 - Reference the project context when relevant.
 """
 
@@ -58,7 +58,7 @@ def _write_discussion_file(
     lines += ["---", ""]
 
     for d in discussions:
-        label = "**CTO**" if d["role"] == "cto" else "**Architect**"
+        label = "**Chief Architect**" if d["role"] == "cto" else "**Architect**"
         lines += [f"### {label}", ""]
         lines.append(d["content"])
         lines += ["", "---", ""]
@@ -81,7 +81,7 @@ def _write_discussion_file(
 
 
 def _read_cto_answer(path) -> str:
-    """Read the CTO's answer from below the marker in DISCUSSION.md."""
+    """Read the Chief Architect's answer from below the marker in DISCUSSION.md."""
     if not path.exists():
         return ""
     content = path.read_text()
@@ -98,8 +98,8 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
 
     initial_prompt = (
         f"## Project Context\n{project_context}\n\n"
-        f"## CTO's Goals\n{goals_md}\n\n"
-        "Review these goals. Ask the CTO any clarifying questions, "
+        f"## Chief Architect's Goals\n{goals_md}\n\n"
+        "Review these goals. Ask the Chief Architect any clarifying questions, "
         "or if everything is clear, say READY TO BUILD."
     )
 
@@ -144,9 +144,10 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
             print(f"\n[Architect]:\n{architect_msg}")
 
             if _READY_SIGNAL in architect_msg.upper():
+                rounds = len(store.get_discussions(issue_id))
                 store.log(issue_id, None, "architect", "discussion_complete", {
-                    "rounds": len(store.get_discussions(issue_id)),
-                })
+                    "rounds": rounds,
+                }, summary=f"Discussion complete after {rounds} messages")
                 _write_discussion_file(
                     discussion_path, store, issue_id, waiting_for_answer=False
                 )
@@ -172,7 +173,7 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
 
         store.add_discussion(issue_id, "cto", cto_answer)
         messages.append(HumanMessage(content=cto_answer))
-        print(f"[CTO]: {cto_answer[:120]}...")
+        print(f"[Chief Architect]: {cto_answer[:120]}...")
 
     discussion_md = store.export_discussion_md(issue_id)
     return discussion_md

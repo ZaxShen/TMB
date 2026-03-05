@@ -1,31 +1,160 @@
-"""Architect node — produces the blueprint from goals + discussion."""
+"""Architect nodes — planning and execution plan generation.
+
+Two graph nodes:
+  architect_plan          — explores codebase, then generates BLUEPRINT.md, FLOWCHART.md, QA_PLAN.md
+  architect_execution_plan — generates EXECUTION.md (after approval)
+"""
 
 from __future__ import annotations
 
 import json
 
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from aide.config import get_llm, load_prompt, _AIDE_ROOT
+from aide.config import get_llm, load_prompt, load_nodes_config, get_project_root, _AIDE_ROOT
 from aide.permissions import assert_aide_write
 from aide.state import AgentState
 from aide.store import Store
+from aide.tools import get_tools_for_node
 
+_MAX_EXPLORE_ROUNDS = 10
+
+
+def _normalize_content(content) -> str:
+    if not content:
+        return ""
+    if isinstance(content, list):
+        return "\n".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in content
+        )
+    return str(content)
+
+
+def _write_doc(name: str, content: str):
+    doc_dir = _AIDE_ROOT / "doc"
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    path = doc_dir / name
+    assert_aide_write(path)
+    path.write_text(content)
+
+
+def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds):
+    """Run a multi-turn tool loop, returning the final response."""
+    response = None
+    for _ in range(max_rounds):
+        response = llm_with_tools.invoke(messages)
+        messages.append(response)
+
+        if not hasattr(response, "tool_calls") or not response.tool_calls:
+            break
+
+        for tc in response.tool_calls:
+            tool_fn = tool_map.get(tc["name"])
+            if tool_fn:
+                try:
+                    result = tool_fn.invoke(tc["args"])
+                except Exception as e:
+                    result = f"[error] {e}"
+                result_str = str(result)
+                if len(result_str) > 8000:
+                    result_str = result_str[:8000] + "\n... (truncated)"
+                print(f"  [architect:{tc['name']}] done")
+                messages.append(ToolMessage(content=result_str, tool_call_id=tc["id"]))
+            else:
+                messages.append(ToolMessage(
+                    content=f"[error] Unknown tool: {tc['name']}",
+                    tool_call_id=tc["id"],
+                ))
+    return response, messages
+
+
+EXPLORE_INSTRUCTION = (
+    "Before creating the blueprint, explore the existing codebase to understand its "
+    "architecture, key modules, entry points, dependencies, and patterns.\n\n"
+    "Use `file_read` to read important source files and `search` to find patterns.\n"
+    "Focus on:\n"
+    "- Entry points (main files, app factories, route definitions)\n"
+    "- Core business logic modules\n"
+    "- Data models / schemas\n"
+    "- Configuration and dependency files\n"
+    "- Existing test structure\n\n"
+    "When you have a solid understanding of the codebase, summarize your findings "
+    "and then say: EXPLORATION COMPLETE\n\n"
+    "Your summary should cover:\n"
+    "1. Tech stack and frameworks\n"
+    "2. Project structure and key modules\n"
+    "3. Current architecture patterns\n"
+    "4. Areas relevant to the goals\n"
+)
 
 BLUEPRINT_INSTRUCTION = (
-    "Based on the goals, discussion, and any feedback, produce a Blueprint as a JSON array. "
-    "Each element must have: task_id (int), description (str), tools_required (list[str]), "
-    "success_criteria (str). Return ONLY the JSON array, no other text."
+    "Based on the goals, discussion, codebase exploration, and any feedback, "
+    "produce a Blueprint as a JSON array.\n\n"
+    "Each element must have: branch_id (str), description (str), tools_required (list[str]), "
+    "success_criteria (str).\n\n"
+    "## Branch ID Convention\n"
+    "Branch IDs are **hierarchical strings** that encode semantic relationships:\n"
+    "- Root branches: \"1\", \"2\", \"3\"\n"
+    "- Sub-branches: \"1.1\", \"1.2\" (children of branch 1)\n"
+    "- Deeper: \"1.1.1\" (child of branch 1.1)\n\n"
+    "If an EXISTING TASK TREE is provided below, assign IDs that reflect relationships:\n"
+    "- New work extending existing branch \"2\" → use \"2.1\", \"2.2\"\n"
+    "- Completely new, unrelated work → use the next unused root ID\n\n"
+    "If NO existing tasks exist, start from \"1\".\n\n"
+    "Return ONLY the JSON array, no other text."
+)
+
+FLOWCHART_INSTRUCTION = (
+    "Based on the blueprint you just created and your understanding of the codebase, "
+    "produce a high-level architecture or data-flow diagram in Mermaid syntax. "
+    "Use `graph TD` or `flowchart TD`. "
+    "The diagram should show the main components/steps and their relationships. "
+    "Return ONLY the Mermaid code block (```mermaid ... ```), no other text."
+)
+
+QA_PLAN_INSTRUCTION = (
+    "Based on the blueprint and your understanding of the codebase, produce a QA plan in Markdown. "
+    "For each task (or group of related tasks), specify:\n"
+    "- **What to test**: the specific behavior or output to verify\n"
+    "- **How to test**: concrete commands, assertions, or checks\n"
+    "- **Risk level**: high/medium/low — focus detail on high-risk items\n"
+    "- **Edge cases**: any tricky scenarios the QA engineer should watch for\n\n"
+    "Return ONLY the Markdown content, no JSON wrapping."
+)
+
+EXECUTION_PLAN_INSTRUCTION = (
+    "The Chief Architect has approved the blueprint. Now produce a detailed execution plan.\n"
+    "For each task, write step-by-step instructions that a junior developer can follow.\n"
+    "Use your tools to read relevant source files if you need to understand existing code.\n"
+    "Include:\n"
+    "- Exact commands to run\n"
+    "- File paths to create or modify\n"
+    "- Expected outputs at each step\n"
+    "- Dependencies on previous tasks\n\n"
+    "Format as Markdown with a ## section per task using the branch_id: `## Task <branch_id>: <title>`.\n"
+    "Example: `## Task 1.1: Add email verification`\n"
+    "Return ONLY the Markdown content."
 )
 
 
-def architect(state: AgentState) -> dict:
+def architect_plan(state: AgentState) -> dict:
+    """Explore codebase, then generate BLUEPRINT.md, FLOWCHART.md, and QA_PLAN.md."""
+    node_cfg = load_nodes_config().get("architect", {})
+    project_root = str(get_project_root())
     llm = get_llm("architect")
     system_prompt = load_prompt("architect")
     store = Store()
     issue_id = state.get("issue_id")
 
-    messages = [SystemMessage(content=system_prompt)]
+    tool_names = node_cfg.get("tools", [])
+    tools = get_tools_for_node(tool_names, project_root, node_name="architect")
+    tool_map = {t.name: t for t in tools} if tools else {}
+
+    if tools:
+        llm_with_tools = llm.bind_tools(tools)
+    else:
+        llm_with_tools = llm
 
     objective = state["objective"]
     feedback = state.get("review_feedback", "")
@@ -35,33 +164,63 @@ def architect(state: AgentState) -> dict:
 
     is_replan = bool(feedback)
 
-    if is_replan:
+    # ── 0. Explore the codebase ──────────────────────────────
+    exploration_summary = ""
+    if tools and not is_replan:
+        print("[ARCHITECT] Exploring codebase...")
+        explore_parts = []
+        if project_context:
+            explore_parts.append(f"## Project Context\n{project_context}")
+        explore_parts.append(f"## Goals\n{objective}")
+        if discussion:
+            explore_parts.append(f"## Discussion with Chief Architect\n{discussion}")
+        explore_parts.append(EXPLORE_INSTRUCTION)
+
+        explore_messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content="\n\n".join(explore_parts)),
+        ]
+
+        explore_response, explore_messages = _run_tool_loop(
+            llm_with_tools, explore_messages, tool_map, _MAX_EXPLORE_ROUNDS,
+        )
+        exploration_summary = _normalize_content(explore_response.content)
+        store.log(issue_id, None, "architect", "codebase_explored", {
+            "summary_length": len(exploration_summary),
+        }, summary="Explored codebase structure and key modules")
+        print(f"[ARCHITECT] Exploration complete ({len(exploration_summary)} chars)")
+    elif is_replan:
         print("[ARCHITECT] Re-planning based on feedback...")
     else:
         print("[ARCHITECT] Building blueprint from discussion...")
 
+    # ── 1. Generate Blueprint ────────────────────────────────
+    existing_tree = store.get_all_root_tasks()
     parts = []
     if project_context:
         parts.append(f"## Project Context\n{project_context}")
     parts.append(f"## Goals\n{objective}")
     if discussion:
-        parts.append(f"## Discussion with CTO\n{discussion}")
+        parts.append(f"## Discussion with Chief Architect\n{discussion}")
+    if exploration_summary:
+        parts.append(f"## Codebase Exploration\n{exploration_summary}")
+    if existing_tree:
+        tree_lines = [f"- **{t['branch_id']}**: {t['title']} [{t['status']}] (issue #{t['issue_id']}: {t['objective'][:60]})"
+                      for t in existing_tree]
+        parts.append(f"## Existing Task Tree\n" + "\n".join(tree_lines))
     if feedback:
         parts.append(f"## Previous Feedback / Escalation\n{feedback}")
     if escalation_log:
         parts.append(f"## Execution Log\n{escalation_log}")
     parts.append(BLUEPRINT_INSTRUCTION)
 
-    user_content = "\n\n".join(parts)
-    messages.append(HumanMessage(content=user_content))
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content="\n\n".join(parts)),
+    ]
 
     response = llm.invoke(messages)
-    raw = response.content or ""
-    if isinstance(raw, list):
-        raw = "\n".join(
-            block.get("text", "") if isinstance(block, dict) else str(block)
-            for block in raw
-        )
+    raw = _normalize_content(response.content)
 
     try:
         text = raw.strip()
@@ -76,17 +235,68 @@ def architect(state: AgentState) -> dict:
         store.log(issue_id, None, "architect", "blueprint_revised", {
             "reason": feedback[:500],
             "task_count": len(blueprint),
-        })
+        }, summary=f"Blueprint revised: {len(blueprint)} tasks")
 
     blueprint_md = store.export_blueprint_md(issue_id, blueprint)
-    doc_dir = _AIDE_ROOT / "doc"
-    doc_dir.mkdir(parents=True, exist_ok=True)
-    blueprint_path = doc_dir / "BLUEPRINT.md"
-    assert_aide_write(blueprint_path)
-    blueprint_path.write_text(blueprint_md)
-    print(f"[ARCHITECT] Blueprint saved to doc/BLUEPRINT.md")
+    _write_doc("BLUEPRINT.md", blueprint_md)
+    print(f"[ARCHITECT] Blueprint saved to doc/BLUEPRINT.md ({len(blueprint)} tasks)")
 
-    print(f"[ARCHITECT] Blueprint: {len(blueprint)} tasks")
+    # ── 2. Generate Flowchart ────────────────────────────────
+    print("[ARCHITECT] Generating flowchart...")
+    fc_parts = [
+        f"## Blueprint\n```json\n{json.dumps(blueprint, indent=2)}\n```",
+        f"## Goals\n{objective}",
+    ]
+    if exploration_summary:
+        fc_parts.append(f"## Codebase Understanding\n{exploration_summary}")
+    fc_parts.append(FLOWCHART_INSTRUCTION)
+
+    fc_messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content="\n\n".join(fc_parts)),
+    ]
+    fc_response = llm.invoke(fc_messages)
+    fc_raw = _normalize_content(fc_response.content)
+
+    flowchart_md = (
+        f"# Flowchart — Issue #{issue_id}\n\n"
+        f"**Objective**: {objective[:120]}\n\n"
+        f"{fc_raw}\n"
+    )
+    _write_doc("FLOWCHART.md", flowchart_md)
+    store.log(issue_id, None, "architect", "flowchart_generated", {},
+             summary="Generated FLOWCHART.md")
+    print("[ARCHITECT] Flowchart saved to doc/FLOWCHART.md")
+
+    # ── 3. Generate QA Plan ──────────────────────────────────
+    print("[ARCHITECT] Generating QA plan...")
+    qa_parts = [
+        f"## Blueprint\n```json\n{json.dumps(blueprint, indent=2)}\n```",
+        f"## Goals\n{objective}",
+    ]
+    if exploration_summary:
+        qa_parts.append(f"## Codebase Understanding\n{exploration_summary}")
+    qa_parts.append(QA_PLAN_INSTRUCTION)
+
+    qa_messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content="\n\n".join(qa_parts)),
+    ]
+    qa_response = llm.invoke(qa_messages)
+    qa_raw = _normalize_content(qa_response.content)
+
+    qa_plan_md = (
+        f"# QA Plan — Issue #{issue_id}\n\n"
+        f"**Objective**: {objective[:120]}\n\n"
+        f"---\n\n"
+        f"{qa_raw}\n"
+    )
+    _write_doc("QA_PLAN.md", qa_plan_md)
+    store.log(issue_id, None, "architect", "qa_plan_generated", {},
+             summary="Generated QA_PLAN.md")
+    print("[ARCHITECT] QA plan saved to doc/QA_PLAN.md")
+
+    print(f"[ARCHITECT] Planning complete: {len(blueprint)} tasks")
 
     return {
         "blueprint": blueprint,
@@ -96,4 +306,114 @@ def architect(state: AgentState) -> dict:
         "execution_log": "",
         "messages": state.get("messages", []) + [response],
         "next_node": "human_review",
+    }
+
+
+QUICK_TASK_INSTRUCTION = (
+    "You are handling a quick task directly — no SWE or QA involved.\n"
+    "The Chief Architect gave you a single instruction to execute yourself.\n\n"
+    "Steps:\n"
+    "1. Use `file_read` and `search` to understand the current state of relevant files.\n"
+    "2. Use `file_write` to make the changes directly.\n"
+    "3. If the instruction involves updating a doc/ file (FLOWCHART, BLUEPRINT, etc.), "
+    "read the existing file first, understand the codebase, then rewrite it.\n\n"
+    "When done, provide a short summary of what you changed."
+)
+
+
+def architect_quick_task(instruction: str, project_context: str, issue_id: int):
+    """Architect handles a simple task directly — no graph, no SWE, no QA."""
+    node_cfg = load_nodes_config().get("architect", {})
+    project_root = str(get_project_root())
+    llm = get_llm("architect")
+    system_prompt = load_prompt("architect")
+    store = Store()
+
+    quick_tools_names = list(set(node_cfg.get("tools", []) + ["file_write"]))
+    tools = get_tools_for_node(quick_tools_names, project_root, node_name="architect")
+    tool_map = {t.name: t for t in tools}
+    llm_with_tools = llm.bind_tools(tools)
+
+    parts = []
+    if project_context:
+        parts.append(f"## Project Context\n{project_context}")
+    parts.append(f"## Instruction\n{instruction}")
+    parts.append(QUICK_TASK_INSTRUCTION)
+
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content="\n\n".join(parts)),
+    ]
+
+    print("[ARCHITECT] Working on quick task...")
+    response, messages = _run_tool_loop(
+        llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS,
+    )
+    result = _normalize_content(response.content)
+
+    store.log(issue_id, None, "architect", "quick_task_completed", {},
+             summary=f"Quick: {instruction[:150]}")
+    print(f"[ARCHITECT] Done.")
+    return result
+
+
+def architect_execution_plan(state: AgentState) -> dict:
+    """Generate EXECUTION.md — detailed step-by-step plan for SWEs.
+
+    Uses tools to read relevant source files for accurate step-by-step instructions.
+    """
+    node_cfg = load_nodes_config().get("architect", {})
+    project_root = str(get_project_root())
+    llm = get_llm("architect")
+    system_prompt = load_prompt("architect")
+    store = Store()
+    issue_id = state.get("issue_id")
+
+    tool_names = node_cfg.get("tools", [])
+    tools = get_tools_for_node(tool_names, project_root, node_name="architect")
+    tool_map = {t.name: t for t in tools} if tools else {}
+
+    if tools:
+        llm_with_tools = llm.bind_tools(tools)
+    else:
+        llm_with_tools = llm
+
+    blueprint = state["blueprint"]
+    objective = state["objective"]
+    project_context = state.get("project_context", "")
+
+    print("[ARCHITECT] Generating execution plan...")
+
+    parts = []
+    if project_context:
+        parts.append(f"## Project Context\n{project_context}")
+    parts.append(f"## Goals\n{objective}")
+    parts.append(f"## Approved Blueprint\n```json\n{json.dumps(blueprint, indent=2)}\n```")
+    parts.append(EXECUTION_PLAN_INSTRUCTION)
+
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content="\n\n".join(parts)),
+    ]
+
+    response, messages = _run_tool_loop(
+        llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS,
+    )
+    raw = _normalize_content(response.content)
+
+    execution_md = (
+        f"# Execution Plan — Issue #{issue_id}\n\n"
+        f"**Objective**: {objective[:120]}\n\n"
+        f"---\n\n"
+        f"{raw}\n"
+    )
+    _write_doc("EXECUTION.md", execution_md)
+    store.log(issue_id, None, "architect", "execution_plan_generated", {
+        "task_count": len(blueprint),
+    }, summary=f"Generated EXECUTION.md for {len(blueprint)} tasks")
+    print("[ARCHITECT] Execution plan saved to doc/EXECUTION.md")
+
+    return {
+        "messages": state.get("messages", []) + [response],
+        "next_node": "executor",
     }

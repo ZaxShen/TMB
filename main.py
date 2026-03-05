@@ -1,10 +1,12 @@
 """AIDE CLI entry point.
 
 Usage:
-  uv run main.py           Run the full workflow (reads doc/GOALS.md)
-  uv run main.py setup     Interactive project setup
-  uv run main.py log       Show recent issues
-  uv run main.py log <id>  Show issue details + ledger
+  uv run main.py                        Full workflow (reads doc/GOALS.md)
+  uv run main.py "update FLOWCHART"     Quick task (Architect only, no SWE/QA)
+  uv run main.py setup                  Interactive project setup
+  uv run main.py log                    Show recent issues
+  uv run main.py log <id>               Show issue details + ledger
+  uv run main.py report <id>            Export full report as markdown
 """
 
 from __future__ import annotations
@@ -82,7 +84,8 @@ def _scan_project_context(store: Store, issue_id: int, goals_md: str) -> str:
         "next_node": "",
     }
     result = run_gatekeeper(gk_state)
-    store.log(issue_id, None, "gatekeeper", "context_scanned", {})
+    store.log(issue_id, None, "gatekeeper", "context_scanned", {},
+              summary="Scanned project directory tree")
     return result["project_context"]
 
 
@@ -95,7 +98,8 @@ def _tasks_to_blueprint(tasks: list[dict]) -> list[dict]:
             tools = json.loads(tools)
         blueprint.append(
             {
-                "task_id": t["task_id"],
+                "branch_id": str(t["branch_id"]),
+                "title": t.get("title", ""),
                 "description": t["description"],
                 "tools_required": tools,
                 "success_criteria": t["success_criteria"],
@@ -108,23 +112,54 @@ def _show_blueprint(tasks: list[dict]):
     print()
     print(f"[ARCHITECT] Blueprint ({len(tasks)} tasks) — see doc/BLUEPRINT.md")
     for t in tasks:
-        print(f"  {t['task_id']}. {t['description'][:80]}")
+        bid = t.get("branch_id") or t.get("task_id", "?")
+        label = t.get("title") or t["description"][:80]
+        print(f"  [{bid}] {label}")
     print()
 
 
 def _approve_blueprint(store: Store, issue_id: int) -> bool:
-    approval = input("[CTO] Approve this blueprint? (yes/no): ").strip().lower()
+    approval = input("[Chief Architect] Approve this blueprint? (yes/no): ").strip().lower()
     if approval not in ("yes", "y"):
-        store.log(issue_id, None, "cto", "blueprint_rejected", {})
+        store.log(issue_id, None, "cto", "blueprint_rejected", {},
+                  summary="Chief Architect rejected blueprint")
         store.close_issue(issue_id, "rejected")
         print("[AIDE] Blueprint rejected. Issue closed.")
         return False
 
-    store.log(issue_id, None, "cto", "blueprint_approved", {})
+    store.log(issue_id, None, "cto", "blueprint_approved", {},
+              summary="Chief Architect approved blueprint")
     print()
-    print("[AIDE] Blueprint approved. Starting execution...")
+    print("[AIDE] Blueprint approved. Generating execution plan...")
     print("-" * 40)
     return True
+
+
+def _quick_task(store: Store, instruction: str):
+    """Quick-task flow: gatekeeper → Architect handles directly. No SWE/QA."""
+    project_cfg = load_project_config()
+    project_root = get_project_root()
+
+    objective = instruction[:120].strip()
+    issue_id = store.create_issue(objective, instruction)
+
+    print(f"[AIDE] Quick task — Issue #{issue_id}: {objective}")
+    print(f"[AIDE] Project: {project_cfg['name']}  |  Root: {project_root}")
+    print("-" * 40)
+
+    project_context = _scan_project_context(store, issue_id, instruction)
+
+    from aide.nodes.architect import architect_quick_task
+
+    result = architect_quick_task(instruction, project_context, issue_id)
+
+    store.close_issue(issue_id, "completed")
+    print("-" * 40)
+    print(f"[AIDE] Quick task complete. Issue #{issue_id} closed.")
+    if result:
+        print()
+        print(result[:500])
+    print()
 
 
 def _finalize_issue(store: Store, issue_id: int):
@@ -153,7 +188,33 @@ def _finalize_issue(store: Store, issue_id: int):
 
     print("-" * 40)
     store.print_summary(issue_id)
-    print("[AIDE] See doc/DISCUSSION.md and doc/BLUEPRINT.md for records.")
+    print("[AIDE] See doc/ for DISCUSSION, BLUEPRINT, FLOWCHART, EXECUTION, and QA_PLAN.")
+
+
+def _run_execution_plan(
+    store: Store,
+    issue_id: int,
+    goals_md: str,
+    project_context: str,
+    blueprint: list[dict],
+):
+    """Generate EXECUTION.md by calling architect_execution_plan directly."""
+    from aide.nodes.architect import architect_execution_plan
+
+    state = {
+        "objective": goals_md,
+        "project_context": project_context,
+        "discussion": "",
+        "issue_id": issue_id,
+        "blueprint": blueprint,
+        "current_task_idx": 0,
+        "execution_log": "",
+        "review_feedback": "",
+        "iteration_count": 0,
+        "messages": [],
+        "next_node": "",
+    }
+    architect_execution_plan(state)
 
 
 def _run_execution(
@@ -192,7 +253,7 @@ def _run_execution(
 
 
 def _fresh_start(store: Store):
-    """Full workflow from scratch: goals → discuss → blueprint → approve → execute."""
+    """Full workflow: goals → discuss → plan (blueprint + flowchart + QA) → approve → execution plan → execute."""
     project_cfg = load_project_config()
     project_root = get_project_root()
 
@@ -214,6 +275,7 @@ def _fresh_start(store: Store):
     graph = build_graph()
     thread = {"configurable": {"thread_id": f"issue-{issue_id}"}}
 
+    # architect_plan runs and halts at interrupt
     state = graph.invoke(
         {
             "objective": goals_md,
@@ -238,10 +300,13 @@ def _fresh_start(store: Store):
         sys.exit(1)
 
     _show_blueprint(blueprint)
+    print("[AIDE] Review doc/BLUEPRINT.md, doc/FLOWCHART.md, and doc/QA_PLAN.md")
+    print()
 
     if not _approve_blueprint(store, issue_id):
         sys.exit(0)
 
+    # Resume: architect_execution_plan → executor ↔ validator
     state = graph.invoke(None, config=thread)
 
     _finalize_issue(store, issue_id)
@@ -255,10 +320,11 @@ def _resume(store: Store, issue: dict):
 
     Phases cascade: completing one phase falls through to the next.
       1. Discussion incomplete → resume discussion
-      2. No tasks in DB       → run architect for blueprint + approve + execute
+      2. No tasks in DB       → run architect_plan → approve → execution plan → execute
       3. Blueprint not approved → show blueprint, ask approval
-      4. Pending/failed tasks  → resume execution from first actionable task
-      5. All tasks done        → close issue
+      4. Blueprint approved but no execution plan → generate EXECUTION.md
+      5. Pending/failed tasks  → resume execution from first actionable task
+      6. All tasks done        → close issue
     """
     issue_id = issue["id"]
     goals_md = issue["goals_md"]
@@ -284,10 +350,10 @@ def _resume(store: Store, issue: dict):
 
         run_discussion(goals_md, ctx, store, issue_id)
 
-    # Phase 2: No tasks → need architect to generate blueprint
+    # Phase 2: No tasks → need architect_plan to generate blueprint + flowchart + QA plan
     tasks = store.get_tasks(issue_id)
     if not tasks:
-        print("[AIDE] Phase: blueprint (pending)")
+        print("[AIDE] Phase: planning (pending)")
         ctx = ensure_context()
         discussion_md = store.export_discussion_md(issue_id)
 
@@ -325,6 +391,7 @@ def _resume(store: Store, issue: dict):
             sys.exit(0)
 
         # Within same process — MemorySaver still alive, resume graph
+        # architect_execution_plan → executor ↔ validator
         state = graph.invoke(None, config=thread)
         _finalize_issue(store, issue_id)
         return
@@ -335,9 +402,15 @@ def _resume(store: Store, issue: dict):
         _show_blueprint(tasks)
         if not _approve_blueprint(store, issue_id):
             sys.exit(0)
-        # Fall through to phase 4
 
-    # Phase 4: Approved — find first pending/failed task
+    # Phase 4: Approved but no execution plan → generate EXECUTION.md
+    if not store.has_event(issue_id, "execution_plan_generated"):
+        print("[AIDE] Phase: execution plan (pending)")
+        ctx = ensure_context()
+        blueprint = _tasks_to_blueprint(tasks)
+        _run_execution_plan(store, issue_id, goals_md, ctx, blueprint)
+
+    # Phase 5: Approved + execution plan — find first pending/failed task
     actionable = store.get_first_actionable_task(issue_id)
     if not actionable:
         print("[AIDE] All tasks already completed.")
@@ -345,16 +418,17 @@ def _resume(store: Store, issue: dict):
         store.print_summary(issue_id)
         return
 
+    tasks = store.get_tasks(issue_id)
     blueprint = _tasks_to_blueprint(tasks)
     start_idx = next(
-        (i for i, t in enumerate(blueprint) if t["task_id"] == actionable["task_id"]),
+        (i for i, t in enumerate(blueprint) if t["branch_id"] == actionable["branch_id"]),
         0,
     )
     completed_count = sum(1 for t in tasks if t["status"] == "completed")
     total = len(tasks)
 
     print(
-        f"[AIDE] Phase: execution (task {actionable['task_id']}/{total}, "
+        f"[AIDE] Phase: execution ([{actionable['branch_id']}] {completed_count}/{total}, "
         f"{completed_count} already done)"
     )
     print("-" * 40)
@@ -508,6 +582,9 @@ def report(issue_id: int):
     print(f"       Open it in your editor for full details.")
 
 
+_KNOWN_COMMANDS = {"setup", "log", "report", "help", "--help", "-h"}
+
+
 def main():
     if len(sys.argv) == 1:
         run()
@@ -525,15 +602,20 @@ def main():
             print("Usage: uv run main.py report <issue_id>")
             sys.exit(1)
         report(int(sys.argv[2]))
+    elif cmd not in _KNOWN_COMMANDS:
+        instruction = " ".join(sys.argv[1:])
+        store = Store()
+        _quick_task(store, instruction)
     else:
         print("AIDE — AI Direction & Execution")
         print()
         print("Usage:")
-        print("  uv run main.py              Run workflow (reads doc/GOALS.md)")
-        print("  uv run main.py setup        Interactive project setup")
-        print("  uv run main.py log          Show recent issues")
-        print("  uv run main.py log <id>     Show issue details + ledger")
-        print("  uv run main.py report <id>  Export full report as markdown")
+        print("  uv run main.py                        Full workflow (reads doc/GOALS.md)")
+        print('  uv run main.py "update FLOWCHART"     Quick task (Architect only, no SWE/QA)')
+        print("  uv run main.py setup                  Interactive project setup")
+        print("  uv run main.py log                    Show recent issues")
+        print("  uv run main.py log <id>               Show issue details + ledger")
+        print("  uv run main.py report <id>            Export full report as markdown")
         sys.exit(1)
 
 

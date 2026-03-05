@@ -114,6 +114,30 @@ class Store:
         row = self._conn.execute("SELECT * FROM issues WHERE id = ?", (issue_id,)).fetchone()
         return dict(row) if row else None
 
+    def get_open_issue(self) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM issues WHERE status = 'open' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        return dict(row) if row else None
+
+    # ── Ledger queries ───────────────────────────────────────
+
+    def has_event(self, issue_id: int, event_type: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM ledger WHERE issue_id = ? AND event_type = ? LIMIT 1",
+            (issue_id, event_type),
+        ).fetchone()
+        return row is not None
+
+    # ── Task queries ─────────────────────────────────────────
+
+    def get_first_actionable_task(self, issue_id: int) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM tasks WHERE issue_id = ? AND status IN ('pending', 'failed') ORDER BY task_id LIMIT 1",
+            (issue_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
     # ── Discussions ─────────────────────────────────────────
 
     def add_discussion(self, issue_id: int, role: str, content: str):

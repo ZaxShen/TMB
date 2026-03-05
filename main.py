@@ -9,14 +9,346 @@ Usage:
 
 from __future__ import annotations
 
-import sys
 import json
-from pathlib import Path
+import re
+import sys
 
 import yaml
 
 from aide.config import _AIDE_ROOT, load_project_config, get_project_root
 from aide.store import Store
+
+
+# ── Helpers ──────────────────────────────────────────────────
+
+
+def _read_goals_md() -> str:
+    """Read and clean doc/GOALS.md, stripping template boilerplate."""
+    goals_path = _AIDE_ROOT / "doc" / "GOALS.md"
+    if not goals_path.exists():
+        goals_path.parent.mkdir(parents=True, exist_ok=True)
+        goals_path.write_text(
+            "# Goals\n\n"
+            "Write your goals below. The Architect will read this file and discuss with you.\n\n"
+            "---\n\n"
+        )
+        print(f"[AIDE] Created {goals_path}")
+        print("       Write your goals there, then run again.")
+        sys.exit(1)
+
+    goals_raw = goals_path.read_text().strip()
+    goals_md = re.sub(r"<!--.*?-->", "", goals_raw, flags=re.DOTALL).strip()
+    goals_md = re.sub(
+        r"^# Goals\s*\n+Write your goals.*?---\s*",
+        "",
+        goals_md,
+        flags=re.DOTALL,
+    ).strip()
+
+    if not goals_md:
+        print("[AIDE] doc/GOALS.md is empty or still has the template.")
+        print("       Write your goals there, then run again.")
+        sys.exit(1)
+
+    return goals_md
+
+
+def _derive_objective(goals_md: str) -> str:
+    lines = [
+        line
+        for line in goals_md.splitlines()
+        if line.strip()
+        and not line.startswith("#")
+        and not line.startswith("--")
+        and not line.startswith("<!--")
+    ]
+    return lines[0][:120] if lines else "Goals from doc/GOALS.md"
+
+
+def _scan_project_context(store: Store, issue_id: int, goals_md: str) -> str:
+    from aide.nodes.gatekeeper import gatekeeper as run_gatekeeper
+
+    gk_state = {
+        "objective": goals_md,
+        "project_context": "",
+        "discussion": "",
+        "issue_id": issue_id,
+        "store": store,
+        "blueprint": [],
+        "current_task_idx": 0,
+        "execution_log": "",
+        "review_feedback": "",
+        "iteration_count": 0,
+        "messages": [],
+        "next_node": "",
+    }
+    result = run_gatekeeper(gk_state)
+    store.log(issue_id, None, "gatekeeper", "context_scanned", {})
+    return result["project_context"]
+
+
+def _tasks_to_blueprint(tasks: list[dict]) -> list[dict]:
+    """Convert DB task rows back to the blueprint format expected by AgentState."""
+    blueprint = []
+    for t in tasks:
+        tools = t.get("tools_required", "[]")
+        if isinstance(tools, str):
+            tools = json.loads(tools)
+        blueprint.append(
+            {
+                "task_id": t["task_id"],
+                "description": t["description"],
+                "tools_required": tools,
+                "success_criteria": t["success_criteria"],
+            }
+        )
+    return blueprint
+
+
+def _show_blueprint(tasks: list[dict]):
+    print()
+    print(f"[ARCHITECT] Blueprint ({len(tasks)} tasks) — see doc/BLUEPRINT.md")
+    for t in tasks:
+        print(f"  {t['task_id']}. {t['description'][:80]}")
+    print()
+
+
+def _approve_blueprint(store: Store, issue_id: int) -> bool:
+    approval = input("[CTO] Approve this blueprint? (yes/no): ").strip().lower()
+    if approval not in ("yes", "y"):
+        store.log(issue_id, None, "cto", "blueprint_rejected", {})
+        store.close_issue(issue_id, "rejected")
+        print("[AIDE] Blueprint rejected. Issue closed.")
+        return False
+
+    store.log(issue_id, None, "cto", "blueprint_approved", {})
+    print()
+    print("[AIDE] Blueprint approved. Starting execution...")
+    print("-" * 40)
+    return True
+
+
+def _run_execution(
+    store: Store,
+    issue_id: int,
+    goals_md: str,
+    project_context: str,
+    discussion_md: str,
+    blueprint: list[dict],
+    start_task_idx: int,
+):
+    """Run the execution-only graph from a given task index."""
+    from aide.engine import build_execution_graph
+
+    graph = build_execution_graph()
+    graph.invoke(
+        {
+            "objective": goals_md,
+            "project_context": project_context,
+            "discussion": discussion_md,
+            "issue_id": issue_id,
+            "store": store,
+            "blueprint": blueprint,
+            "current_task_idx": start_task_idx,
+            "execution_log": "",
+            "review_feedback": "",
+            "iteration_count": 0,
+            "messages": [],
+            "next_node": "",
+        }
+    )
+
+    store.close_issue(issue_id, "completed")
+    print("-" * 40)
+    store.print_summary(issue_id)
+    print("[AIDE] Done. See doc/DISCUSSION.md and doc/BLUEPRINT.md for records.")
+
+
+# ── Fresh Start ──────────────────────────────────────────────
+
+
+def _fresh_start(store: Store):
+    """Full workflow from scratch: goals → discuss → blueprint → approve → execute."""
+    project_cfg = load_project_config()
+    project_root = get_project_root()
+
+    goals_md = _read_goals_md()
+    objective = _derive_objective(goals_md)
+    issue_id = store.create_issue(objective, goals_md)
+
+    print(f"[AIDE] Issue #{issue_id}: {objective}")
+    print(f"[AIDE] Project: {project_cfg['name']}  |  Root: {project_root}")
+
+    project_context = _scan_project_context(store, issue_id, goals_md)
+
+    from aide.nodes.discussion import run_discussion
+
+    discussion_md = run_discussion(goals_md, project_context, store, issue_id)
+
+    from aide.engine import build_graph
+
+    graph = build_graph()
+    thread = {"configurable": {"thread_id": f"issue-{issue_id}"}}
+
+    state = graph.invoke(
+        {
+            "objective": goals_md,
+            "project_context": project_context,
+            "discussion": discussion_md,
+            "issue_id": issue_id,
+            "store": store,
+            "blueprint": [],
+            "current_task_idx": 0,
+            "execution_log": "",
+            "review_feedback": "",
+            "iteration_count": 0,
+            "messages": [],
+            "next_node": "",
+        },
+        config=thread,
+    )
+
+    blueprint = state.get("blueprint", [])
+    if not blueprint:
+        print("[ARCHITECT] No blueprint was generated.")
+        store.close_issue(issue_id, "failed")
+        sys.exit(1)
+
+    _show_blueprint(blueprint)
+
+    if not _approve_blueprint(store, issue_id):
+        sys.exit(0)
+
+    state = graph.invoke(None, config=thread)
+
+    store.close_issue(issue_id, "completed")
+    print("-" * 40)
+    store.print_summary(issue_id)
+    print("[AIDE] Done. See doc/DISCUSSION.md and doc/BLUEPRINT.md for records.")
+
+
+# ── Resume ───────────────────────────────────────────────────
+
+
+def _resume(store: Store, issue: dict):
+    """Phase router — detect where the previous run stopped and continue.
+
+    Phases cascade: completing one phase falls through to the next.
+      1. Discussion incomplete → resume discussion
+      2. No tasks in DB       → run architect for blueprint + approve + execute
+      3. Blueprint not approved → show blueprint, ask approval
+      4. Pending/failed tasks  → resume execution from first actionable task
+      5. All tasks done        → close issue
+    """
+    issue_id = issue["id"]
+    goals_md = issue["goals_md"]
+    project_cfg = load_project_config()
+    project_root = get_project_root()
+
+    print(f"[AIDE] Resuming issue #{issue_id}: {issue['objective']}")
+    print(f"[AIDE] Project: {project_cfg['name']}  |  Root: {project_root}")
+
+    project_context = None
+
+    def ensure_context() -> str:
+        nonlocal project_context
+        if project_context is None:
+            project_context = _scan_project_context(store, issue_id, goals_md)
+        return project_context
+
+    # Phase 1: Discussion not complete → resume it
+    if not store.has_event(issue_id, "discussion_complete"):
+        print("[AIDE] Phase: discussion (incomplete)")
+        ctx = ensure_context()
+        from aide.nodes.discussion import run_discussion
+
+        run_discussion(goals_md, ctx, store, issue_id)
+
+    # Phase 2: No tasks → need architect to generate blueprint
+    tasks = store.get_tasks(issue_id)
+    if not tasks:
+        print("[AIDE] Phase: blueprint (pending)")
+        ctx = ensure_context()
+        discussion_md = store.export_discussion_md(issue_id)
+
+        from aide.engine import build_graph
+
+        graph = build_graph()
+        thread = {"configurable": {"thread_id": f"issue-{issue_id}"}}
+
+        state = graph.invoke(
+            {
+                "objective": goals_md,
+                "project_context": ctx,
+                "discussion": discussion_md,
+                "issue_id": issue_id,
+                "store": store,
+                "blueprint": [],
+                "current_task_idx": 0,
+                "execution_log": "",
+                "review_feedback": "",
+                "iteration_count": 0,
+                "messages": [],
+                "next_node": "",
+            },
+            config=thread,
+        )
+
+        blueprint = state.get("blueprint", [])
+        if not blueprint:
+            print("[ARCHITECT] No blueprint was generated.")
+            store.close_issue(issue_id, "failed")
+            sys.exit(1)
+
+        _show_blueprint(blueprint)
+
+        if not _approve_blueprint(store, issue_id):
+            sys.exit(0)
+
+        # Within same process — MemorySaver still alive, resume graph
+        state = graph.invoke(None, config=thread)
+        store.close_issue(issue_id, "completed")
+        print("-" * 40)
+        store.print_summary(issue_id)
+        print("[AIDE] Done. See doc/DISCUSSION.md and doc/BLUEPRINT.md for records.")
+        return
+
+    # Phase 3: Blueprint exists but not approved → show and ask
+    if not store.has_event(issue_id, "blueprint_approved"):
+        print("[AIDE] Phase: approval (pending)")
+        _show_blueprint(tasks)
+        if not _approve_blueprint(store, issue_id):
+            sys.exit(0)
+        # Fall through to phase 4
+
+    # Phase 4: Approved — find first pending/failed task
+    actionable = store.get_first_actionable_task(issue_id)
+    if not actionable:
+        print("[AIDE] All tasks already completed.")
+        store.close_issue(issue_id, "completed")
+        store.print_summary(issue_id)
+        return
+
+    blueprint = _tasks_to_blueprint(tasks)
+    start_idx = next(
+        (i for i, t in enumerate(blueprint) if t["task_id"] == actionable["task_id"]),
+        0,
+    )
+    completed_count = sum(1 for t in tasks if t["status"] == "completed")
+    total = len(tasks)
+
+    print(
+        f"[AIDE] Phase: execution (task {actionable['task_id']}/{total}, "
+        f"{completed_count} already done)"
+    )
+    print("-" * 40)
+
+    discussion_md = store.export_discussion_md(issue_id)
+    ctx = ensure_context()
+    _run_execution(store, issue_id, goals_md, ctx, discussion_md, blueprint, start_idx)
+
+
+# ── CLI Commands ─────────────────────────────────────────────
 
 
 def setup():
@@ -45,7 +377,6 @@ def setup():
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
     print(f"  Wrote {config_path}")
 
-    # Ensure doc/ exists with GOALS.md template
     doc_dir = _AIDE_ROOT / "doc"
     goals_path = doc_dir / "GOALS.md"
     if not goals_path.exists():
@@ -57,7 +388,6 @@ def setup():
         )
         print(f"  Created {goals_path}")
 
-    # .env setup
     env_path = _AIDE_ROOT / ".env"
     if env_path.exists():
         print(f"  .env already exists — skipping.")
@@ -93,119 +423,28 @@ def setup():
 
 
 def run():
-    """Full workflow: read goals → discuss → blueprint → execute → validate."""
-    project_cfg = load_project_config()
-    project_root = get_project_root()
+    """Phase-aware entry point: resumes an open issue or starts fresh."""
     store = Store()
+    existing = store.get_open_issue()
 
-    # ── Step 1: Read doc/GOALS.md ───────────────────────────
-    goals_path = _AIDE_ROOT / "doc" / "GOALS.md"
-    if not goals_path.exists():
-        print("[AIDE] No doc/GOALS.md found. Run 'uv run main.py setup' first,")
-        print("       then write your goals in doc/GOALS.md.")
-        sys.exit(1)
+    if existing:
+        goals_md = _read_goals_md()
 
-    goals_md = goals_path.read_text().strip()
-    if not goals_md or goals_md.startswith("# Goals\n\nWrite your goals"):
-        print("[AIDE] doc/GOALS.md is empty or still has the template.")
-        print("       Write your goals there, then run again.")
-        sys.exit(1)
+        if goals_md != existing["goals_md"]:
+            print(
+                f"[AIDE] GOALS.md has changed since issue #{existing['id']} was started."
+            )
+            choice = (
+                input("  (c)ontinue old issue / (n)ew issue? ").strip().lower()
+            )
+            if choice in ("n", "new"):
+                store.close_issue(existing["id"], "superseded")
+                existing = None
 
-    # Derive a short objective from the first heading or first line
-    objective_lines = [
-        line for line in goals_md.splitlines()
-        if line.strip() and not line.startswith("#") and not line.startswith("--") and not line.startswith("<!--")
-    ]
-    objective = objective_lines[0][:120] if objective_lines else "Goals from doc/GOALS.md"
-
-    issue_id = store.create_issue(objective, goals_md)
-
-    print(f"[AIDE] Issue #{issue_id}: {objective}")
-    print(f"[AIDE] Project: {project_cfg['name']}  |  Root: {project_root}")
-
-    # ── Step 2: Gatekeeper — scan project context ───────────
-    from aide.nodes.gatekeeper import gatekeeper as run_gatekeeper
-    from aide.state import AgentState
-
-    gk_state: AgentState = {
-        "objective": goals_md,
-        "project_context": "",
-        "discussion": "",
-        "issue_id": issue_id,
-        "store": store,
-        "blueprint": [],
-        "current_task_idx": 0,
-        "execution_log": "",
-        "review_feedback": "",
-        "iteration_count": 0,
-        "messages": [],
-        "next_node": "",
-    }
-    gk_result = run_gatekeeper(gk_state)
-    project_context = gk_result["project_context"]
-
-    store.log(issue_id, None, "gatekeeper", "context_scanned", {})
-
-    # ── Step 3: Discussion — Architect ↔ CTO ────────────────
-    from aide.nodes.discussion import run_discussion
-
-    discussion_md = run_discussion(goals_md, project_context, store, issue_id)
-
-    # ── Step 4: Blueprint — Architect plans ─────────────────
-    from aide.engine import build_graph
-
-    graph = build_graph()
-
-    state = graph.invoke(
-        {
-            "objective": goals_md,
-            "project_context": project_context,
-            "discussion": discussion_md,
-            "issue_id": issue_id,
-            "store": store,
-            "blueprint": [],
-            "current_task_idx": 0,
-            "execution_log": "",
-            "review_feedback": "",
-            "iteration_count": 0,
-            "messages": [],
-            "next_node": "",
-        }
-    )
-
-    blueprint = state.get("blueprint", [])
-    if not blueprint:
-        print("[ARCHITECT] No blueprint was generated.")
-        store.close_issue(issue_id, "failed")
-        sys.exit(1)
-
-    print()
-    print(f"[ARCHITECT] Blueprint ({len(blueprint)} tasks) — see doc/BLUEPRINT.md")
-    for t in blueprint:
-        print(f"  {t['task_id']}. {t['description'][:80]}")
-    print()
-
-    # ── Step 5: CTO approves blueprint ──────────────────────
-    approval = input("[CTO] Approve this blueprint? (yes/no): ").strip().lower()
-    if approval not in ("yes", "y"):
-        store.log(issue_id, None, "cto", "blueprint_rejected", {})
-        store.close_issue(issue_id, "rejected")
-        print("[AIDE] Blueprint rejected. Issue closed.")
-        sys.exit(0)
-
-    store.log(issue_id, None, "cto", "blueprint_approved", {})
-    print()
-    print("[AIDE] Blueprint approved. Starting execution...")
-    print("-" * 40)
-
-    # ── Step 6: Execute — SWE + QA loop ─────────────────────
-    state = graph.invoke(state)
-
-    store.close_issue(issue_id, "completed")
-
-    print("-" * 40)
-    store.print_summary(issue_id)
-    print("[AIDE] Done. See doc/DISCUSSION.md and doc/BLUEPRINT.md for records.")
+    if existing:
+        _resume(store, existing)
+    else:
+        _fresh_start(store)
 
 
 def log_history(issue_id: int | None = None):
@@ -216,7 +455,9 @@ def log_history(issue_id: int | None = None):
         store.print_summary(issue_id)
     else:
         conn = store._conn
-        rows = conn.execute("SELECT * FROM issues ORDER BY id DESC LIMIT 20").fetchall()
+        rows = conn.execute(
+            "SELECT * FROM issues ORDER BY id DESC LIMIT 20"
+        ).fetchall()
         if not rows:
             print("[AIDE] No issues found.")
             return
@@ -224,8 +465,16 @@ def log_history(issue_id: int | None = None):
         print("  Recent Issues")
         print(f"{'=' * 60}")
         for r in rows:
-            icon = {"open": "o", "completed": "x", "failed": "!", "rejected": "-"}.get(r["status"], "?")
-            print(f"  [{icon}] #{r['id']}  {r['objective'][:50]}  ({r['status']})")
+            icon = {
+                "open": "o",
+                "completed": "x",
+                "failed": "!",
+                "rejected": "-",
+                "superseded": "~",
+            }.get(r["status"], "?")
+            print(
+                f"  [{icon}] #{r['id']}  {r['objective'][:50]}  ({r['status']})"
+            )
         print()
         print("  View details: uv run main.py log <issue_id>")
         print()

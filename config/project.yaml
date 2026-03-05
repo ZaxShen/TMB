@@ -1,4 +1,4 @@
-name: my-project
+name: yik-yak-eda
 root_dir: ..              # relative to AIDE/ directory — '..' means the parent project
 test_command: pytest
 max_retry_per_task: 3

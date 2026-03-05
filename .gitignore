@@ -24,5 +24,4 @@ build/
 
 # Runtime data
 *.db
-doc/DISCUSSION.md
-doc/BLUEPRINT.md
+doc/

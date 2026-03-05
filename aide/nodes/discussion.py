@@ -29,24 +29,42 @@ _READY_SIGNAL = "READY TO BUILD"
 
 
 def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: int) -> str:
-    """Interactive discussion loop. Returns the full discussion as a string."""
+    """Interactive discussion loop. Returns the full discussion as a string.
+
+    If the DB already has discussion rows for this issue (resume scenario),
+    reconstruct the LLM message history so the Architect has full context.
+    """
     llm = get_llm("architect")
     doc_dir = _AIDE_ROOT / "doc"
 
+    initial_prompt = (
+        f"## Project Context\n{project_context}\n\n"
+        f"## CTO's Goals\n{goals_md}\n\n"
+        "Review these goals. Ask the CTO any clarifying questions, "
+        "or if everything is clear, say READY TO BUILD."
+    )
+
     messages = [
         SystemMessage(content=_DISCUSSION_SYSTEM),
-        HumanMessage(content=(
-            f"## Project Context\n{project_context}\n\n"
-            f"## CTO's Goals\n{goals_md}\n\n"
-            "Review these goals. Ask the CTO any clarifying questions, "
-            "or if everything is clear, say READY TO BUILD."
-        )),
+        HumanMessage(content=initial_prompt),
     ]
 
-    print()
-    print("[DISCUSSION] Architect is reviewing your goals...")
-    print("(Type your answers. The Architect will ask follow-ups until requirements are clear.)")
-    print("-" * 40)
+    prior = store.get_discussions(issue_id)
+    if prior:
+        for d in prior:
+            if d["role"] == "architect":
+                messages.append(AIMessage(content=d["content"]))
+            else:
+                messages.append(HumanMessage(content=d["content"]))
+        print()
+        print(f"[DISCUSSION] Resuming from previous session ({len(prior)} messages)...")
+        print("(Type your answers. The Architect will ask follow-ups until requirements are clear.)")
+        print("-" * 40)
+    else:
+        print()
+        print("[DISCUSSION] Architect is reviewing your goals...")
+        print("(Type your answers. The Architect will ask follow-ups until requirements are clear.)")
+        print("-" * 40)
 
     while True:
         response = llm.invoke(messages)

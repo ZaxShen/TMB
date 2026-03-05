@@ -70,13 +70,13 @@ def build_execution_graph() -> StateGraph:
 
     graph.add_conditional_edges("executor", _route, {
         "validator": "validator",
-        "architect": "executor",
+        "architect": END,
         "__end__": END,
     })
 
     graph.add_conditional_edges("validator", _route, {
         "executor": "executor",
-        "architect": "executor",
+        "architect": END,
         "__end__": END,
     })
 

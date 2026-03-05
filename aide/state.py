@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TypedDict, Literal
+from typing import TypedDict, Literal
 from langgraph.graph import MessagesState
 
 
@@ -18,7 +18,6 @@ class AgentState(MessagesState):
     project_context: str
     discussion: str
     issue_id: int
-    store: Any
     blueprint: list[Task]
     current_task_idx: int
     execution_log: str

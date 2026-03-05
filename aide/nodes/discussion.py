@@ -1,15 +1,19 @@
-"""Discussion node — interactive Architect-CTO Q&A before blueprint creation.
+"""Discussion node — file-based Architect-CTO Q&A before blueprint creation.
 
-This node is NOT part of the LangGraph — it runs before the graph starts,
-because LangGraph nodes can't do interactive terminal I/O mid-graph.
-The discussion is stored in SQLite and exported to doc/DISCUSSION.md.
+Flow:
+  1. Architect writes questions to doc/DISCUSSION.md with an answer section
+  2. Terminal prompts CTO to edit the file, then press Enter
+  3. System reads the answer from below a marker in the file
+  4. Repeat until Architect says READY TO BUILD
+
+The discussion is stored in SQLite (permanent) and doc/DISCUSSION.md (current).
 """
 
 from __future__ import annotations
 
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
-from aide.config import get_llm, load_prompt, get_project_root, _AIDE_ROOT
+from aide.config import get_llm, _AIDE_ROOT
 from aide.permissions import assert_aide_write
 from aide.store import Store
 
@@ -22,20 +26,75 @@ Rules:
 - Challenge assumptions if you see risks or contradictions.
 - When you fully understand the requirements, say exactly: READY TO BUILD
 - Keep each response concise — max 3-4 questions at a time.
+- Number your questions so the CTO can answer by number.
 - Reference the project context when relevant.
 """
 
 _READY_SIGNAL = "READY TO BUILD"
+_ANSWER_MARKER = "---ANSWER-BELOW---"
+
+
+def _write_discussion_file(
+    path, store: Store, issue_id: int, *, waiting_for_answer: bool
+):
+    """Write doc/DISCUSSION.md with conversation history and optional answer section."""
+    issue = store.get_issue(issue_id)
+    discussions = store.get_discussions(issue_id)
+
+    lines = [
+        f"# Discussion — Issue #{issue_id}",
+        "",
+        f"**Objective**: {issue['objective']}",
+        "",
+    ]
+
+    if waiting_for_answer:
+        lines += [
+            "> **Action required**: Answer the Architect's questions at the bottom of this file.",
+            "> Save the file, then press **Enter** in the terminal to continue.",
+            "",
+        ]
+
+    lines += ["---", ""]
+
+    for d in discussions:
+        label = "**CTO**" if d["role"] == "cto" else "**Architect**"
+        lines += [f"### {label}", ""]
+        lines.append(d["content"])
+        lines += ["", "---", ""]
+
+    if waiting_for_answer:
+        lines += [
+            "## Your Answer",
+            "",
+            f"> Write your answers below the `{_ANSWER_MARKER}` line.",
+            "> Do not edit anything above it. Save the file when done.",
+            "",
+            _ANSWER_MARKER,
+            "",
+            "",
+        ]
+
+    assert_aide_write(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines))
+
+
+def _read_cto_answer(path) -> str:
+    """Read the CTO's answer from below the marker in DISCUSSION.md."""
+    if not path.exists():
+        return ""
+    content = path.read_text()
+    if _ANSWER_MARKER not in content:
+        return ""
+    answer = content.split(_ANSWER_MARKER, 1)[1].strip()
+    return answer
 
 
 def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: int) -> str:
-    """Interactive discussion loop. Returns the full discussion as a string.
-
-    If the DB already has discussion rows for this issue (resume scenario),
-    reconstruct the LLM message history so the Architect has full context.
-    """
+    """File-based discussion loop. Returns the full discussion as a string."""
     llm = get_llm("architect")
-    doc_dir = _AIDE_ROOT / "doc"
+    discussion_path = _AIDE_ROOT / "doc" / "DISCUSSION.md"
 
     initial_prompt = (
         f"## Project Context\n{project_context}\n\n"
@@ -50,53 +109,70 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
     ]
 
     prior = store.get_discussions(issue_id)
+    needs_cto_input = False
+
     if prior:
         for d in prior:
             if d["role"] == "architect":
                 messages.append(AIMessage(content=d["content"]))
             else:
                 messages.append(HumanMessage(content=d["content"]))
-        print()
-        print(f"[DISCUSSION] Resuming from previous session ({len(prior)} messages)...")
-        print("(Type your answers. The Architect will ask follow-ups until requirements are clear.)")
-        print("-" * 40)
+
+        if prior[-1]["role"] == "architect":
+            needs_cto_input = True
+            _write_discussion_file(
+                discussion_path, store, issue_id, waiting_for_answer=True
+            )
+            print()
+            print(f"[DISCUSSION] Resuming — {len(prior)} messages from previous session.")
+            print(f"[DISCUSSION] Architect's questions are in {discussion_path}")
+        else:
+            print()
+            print(f"[DISCUSSION] Resuming — {len(prior)} messages from previous session.")
     else:
         print()
         print("[DISCUSSION] Architect is reviewing your goals...")
-        print("(Type your answers. The Architect will ask follow-ups until requirements are clear.)")
-        print("-" * 40)
 
     while True:
-        response = llm.invoke(messages)
-        architect_msg = response.content
+        if not needs_cto_input:
+            response = llm.invoke(messages)
+            architect_msg = response.content
 
-        store.add_discussion(issue_id, "architect", architect_msg)
-        messages.append(AIMessage(content=architect_msg))
+            store.add_discussion(issue_id, "architect", architect_msg)
+            messages.append(AIMessage(content=architect_msg))
 
-        print(f"\n[Architect]:\n{architect_msg}")
+            print(f"\n[Architect]:\n{architect_msg}")
 
-        if _READY_SIGNAL in architect_msg.upper():
-            store.log(issue_id, None, "architect", "discussion_complete", {
-                "rounds": len(store.get_discussions(issue_id)),
-            })
-            print()
-            print("-" * 40)
-            print("[DISCUSSION] Requirements aligned. Proceeding to blueprint.")
-            break
+            if _READY_SIGNAL in architect_msg.upper():
+                store.log(issue_id, None, "architect", "discussion_complete", {
+                    "rounds": len(store.get_discussions(issue_id)),
+                })
+                _write_discussion_file(
+                    discussion_path, store, issue_id, waiting_for_answer=False
+                )
+                print()
+                print("-" * 40)
+                print("[DISCUSSION] Requirements aligned. Proceeding to blueprint.")
+                print(f"[AIDE] Discussion saved to doc/DISCUSSION.md")
+                break
+        else:
+            needs_cto_input = False
+
+        _write_discussion_file(
+            discussion_path, store, issue_id, waiting_for_answer=True
+        )
 
         print()
-        cto_input = input("[CTO]: ").strip()
-        if not cto_input:
-            cto_input = "Proceed with your best judgment."
+        print("[DISCUSSION] Edit your answers in doc/DISCUSSION.md")
+        input("[DISCUSSION] Press Enter when done...")
 
-        store.add_discussion(issue_id, "cto", cto_input)
-        messages.append(HumanMessage(content=cto_input))
+        cto_answer = _read_cto_answer(discussion_path)
+        if not cto_answer:
+            cto_answer = "Proceed with your best judgment."
+
+        store.add_discussion(issue_id, "cto", cto_answer)
+        messages.append(HumanMessage(content=cto_answer))
+        print(f"[CTO]: {cto_answer[:120]}...")
 
     discussion_md = store.export_discussion_md(issue_id)
-    doc_dir.mkdir(parents=True, exist_ok=True)
-    discussion_path = doc_dir / "DISCUSSION.md"
-    assert_aide_write(discussion_path)
-    discussion_path.write_text(discussion_md)
-    print(f"[AIDE] Discussion saved to doc/DISCUSSION.md")
-
     return discussion_md

@@ -93,8 +93,18 @@ def assert_not_blacklisted(file_path: str):
         )
 
 
+def _extract_paths(line: str) -> list[str]:
+    """Extract plausible file paths from a line of shell output."""
+    candidates = []
+    for token in line.split():
+        cleaned = token.strip("'\"(),;:")
+        if "/" in cleaned or cleaned.startswith("."):
+            candidates.append(cleaned)
+    return candidates
+
+
 def filter_blacklisted_output(text: str, project_root: str) -> str:
-    """Scrub blacklisted file contents from shell/search output."""
+    """Scrub lines that reference blacklisted file paths from shell/search output."""
     if not text:
         return text
     patterns = _load_blacklist()
@@ -105,9 +115,13 @@ def filter_blacklisted_output(text: str, project_root: str) -> str:
     filtered = []
     for line in lines:
         is_blocked = False
-        for pattern in patterns:
-            if fnmatch(line, f"*{pattern}*"):
-                is_blocked = True
+        paths = _extract_paths(line)
+        for path_str in paths:
+            for pattern in patterns:
+                if fnmatch(path_str, pattern) or fnmatch(Path(path_str).name, pattern):
+                    is_blocked = True
+                    break
+            if is_blocked:
                 break
         if is_blocked:
             filtered.append("[REDACTED — blacklisted path]")

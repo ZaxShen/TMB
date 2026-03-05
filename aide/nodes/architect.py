@@ -9,6 +9,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from aide.config import get_llm, load_prompt, _AIDE_ROOT
 from aide.permissions import assert_aide_write
 from aide.state import AgentState
+from aide.store import Store
 
 
 BLUEPRINT_INSTRUCTION = (
@@ -21,7 +22,7 @@ BLUEPRINT_INSTRUCTION = (
 def architect(state: AgentState) -> dict:
     llm = get_llm("architect")
     system_prompt = load_prompt("architect")
-    store = state.get("store")
+    store = Store()
     issue_id = state.get("issue_id")
 
     messages = [SystemMessage(content=system_prompt)]
@@ -55,7 +56,12 @@ def architect(state: AgentState) -> dict:
     messages.append(HumanMessage(content=user_content))
 
     response = llm.invoke(messages)
-    raw = response.content
+    raw = response.content or ""
+    if isinstance(raw, list):
+        raw = "\n".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in raw
+        )
 
     try:
         text = raw.strip()
@@ -65,22 +71,20 @@ def architect(state: AgentState) -> dict:
     except (json.JSONDecodeError, IndexError):
         blueprint = []
 
-    if store and issue_id:
-        store.create_tasks(issue_id, blueprint)
-        event = "blueprint_revised" if is_replan else "blueprint_created"
-        if is_replan:
-            store.log(issue_id, None, "architect", event, {
-                "reason": feedback[:500],
-                "task_count": len(blueprint),
-            })
+    store.create_tasks(issue_id, blueprint)
+    if is_replan:
+        store.log(issue_id, None, "architect", "blueprint_revised", {
+            "reason": feedback[:500],
+            "task_count": len(blueprint),
+        })
 
-        blueprint_md = store.export_blueprint_md(issue_id, blueprint)
-        doc_dir = _AIDE_ROOT / "doc"
-        doc_dir.mkdir(parents=True, exist_ok=True)
-        blueprint_path = doc_dir / "BLUEPRINT.md"
-        assert_aide_write(blueprint_path)
-        blueprint_path.write_text(blueprint_md)
-        print(f"[ARCHITECT] Blueprint saved to doc/BLUEPRINT.md")
+    blueprint_md = store.export_blueprint_md(issue_id, blueprint)
+    doc_dir = _AIDE_ROOT / "doc"
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    blueprint_path = doc_dir / "BLUEPRINT.md"
+    assert_aide_write(blueprint_path)
+    blueprint_path.write_text(blueprint_md)
+    print(f"[ARCHITECT] Blueprint saved to doc/BLUEPRINT.md")
 
     print(f"[ARCHITECT] Blueprint: {len(blueprint)} tasks")
 

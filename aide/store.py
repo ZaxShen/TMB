@@ -20,6 +20,13 @@ from typing import Any
 
 _DB_NAME = "aide_history.db"
 
+def _split_task_description(desc: str) -> tuple[str, str]:
+    """Split a task description into a short title and the full body."""
+    first_line = desc.split("\n")[0].strip()
+    title = first_line[:120]
+    body = desc[len(first_line):].strip() if len(desc) > len(first_line) else ""
+    return title, body
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -133,7 +140,7 @@ class Store:
 
     def get_first_actionable_task(self, issue_id: int) -> dict | None:
         row = self._conn.execute(
-            "SELECT * FROM tasks WHERE issue_id = ? AND status IN ('pending', 'failed') ORDER BY task_id LIMIT 1",
+            "SELECT * FROM tasks WHERE issue_id = ? AND status IN ('pending', 'failed', 'in_progress', 'escalated') ORDER BY task_id LIMIT 1",
             (issue_id,),
         ).fetchone()
         return dict(row) if row else None
@@ -185,6 +192,15 @@ class Store:
 
     def create_tasks(self, issue_id: int, blueprint: list[dict]):
         now = _now()
+        existing = self.get_tasks(issue_id)
+        if existing:
+            self._conn.execute(
+                "DELETE FROM tasks WHERE issue_id = ?", (issue_id,)
+            )
+            self.log(issue_id, None, "architect", "blueprint_superseded", {
+                "old_task_count": len(existing),
+            })
+
         for task in blueprint:
             self._conn.execute(
                 "INSERT INTO tasks (issue_id, task_id, description, tools_required, success_criteria, status, created_at, updated_at) "
@@ -327,3 +343,98 @@ class Store:
             print(f"    {entry['created_at']}  [{entry['from_node']}]{task_str}  {entry['event_type']}")
 
         print()
+
+    # ── Markdown report ──────────────────────────────────────
+
+    def export_report_md(self, issue_id: int) -> str:
+        """Generate a full human-readable markdown report for an issue."""
+        issue = self.get_issue(issue_id)
+        if not issue:
+            return f"Issue #{issue_id} not found."
+        tasks = self.get_tasks(issue_id)
+        discussions = self.get_discussions(issue_id)
+        ledger = self.get_ledger(issue_id)
+
+        completed = sum(1 for t in tasks if t["status"] == "completed")
+        failed = sum(1 for t in tasks if t["status"] in ("failed", "escalated"))
+        total = len(tasks)
+
+        lines = [
+            f"# Report — Issue #{issue_id}",
+            "",
+            f"| Field | Value |",
+            f"|---|---|",
+            f"| **Objective** | {issue['objective'][:120]} |",
+            f"| **Status** | {issue['status']} |",
+            f"| **Created** | {issue['created_at']} |",
+            f"| **Closed** | {issue.get('closed_at') or '—'} |",
+            f"| **Tasks** | {completed}/{total} completed, {failed} failed |",
+            "",
+        ]
+
+        if discussions:
+            lines += ["---", "", "## Discussion", ""]
+            for d in discussions:
+                label = "CTO" if d["role"] == "cto" else "Architect"
+                lines += [
+                    f"### {label}",
+                    f"*{d['created_at']}*",
+                    "",
+                    d["content"],
+                    "",
+                ]
+
+        if tasks:
+            lines += ["---", "", "## Tasks", ""]
+            for t in tasks:
+                icon = {"pending": "⬜", "in_progress": "🔄", "completed": "✅", "failed": "❌", "escalated": "⚠️"}.get(t["status"], "❓")
+                title, body = _split_task_description(t["description"])
+                lines += [
+                    f"### {icon} Task {t['task_id']}: {title}",
+                    "",
+                    f"- **Status**: {t['status']}",
+                    f"- **Attempts**: {t['attempts']}",
+                    f"- **Success criteria**: {t['success_criteria']}",
+                    f"- **Updated**: {t['updated_at']}",
+                    "",
+                ]
+                if body:
+                    lines.append("<details>")
+                    lines.append("<summary>Full description</summary>")
+                    lines.append("")
+                    lines.append("```")
+                    lines.append(body)
+                    lines.append("```")
+                    lines.append("")
+                    lines.append("</details>")
+                    lines.append("")
+
+                task_events = [e for e in ledger if e["task_id"] == t["task_id"]]
+                if task_events:
+                    lines.append("<details>")
+                    lines.append(f"<summary>Activity log ({len(task_events)} events)</summary>")
+                    lines.append("")
+                    for e in task_events:
+                        content_obj = json.loads(e["content"]) if e["content"] and e["content"] != "{}" else {}
+                        lines.append(f"**{e['created_at']}** — `{e['from_node']}` → `{e['event_type']}`")
+                        lines.append("")
+                        if content_obj:
+                            for k, v in content_obj.items():
+                                v_str = str(v)
+                                if len(v_str) > 300:
+                                    v_str = v_str[:300] + "…"
+                                lines.append(f"- **{k}**: {v_str}")
+                            lines.append("")
+                    lines.append("</details>")
+                    lines.append("")
+
+        system_events = [e for e in ledger if e["task_id"] is None]
+        if system_events:
+            lines += ["---", "", "## System Events", ""]
+            lines.append("| Time | Agent | Event |")
+            lines.append("|---|---|---|")
+            for e in system_events:
+                lines.append(f"| {e['created_at']} | {e['from_node']} | {e['event_type']} |")
+            lines.append("")
+
+        return "\n".join(lines)

@@ -73,7 +73,6 @@ def _scan_project_context(store: Store, issue_id: int, goals_md: str) -> str:
         "project_context": "",
         "discussion": "",
         "issue_id": issue_id,
-        "store": store,
         "blueprint": [],
         "current_task_idx": 0,
         "execution_log": "",
@@ -128,6 +127,35 @@ def _approve_blueprint(store: Store, issue_id: int) -> bool:
     return True
 
 
+def _finalize_issue(store: Store, issue_id: int):
+    """Check task statuses and close the issue appropriately."""
+    tasks = store.get_tasks(issue_id)
+    if not tasks:
+        store.close_issue(issue_id, "completed")
+        return
+
+    all_done = all(t["status"] == "completed" for t in tasks)
+    if all_done:
+        store.close_issue(issue_id, "completed")
+    else:
+        stuck = [t for t in tasks if t["status"] in ("failed", "escalated")]
+        pending = [t for t in tasks if t["status"] in ("pending", "in_progress")]
+        if stuck:
+            print(
+                f"[AIDE] {len(stuck)} task(s) failed/escalated. "
+                f"Issue #{issue_id} stays open — re-run to retry."
+            )
+        elif pending:
+            print(
+                f"[AIDE] {len(pending)} task(s) still pending. "
+                f"Issue #{issue_id} stays open — re-run to continue."
+            )
+
+    print("-" * 40)
+    store.print_summary(issue_id)
+    print("[AIDE] See doc/DISCUSSION.md and doc/BLUEPRINT.md for records.")
+
+
 def _run_execution(
     store: Store,
     issue_id: int,
@@ -147,7 +175,6 @@ def _run_execution(
             "project_context": project_context,
             "discussion": discussion_md,
             "issue_id": issue_id,
-            "store": store,
             "blueprint": blueprint,
             "current_task_idx": start_task_idx,
             "execution_log": "",
@@ -158,10 +185,7 @@ def _run_execution(
         }
     )
 
-    store.close_issue(issue_id, "completed")
-    print("-" * 40)
-    store.print_summary(issue_id)
-    print("[AIDE] Done. See doc/DISCUSSION.md and doc/BLUEPRINT.md for records.")
+    _finalize_issue(store, issue_id)
 
 
 # ── Fresh Start ──────────────────────────────────────────────
@@ -196,7 +220,6 @@ def _fresh_start(store: Store):
             "project_context": project_context,
             "discussion": discussion_md,
             "issue_id": issue_id,
-            "store": store,
             "blueprint": [],
             "current_task_idx": 0,
             "execution_log": "",
@@ -221,10 +244,7 @@ def _fresh_start(store: Store):
 
     state = graph.invoke(None, config=thread)
 
-    store.close_issue(issue_id, "completed")
-    print("-" * 40)
-    store.print_summary(issue_id)
-    print("[AIDE] Done. See doc/DISCUSSION.md and doc/BLUEPRINT.md for records.")
+    _finalize_issue(store, issue_id)
 
 
 # ── Resume ───────────────────────────────────────────────────
@@ -282,7 +302,6 @@ def _resume(store: Store, issue: dict):
                 "project_context": ctx,
                 "discussion": discussion_md,
                 "issue_id": issue_id,
-                "store": store,
                 "blueprint": [],
                 "current_task_idx": 0,
                 "execution_log": "",
@@ -307,10 +326,7 @@ def _resume(store: Store, issue: dict):
 
         # Within same process — MemorySaver still alive, resume graph
         state = graph.invoke(None, config=thread)
-        store.close_issue(issue_id, "completed")
-        print("-" * 40)
-        store.print_summary(issue_id)
-        print("[AIDE] Done. See doc/DISCUSSION.md and doc/BLUEPRINT.md for records.")
+        _finalize_issue(store, issue_id)
         return
 
     # Phase 3: Blueprint exists but not approved → show and ask
@@ -480,6 +496,18 @@ def log_history(issue_id: int | None = None):
         print()
 
 
+def report(issue_id: int):
+    """Export a full human-readable markdown report for an issue."""
+    store = Store()
+    md = store.export_report_md(issue_id)
+
+    report_path = _AIDE_ROOT / "doc" / f"REPORT-{issue_id}.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(md)
+    print(f"[AIDE] Report written to {report_path}")
+    print(f"       Open it in your editor for full details.")
+
+
 def main():
     if len(sys.argv) == 1:
         run()
@@ -492,6 +520,11 @@ def main():
     elif cmd == "log":
         issue_id = int(sys.argv[2]) if len(sys.argv) > 2 else None
         log_history(issue_id)
+    elif cmd == "report":
+        if len(sys.argv) < 3:
+            print("Usage: uv run main.py report <issue_id>")
+            sys.exit(1)
+        report(int(sys.argv[2]))
     else:
         print("AIDE — AI Direction & Execution")
         print()
@@ -500,6 +533,7 @@ def main():
         print("  uv run main.py setup        Interactive project setup")
         print("  uv run main.py log          Show recent issues")
         print("  uv run main.py log <id>     Show issue details + ledger")
+        print("  uv run main.py report <id>  Export full report as markdown")
         sys.exit(1)
 
 

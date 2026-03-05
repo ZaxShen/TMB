@@ -70,8 +70,6 @@ def _read_key_files(root: Path) -> str:
 def gatekeeper(state: AgentState) -> dict:
     project_cfg = load_project_config()
     root = get_project_root()
-    store = state.get("store")
-    issue_id = state.get("issue_id")
 
     print("[GATEKEEPER] Scanning project...")
 
@@ -84,13 +82,6 @@ def gatekeeper(state: AgentState) -> dict:
         f"### Directory structure\n```\n{tree}\n```\n\n"
         f"### Key files\n{key_files}\n"
     )
-
-    if store and issue_id:
-        store.log(issue_id, None, "gatekeeper", "context_scanned", {
-            "root": str(root),
-            "files_found": len(tree.splitlines()),
-            "key_files_read": len([f for f in _KEY_FILES if (root / f).is_file()]),
-        })
 
     print(f"[GATEKEEPER] Scanned {len(tree.splitlines())} paths at {root}")
 

@@ -310,7 +310,8 @@ your-project/                # ← AIDE operates on this
 │   │   └── QA_PLAN.md       # Generated: testing framework
 │   ├── config/
 │   │   ├── nodes.yaml
-│   │   └── project.yaml
+│   │   ├── project.yaml
+│   │   └── mcp.yaml           # MCP server connections
 │   ├── prompts/
 │   │   ├── architect.md
 │   │   ├── executor.md
@@ -318,7 +319,9 @@ your-project/                # ← AIDE operates on this
 │   ├── skills/              # Reusable knowledge artifacts
 │   │   ├── db-operations.md
 │   │   ├── branch-operations.md
-│   │   └── file-access.md
+│   │   ├── file-access.md
+│   │   └── mcp-patterns.md
+│   ├── mcp_servers/         # Generated MCP servers (auto-scaffold)
 │   ├── aide/                # Engine (don't edit)
 │   ├── main.py
 │   ├── aide_history.db      # SQLite audit trail
@@ -326,6 +329,75 @@ your-project/                # ← AIDE operates on this
 ├── src/
 └── ...
 ```
+
+## MCP Integration
+
+AIDE supports the [Model Context Protocol](https://modelcontextprotocol.io/) as both a **client** and a **server**, plus the ability to **generate** new MCP servers.
+
+### AIDE as MCP Client
+
+Connect agents to external services (Notion, GitHub, Slack, etc.) by configuring `config/mcp.yaml`:
+
+```yaml
+servers:
+  notion:
+    command: npx
+    args: ["-y", "@notionhq/notion-mcp-server"]
+    env:
+      NOTION_TOKEN: ${NOTION_TOKEN}
+    agents: [architect]          # only architect can use
+
+  github:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+    agents: [architect, executor]
+```
+
+MCP tools are auto-discovered at startup, converted to LangChain tools, and prefixed (`mcp_notion_search_pages`). The `agents` field controls per-node access — same permission model as built-in tools. Tool output goes through the blacklist scrubber.
+
+Run `uv run main.py setup` for an interactive wizard that configures common MCP servers.
+
+### AIDE as MCP Server
+
+Expose AIDE's store and workflow to external hosts (Claude Desktop, Cursor, etc.):
+
+```bash
+uv run main.py serve              # stdio (for Claude Desktop / Cursor)
+uv run main.py serve --http 8080  # HTTP (for remote access)
+```
+
+**Exposed tools**: `aide_list_issues`, `aide_get_tasks`, `aide_get_ledger`, `aide_get_skills`, `aide_query_branch`, `aide_quick_task`, `aide_export_report`
+
+**Exposed resources**: `aide://issues`, `aide://issues/{id}`, `aide://skills`, `aide://blueprint`
+
+Add to Claude Desktop config:
+```json
+{
+  "mcpServers": {
+    "aide": {
+      "command": "uv",
+      "args": ["run", "main.py", "serve"],
+      "cwd": "/path/to/project/AIDE"
+    }
+  }
+}
+```
+
+### MCP Server Generator
+
+The Architect can scaffold project-specific MCP servers using the `mcp_generate` tool:
+
+```bash
+# Available templates: rest_api, database, file_based
+# Generated servers go to mcp_servers/<name>/server.py
+# Auto-registered in config/mcp.yaml
+```
+
+Templates handle common patterns (REST wrappers, DB connectors, file servers). Generated servers use FastMCP and are immediately usable.
+
+---
 
 ## Design Principles
 
@@ -337,6 +409,7 @@ your-project/                # ← AIDE operates on this
 - **Skills over re-reading** — Agents compress discovered patterns into reusable skills, loaded on demand instead of re-scanning source files.
 - **Config over code** — YAML and Markdown control behavior. Engine is immutable.
 - **Sandboxed execution** — Tools restricted to the project root directory.
+- **MCP-native** — Connect to any MCP server as a client, expose AIDE as a server, or auto-generate project-specific servers.
 
 ## License
 

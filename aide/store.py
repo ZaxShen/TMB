@@ -190,6 +190,10 @@ class Store:
             "when_to_use": "Tasks that read or write files across permission boundaries",
             "when_not_to_use": "Tasks confined to a single source file with no doc/ or config/ interaction",
         },
+        "mcp-patterns": {
+            "when_to_use": "Tasks involving MCP server connections, tool generation, or external service integration",
+            "when_not_to_use": "Tasks with no external service dependencies or MCP interaction",
+        },
     }
 
     def _seed_skills(self):

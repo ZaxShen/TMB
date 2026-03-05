@@ -7,6 +7,8 @@ Usage:
   uv run main.py log                    Show recent issues
   uv run main.py log <id>               Show issue details + ledger
   uv run main.py report <id>            Export full report as markdown
+  uv run main.py serve                  Start MCP server (stdio)
+  uv run main.py serve --http 8080      Start MCP server (HTTP)
 """
 
 from __future__ import annotations
@@ -505,6 +507,77 @@ def setup():
         else:
             print("  Skipped .env — set your API key before running.")
 
+    # ── MCP Connections ──────────────────────────────────────
+    print()
+    print("=== MCP Connections (optional) ===")
+    print()
+    print("  AIDE can connect to external services via MCP.")
+    print()
+    print("  [1] Notion    — read/create pages, search workspace")
+    print("  [2] GitHub    — issues, PRs, code search")
+    print("  [3] Slack     — send messages, read channels")
+    print("  [s] Skip")
+    print()
+    mcp_choice = input("  Select (comma-separated, e.g. 1,2) [s]: ").strip().lower() or "s"
+
+    if mcp_choice != "s":
+        mcp_servers = {}
+        env_path_for_mcp = _AIDE_ROOT / ".env"
+        existing_env = env_path_for_mcp.read_text() if env_path_for_mcp.exists() else ""
+        new_env_lines = []
+
+        choices = [c.strip() for c in mcp_choice.split(",")]
+
+        if "1" in choices:
+            token = input("  Notion API token: ").strip()
+            if token:
+                mcp_servers["notion"] = {
+                    "command": "npx",
+                    "args": ["-y", "@notionhq/notion-mcp-server"],
+                    "env": {"NOTION_TOKEN": "${NOTION_TOKEN}"},
+                    "agents": ["architect"],
+                }
+                if "NOTION_TOKEN" not in existing_env:
+                    new_env_lines.append(f"NOTION_TOKEN={token}")
+
+        if "2" in choices:
+            token = input("  GitHub token: ").strip()
+            if token:
+                mcp_servers["github"] = {
+                    "command": "npx",
+                    "args": ["-y", "@modelcontextprotocol/server-github"],
+                    "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
+                    "agents": ["architect", "executor"],
+                }
+                if "GITHUB_TOKEN" not in existing_env:
+                    new_env_lines.append(f"GITHUB_TOKEN={token}")
+
+        if "3" in choices:
+            token = input("  Slack Bot token: ").strip()
+            if token:
+                mcp_servers["slack"] = {
+                    "command": "npx",
+                    "args": ["-y", "@anthropic/slack-mcp-server"],
+                    "env": {"SLACK_BOT_TOKEN": "${SLACK_BOT_TOKEN}"},
+                    "agents": ["architect"],
+                }
+                if "SLACK_BOT_TOKEN" not in existing_env:
+                    new_env_lines.append(f"SLACK_BOT_TOKEN={token}")
+
+        if mcp_servers:
+            mcp_config_path = _AIDE_ROOT / "config" / "mcp.yaml"
+            mcp_data = yaml.safe_load(mcp_config_path.read_text()) if mcp_config_path.exists() else {}
+            existing_servers = mcp_data.get("servers") or {}
+            existing_servers.update(mcp_servers)
+            mcp_data["servers"] = existing_servers
+            mcp_config_path.write_text(yaml.dump(mcp_data, default_flow_style=False, sort_keys=False))
+            print(f"  Wrote {mcp_config_path}")
+
+        if new_env_lines:
+            with open(env_path_for_mcp, "a") as f:
+                f.write("\n" + "\n".join(new_env_lines) + "\n")
+            print(f"  Updated .env with MCP tokens")
+
     print()
     print("[AIDE] Setup complete.")
     print("  1. Write your goals in doc/GOALS.md")
@@ -582,7 +655,7 @@ def report(issue_id: int):
     print(f"       Open it in your editor for full details.")
 
 
-_KNOWN_COMMANDS = {"setup", "log", "report", "help", "--help", "-h"}
+_KNOWN_COMMANDS = {"setup", "log", "report", "serve", "help", "--help", "-h"}
 
 
 def main():
@@ -602,6 +675,15 @@ def main():
             print("Usage: uv run main.py report <issue_id>")
             sys.exit(1)
         report(int(sys.argv[2]))
+    elif cmd == "serve":
+        from aide.mcp.server import run_server
+        if "--http" in sys.argv:
+            idx = sys.argv.index("--http")
+            port = int(sys.argv[idx + 1]) if idx + 1 < len(sys.argv) else 8000
+            print(f"[AIDE] Starting MCP server (HTTP on port {port})...")
+            run_server(transport="http", port=port)
+        else:
+            run_server(transport="stdio")
     elif cmd not in _KNOWN_COMMANDS:
         instruction = " ".join(sys.argv[1:])
         store = Store()
@@ -616,6 +698,8 @@ def main():
         print("  uv run main.py log                    Show recent issues")
         print("  uv run main.py log <id>               Show issue details + ledger")
         print("  uv run main.py report <id>            Export full report as markdown")
+        print("  uv run main.py serve                  Start MCP server (stdio)")
+        print("  uv run main.py serve --http 8080      Start MCP server (HTTP)")
         sys.exit(1)
 
 

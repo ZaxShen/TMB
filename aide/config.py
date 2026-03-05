@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +41,26 @@ def get_project_root() -> Path:
     cfg = load_project_config()
     raw = cfg.get("root_dir", "..")
     return (_AIDE_ROOT / raw).resolve()
+
+
+def _resolve_env_vars(value: str) -> str:
+    """Replace ${VAR} references with environment variable values."""
+    def _sub(m):
+        return os.environ.get(m.group(1), "")
+    return re.sub(r"\$\{(\w+)\}", _sub, value)
+
+
+def load_mcp_config() -> dict[str, Any]:
+    """Load config/mcp.yaml with ${VAR} resolution on env values."""
+    path = _AIDE_ROOT / "config" / "mcp.yaml"
+    if not path.exists():
+        return {"servers": {}}
+    raw = load_yaml(path)
+    servers = raw.get("servers") or {}
+    for _name, cfg in servers.items():
+        env = cfg.get("env") or {}
+        cfg["env"] = {k: _resolve_env_vars(str(v)) for k, v in env.items()}
+    return {"servers": servers}
 
 
 def get_llm(node_name: str):

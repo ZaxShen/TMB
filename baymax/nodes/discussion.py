@@ -104,13 +104,17 @@ _MAX_TOOL_ROUNDS = 10
 
 
 def _run_discussion_tool_loop(llm_with_tools, messages, tool_map):
-    """Let the planner use tools (file_read, search) before responding to the owner."""
+    """Let the planner use tools (file_inspect, search) before responding to the owner."""
+    import time
+    start = time.monotonic()
+    counts: dict[str, int] = {}
+    response = None
     for _ in range(_MAX_TOOL_ROUNDS):
         response = llm_with_tools.invoke(messages)
         messages.append(response)
 
         if not hasattr(response, "tool_calls") or not response.tool_calls:
-            return response, messages
+            break
 
         for tc in response.tool_calls:
             tool_fn = tool_map.get(tc["name"])
@@ -122,7 +126,7 @@ def _run_discussion_tool_loop(llm_with_tools, messages, tool_map):
                 result_str = str(result)
                 if len(result_str) > 8000:
                     result_str = result_str[:8000] + "\n... (truncated)"
-                print(f"  [planner:{tc['name']}] done")
+                counts[tc["name"]] = counts.get(tc["name"], 0) + 1
                 messages.append(ToolMessage(content=result_str, tool_call_id=tc["id"]))
             else:
                 messages.append(ToolMessage(
@@ -130,6 +134,10 @@ def _run_discussion_tool_loop(llm_with_tools, messages, tool_map):
                     tool_call_id=tc["id"],
                 ))
 
+    elapsed = time.monotonic() - start
+    if counts:
+        parts = [f"{v} {k}" for k, v in sorted(counts.items())]
+        print(f"  [discuss] {', '.join(parts)} ({elapsed:.0f}s)")
     return response, messages
 
 

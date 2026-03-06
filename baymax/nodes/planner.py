@@ -39,8 +39,14 @@ def _write_doc(name: str, content: str):
     path.write_text(content)
 
 
-def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds):
-    """Run a multi-turn tool loop, returning the final response."""
+def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = ""):
+    """Run a multi-turn tool loop, returning the final response.
+
+    Prints a single summary line instead of per-call output.
+    """
+    import time
+    start = time.monotonic()
+    counts: dict[str, int] = {}
     response = None
     for _ in range(max_rounds):
         response = llm_with_tools.invoke(messages)
@@ -59,14 +65,38 @@ def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds):
                 result_str = str(result)
                 if len(result_str) > 8000:
                     result_str = result_str[:8000] + "\n... (truncated)"
-                print(f"  [planner:{tc['name']}] done")
+                counts[tc["name"]] = counts.get(tc["name"], 0) + 1
                 messages.append(ToolMessage(content=result_str, tool_call_id=tc["id"]))
             else:
                 messages.append(ToolMessage(
                     content=f"[error] Unknown tool: {tc['name']}",
                     tool_call_id=tc["id"],
                 ))
+    elapsed = time.monotonic() - start
+    if counts:
+        parts = [f"{v} {k}" for k, v in sorted(counts.items())]
+        prefix = f"  [{label}] " if label else "  "
+        print(f"{prefix}{', '.join(parts)} ({elapsed:.0f}s)")
     return response, messages
+
+
+def _extract_json_array(raw: str) -> list:
+    """Extract a JSON array from LLM output that may contain preamble text."""
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+        return json.loads(text)
+    if "```json" in text:
+        text = text.split("```json", 1)[1].rsplit("```", 1)[0]
+        return json.loads(text)
+    if "```" in text:
+        text = text.split("```", 1)[1].rsplit("```", 1)[0]
+        return json.loads(text)
+    first_bracket = text.find("[")
+    last_bracket = text.rfind("]")
+    if first_bracket != -1 and last_bracket > first_bracket:
+        return json.loads(text[first_bracket:last_bracket + 1])
+    return json.loads(text)
 
 
 EXPLORE_INSTRUCTION = (
@@ -233,6 +263,7 @@ def planner_plan(state: AgentState) -> dict:
 
         explore_response, explore_messages = _run_tool_loop(
             llm_with_tools, explore_messages, tool_map, _MAX_EXPLORE_ROUNDS,
+            label="explore",
         )
         exploration_summary = _normalize_content(explore_response.content)
         store.log(issue_id, None, "planner", "codebase_explored", {
@@ -275,7 +306,7 @@ def planner_plan(state: AgentState) -> dict:
         ]
 
         print(f"[{planner_display}] Provisioning skills for downstream agents...")
-        _run_tool_loop(llm_with_tools, provision_messages, tool_map, _MAX_EXPLORE_ROUNDS)
+        _run_tool_loop(llm_with_tools, provision_messages, tool_map, _MAX_EXPLORE_ROUNDS, label="skills")
 
         new_skills = store.get_all_skills()
         created_count = len(new_skills) - len(available_skills)
@@ -425,15 +456,12 @@ def planner_plan(state: AgentState) -> dict:
     ]
 
     print(f"[{planner_display}] Generating blueprint...")
-    response, messages = _run_tool_loop(llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS)
+    response, messages = _run_tool_loop(llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS, label="blueprint")
     raw = _normalize_content(response.content)
 
     try:
-        text = raw.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("```", 1)[0]
-        blueprint = json.loads(text)
-    except (json.JSONDecodeError, IndexError):
+        blueprint = _extract_json_array(raw)
+    except (json.JSONDecodeError, IndexError, ValueError):
         print(f"[{planner_display}] WARNING: Failed to parse blueprint JSON. Raw response ({len(raw)} chars):")
         print(raw[:500])
         blueprint = []
@@ -471,7 +499,7 @@ def planner_plan(state: AgentState) -> dict:
         SystemMessage(content=system_prompt),
         HumanMessage(content="\n\n".join(fc_parts)),
     ]
-    fc_response, fc_messages = _run_tool_loop(llm_with_tools, fc_messages, tool_map, 5)
+    fc_response, fc_messages = _run_tool_loop(llm_with_tools, fc_messages, tool_map, 5, label="flowchart")
     fc_raw = _normalize_content(fc_response.content)
 
     flowchart_md = (
@@ -498,7 +526,7 @@ def planner_plan(state: AgentState) -> dict:
         SystemMessage(content=system_prompt),
         HumanMessage(content="\n\n".join(qa_parts)),
     ]
-    qa_response, qa_messages = _run_tool_loop(llm_with_tools, qa_messages, tool_map, 5)
+    qa_response, qa_messages = _run_tool_loop(llm_with_tools, qa_messages, tool_map, 5, label="qa_plan")
     qa_raw = _normalize_content(qa_response.content)
 
     qa_plan_md = (

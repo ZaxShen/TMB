@@ -294,6 +294,23 @@ def planner_plan(state: AgentState) -> dict:
             label="explore", token_accum=token_accum,
         )
         exploration_summary = _normalize_content(explore_response.content)
+
+        if len(exploration_summary) < 300:
+            explore_messages.append(HumanMessage(content=(
+                "Your summary is too brief. Provide a detailed summary (at least 300 chars) covering:\n"
+                "1. Tech stack and frameworks\n"
+                "2. Project structure and key modules\n"
+                "3. Architecture patterns relevant to the goals\n"
+                "4. File formats and data files\n\n"
+                "Summarize what you learned from the files you inspected."
+            )))
+            summary_resp = llm.invoke(explore_messages)
+            if token_accum is not None:
+                usage = extract_token_usage(summary_resp)
+                token_accum["input_tokens"] += usage["input_tokens"]
+                token_accum["output_tokens"] += usage["output_tokens"]
+            exploration_summary = _normalize_content(summary_resp.content)
+
         store.log(issue_id, None, "planner", "codebase_explored", {
             "summary_length": len(exploration_summary),
         }, summary="Explored codebase structure and key modules")
@@ -486,15 +503,35 @@ def planner_plan(state: AgentState) -> dict:
     ]
 
     print(f"[{planner_display}] Generating blueprint...")
-    response, messages = _run_tool_loop(llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS, label="blueprint", token_accum=token_accum)
+    response, messages = _run_tool_loop(llm_with_tools, messages, tool_map, 5, label="blueprint", token_accum=token_accum)
     raw = _normalize_content(response.content)
 
+    blueprint = []
     try:
         blueprint = _extract_json_array(raw)
     except (json.JSONDecodeError, IndexError, ValueError):
-        print(f"[{planner_display}] WARNING: Failed to parse blueprint JSON. Raw response ({len(raw)} chars):")
-        print(raw[:500])
-        blueprint = []
+        pass
+
+    if not blueprint:
+        messages.append(HumanMessage(content=(
+            "You have finished exploring. Now output the blueprint.\n\n"
+            "Return ONLY a JSON array — no prose, no markdown fences, no explanation.\n"
+            "Each element: {\"branch_id\": str, \"description\": str, "
+            "\"tools_required\": [str], \"skills_required\": [str], \"success_criteria\": str}\n\n"
+            "Start with [ and end with ]."
+        )))
+        retry_resp = llm.invoke(messages)
+        if token_accum is not None:
+            usage = extract_token_usage(retry_resp)
+            token_accum["input_tokens"] += usage["input_tokens"]
+            token_accum["output_tokens"] += usage["output_tokens"]
+        raw = _normalize_content(retry_resp.content)
+        try:
+            blueprint = _extract_json_array(raw)
+        except (json.JSONDecodeError, IndexError, ValueError):
+            print(f"[{planner_display}] WARNING: Failed to parse blueprint JSON. Raw response ({len(raw)} chars):")
+            print(raw[:300])
+            blueprint = []
 
     store.create_tasks(issue_id, blueprint)
     if is_replan:

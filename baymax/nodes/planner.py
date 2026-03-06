@@ -297,6 +297,8 @@ def planner_plan(state: AgentState) -> dict:
             text = text.split("\n", 1)[1].rsplit("```", 1)[0]
         blueprint = json.loads(text)
     except (json.JSONDecodeError, IndexError):
+        print(f"[{planner_display}] WARNING: Failed to parse blueprint JSON. Raw response ({len(raw)} chars):")
+        print(raw[:500])
         blueprint = []
 
     store.create_tasks(issue_id, blueprint)

@@ -56,7 +56,7 @@ store.create_issue("child objective", goals_md, parent_issue_id=5)
 
 ## Rules
 
-1. **Architect assigns branch IDs.** The Architect generates branch IDs based on the existing task tree to maintain semantic structure across the project's lifetime.
+1. **Planner assigns branch IDs.** The Planner generates branch IDs based on the existing task tree to maintain semantic structure across the project's lifetime.
 2. **Branch operations use SQL LIKE.** `branch_id LIKE '1.%'` is the canonical pattern — no full table scans needed.
 3. **Never reuse a branch ID** that was previously deleted — it breaks audit trail references in the ledger.
-4. **`get_all_root_tasks()`** is the Architect's entry point for understanding the project-wide task landscape before assigning new IDs.
+4. **`get_all_root_tasks()`** is the Planner's entry point for understanding the project-wide task landscape before assigning new IDs.

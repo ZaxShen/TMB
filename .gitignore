@@ -25,3 +25,12 @@ build/
 # Runtime data
 *.db
 doc/
+
+# User config — created by `setup`, not tracked.
+# Defaults ship as *.default.yaml (tracked).
+config/project.yaml
+config/nodes.yaml
+config/mcp.yaml
+
+# Generated MCP servers
+mcp_servers/

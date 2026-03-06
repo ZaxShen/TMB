@@ -44,7 +44,7 @@ def _build_connections(servers: dict[str, Any]) -> dict[str, dict]:
 def _get_agents_map(servers: dict[str, Any]) -> dict[str, list[str]]:
     """Build server_name -> allowed agents mapping from config."""
     return {
-        name: cfg.get("agents", ["architect", "executor", "validator"])
+        name: cfg.get("agents", ["planner", "executor", "validator"])
         for name, cfg in servers.items()
     }
 

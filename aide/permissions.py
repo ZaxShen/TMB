@@ -11,11 +11,11 @@ Four layers:
    patterns (secrets, .env, *.pem, etc.) remain enforced.
 
 3. Node-level access — certain AIDE docs are restricted to specific nodes.
-   High-level docs (GOALS, DISCUSSION, BLUEPRINT, FLOWCHART) are architect-only.
+   High-level docs (GOALS, DISCUSSION, BLUEPRINT, FLOWCHART) are planner-only.
    EXECUTION.md is readable by executor. QA_PLAN.md is readable by validator.
 
 4. Evolve context — a ``contextvars``-based toggle that temporarily lifts
-   the AIDE/** blacklist and write allowlist so the Architect can modify
+   the AIDE/** blacklist and write allowlist so the Planner can modify
    any AIDE source file during a guarded self-evolution flow.
 """
 
@@ -77,13 +77,13 @@ def assert_aide_write(path: Path):
 # ── Node-level access control ──────────────────────────────
 
 _NODE_RESTRICTED: dict[str, set[str]] = {
-    "AIDE/doc/GOALS.md": {"architect", "gatekeeper"},
-    "AIDE/doc/DISCUSSION.md": {"architect"},
-    "AIDE/doc/BLUEPRINT.md": {"architect", "cto"},
-    "AIDE/doc/FLOWCHART.md": {"architect", "cto"},
-    "AIDE/doc/EXECUTION.md": {"architect", "executor"},
-    "AIDE/doc/QA_PLAN.md": {"architect", "validator"},
-    "AIDE/doc/EVOLUTION.md": {"architect"},
+    "AIDE/doc/GOALS.md": {"planner", "gatekeeper"},
+    "AIDE/doc/DISCUSSION.md": {"planner"},
+    "AIDE/doc/BLUEPRINT.md": {"planner", "owner"},
+    "AIDE/doc/FLOWCHART.md": {"planner", "owner"},
+    "AIDE/doc/EXECUTION.md": {"planner", "executor"},
+    "AIDE/doc/QA_PLAN.md": {"planner", "validator"},
+    "AIDE/doc/EVOLUTION.md": {"planner"},
 }
 
 

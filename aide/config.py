@@ -18,22 +18,86 @@ load_dotenv(_AIDE_ROOT / ".env")
 load_dotenv(_AIDE_ROOT / ".." / ".env", override=True)
 
 
+_DEFAULT_ROLE_NAMES = {
+    "owner": "Project Owner",
+    "planner": "Planner",
+    "executor": "Executor",
+    "validator": "Validator",
+}
+
+
+def get_role_name(key: str) -> str:
+    """Return the display name for a role key (e.g. 'planner' → 'Architect').
+
+    Reads ``roles:`` from project.yaml. Falls back to generic defaults.
+    """
+    cfg = load_project_config()
+    roles = cfg.get("roles") or {}
+    return roles.get(key, _DEFAULT_ROLE_NAMES.get(key, key.title()))
+
+
+def _role_template_vars() -> dict[str, str]:
+    """Build template variables for prompt substitution."""
+    return {f"role_{k}": get_role_name(k) for k in _DEFAULT_ROLE_NAMES}
+
+
 def load_yaml(path: Path) -> dict[str, Any]:
     with open(path) as f:
-        return yaml.safe_load(f)
+        return yaml.safe_load(f) or {}
+
+
+def _config_path(name: str) -> Path:
+    """Resolve a config file with fallback to .default.yaml.
+
+    Tries ``config/<name>.yaml`` first (user-created, gitignored),
+    then ``config/<name>.default.yaml`` (tracked).
+    """
+    user = _AIDE_ROOT / "config" / f"{name}.yaml"
+    if user.exists():
+        return user
+    default = _AIDE_ROOT / "config" / f"{name}.default.yaml"
+    if default.exists():
+        return default
+    return user  # will raise FileNotFoundError with a clear path
 
 
 def load_prompt(name: str) -> str:
-    path = _AIDE_ROOT / "prompts" / f"{name}.md"
-    return path.read_text()
+    """Load a prompt file with preset and template variable support.
+
+    Resolution order:
+      1. prompts/samples/<preset>/<name>.md  (if roles.preset is set)
+      2. prompts/<name>.md  (default)
+
+    Template variables like ``{role_planner}`` are replaced with display names
+    from project.yaml → roles.
+    """
+    cfg = load_project_config()
+    roles = cfg.get("roles") or {}
+    preset = roles.get("preset")
+
+    path = None
+    if preset:
+        preset_path = _AIDE_ROOT / "prompts" / "samples" / preset / f"{name}.md"
+        if preset_path.exists():
+            path = preset_path
+
+    if path is None:
+        path = _AIDE_ROOT / "prompts" / f"{name}.md"
+
+    text = path.read_text()
+
+    for var, display in _role_template_vars().items():
+        text = text.replace(f"{{{var}}}", display)
+
+    return text
 
 
 def load_nodes_config() -> dict[str, Any]:
-    return load_yaml(_AIDE_ROOT / "config" / "nodes.yaml")
+    return load_yaml(_config_path("nodes"))
 
 
 def load_project_config() -> dict[str, Any]:
-    return load_yaml(_AIDE_ROOT / "config" / "project.yaml")
+    return load_yaml(_config_path("project"))
 
 
 def get_project_root() -> Path:
@@ -51,8 +115,11 @@ def _resolve_env_vars(value: str) -> str:
 
 
 def load_mcp_config() -> dict[str, Any]:
-    """Load config/mcp.yaml with ${VAR} resolution on env values."""
-    path = _AIDE_ROOT / "config" / "mcp.yaml"
+    """Load MCP config with ${VAR} resolution on env values.
+
+    Tries config/mcp.yaml → config/mcp.default.yaml → empty.
+    """
+    path = _config_path("mcp")
     if not path.exists():
         return {"servers": {}}
     raw = load_yaml(path)

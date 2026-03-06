@@ -6,7 +6,7 @@ import json
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from aide.config import get_llm, load_prompt, load_nodes_config, get_project_root, _AIDE_ROOT
+from aide.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, _AIDE_ROOT
 from aide.state import AgentState
 from aide.store import Store
 from aide.tools import get_tools_for_node
@@ -113,10 +113,13 @@ def executor(state: AgentState) -> dict:
     skills_text = _load_skills(store, skill_names) if skill_names else ""
 
     total = len(blueprint)
+    executor_display = get_role_name("executor").upper()
+    planner_display = get_role_name("planner")
+    validator_display = get_role_name("validator")
     if is_retry:
-        print(f"[SWE] [{branch_id}] {total} tasks — retrying: {description[:60]}")
+        print(f"[{executor_display}] [{branch_id}] {total} tasks — retrying: {description[:60]}")
     else:
-        print(f"[SWE] [{branch_id}] {total} tasks — starting: {description[:60]}")
+        print(f"[{executor_display}] [{branch_id}] {total} tasks — starting: {description[:60]}")
 
     store.update_task_status(issue_id, branch_id, "in_progress", increment_attempts=True)
     task_title = task.get("title") or description[:80]
@@ -192,16 +195,16 @@ def executor(state: AgentState) -> dict:
         store.log(issue_id, branch_id, "executor", "task_escalated", {
             "reason": execution_log[:1000],
         }, summary=f"Escalated: {task_title}")
-        print(f"[SWE] [{branch_id}] — ESCALATED to Architect")
+        print(f"[{executor_display}] [{branch_id}] — ESCALATED to {planner_display}")
     else:
         store.log(issue_id, branch_id, "executor", "task_executed", {
             "output": execution_log[:2000],
             "tool_calls": len(tool_outputs),
         }, summary=f"Executed: {task_title} ({len(tool_outputs)} tool calls)")
-        print(f"[SWE] [{branch_id}] — execution complete, sending to QA")
+        print(f"[{executor_display}] [{branch_id}] — execution complete, sending to {validator_display}")
 
     return {
         "execution_log": execution_log,
         "messages": state.get("messages", []) + [response],
-        "next_node": "architect" if is_escalation else "validator",
+        "next_node": "planner" if is_escalation else "validator",
     }

@@ -106,13 +106,13 @@ def aide_query_branch(prefix: str) -> str:
 
 @mcp.tool()
 def aide_quick_task(instruction: str) -> str:
-    """Run a quick task — the Architect handles it directly with no SWE/QA.
+    """Run a quick task — the Planner handles it directly with no downstream agents.
 
     Args:
         instruction: What to do (e.g. 'update FLOWCHART based on current codebase')
     """
     from aide.nodes.gatekeeper import gatekeeper as gk_func
-    from aide.nodes.architect import architect_quick_task
+    from aide.nodes.planner import planner_quick_task
 
     store = Store()
     issue_id = store.create_issue(f"Quick: {instruction[:120]}", "")
@@ -123,7 +123,7 @@ def aide_quick_task(instruction: str) -> str:
     gk_result = gk_func(gk_state)
     project_context = gk_result.get("project_context", "")
 
-    result = architect_quick_task(instruction, project_context, issue_id)
+    result = planner_quick_task(instruction, project_context, issue_id)
 
     store.close_issue(issue_id, "completed")
     return result or "Quick task completed."

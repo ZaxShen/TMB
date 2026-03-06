@@ -7,7 +7,7 @@ import re
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from aide.config import get_llm, load_prompt, load_project_config, load_nodes_config, get_project_root, _AIDE_ROOT
+from aide.config import get_llm, load_prompt, load_project_config, load_nodes_config, get_project_root, get_role_name, _AIDE_ROOT
 from aide.permissions import assert_aide_write
 from aide.state import AgentState
 from aide.store import Store
@@ -88,7 +88,7 @@ def _record_skill_outcomes(store: Store, skill_names: list[str], is_pass: bool):
     for name in skill_names:
         msg = store.record_skill_outcome(name, is_pass)
         if msg:
-            print(f"[QA] {msg}")
+            print(f"[{get_role_name('validator').upper()}] {msg}")
 
 
 def _archive_task_from_execution_md(store: Store, issue_id: int, branch_id: str):
@@ -164,7 +164,9 @@ def validator(state: AgentState) -> dict:
                 skill_names = []
     skills_text = _load_skills(store, skill_names) if skill_names else ""
 
-    print(f"[QA] [{branch_id}] {total} tasks — reviewing...")
+    validator_display = get_role_name("validator").upper()
+    planner_display = get_role_name("planner")
+    print(f"[{validator_display}] [{branch_id}] {total} tasks — reviewing...")
 
     verify_prompt = (
         f"Branch ID: {branch_id}\n"
@@ -204,7 +206,7 @@ def validator(state: AgentState) -> dict:
                 except Exception as e:
                     result = f"[error] {e}"
                 result_str = str(result)
-                print(f"  [QA:{tc['name']}] done")
+                print(f"  [{validator_display}:{tc['name']}] done")
                 messages.append(ToolMessage(content=result_str, tool_call_id=tc["id"]))
             else:
                 messages.append(ToolMessage(
@@ -230,10 +232,10 @@ def validator(state: AgentState) -> dict:
 
         _archive_task_from_execution_md(store, issue_id, branch_id)
 
-        print(f"[QA] [{branch_id}] — PASS")
+        print(f"[{validator_display}] [{branch_id}] — PASS")
 
         if is_done:
-            print(f"\n[QA] All {total} tasks passed.")
+            print(f"\n[{validator_display}] All {total} tasks passed.")
 
         return {
             "current_task_idx": next_idx,
@@ -257,15 +259,15 @@ def validator(state: AgentState) -> dict:
         store.log(issue_id, branch_id, "validator", "max_retries_exceeded", {
             "attempts": new_iteration,
         }, summary=f"Max retries hit for [{branch_id}]")
-        print(f"[QA] [{branch_id}] — FAIL (attempt {new_iteration}/{max_retries}, escalating to Architect)")
+        print(f"[{validator_display}] [{branch_id}] — FAIL (attempt {new_iteration}/{max_retries}, escalating to {planner_display})")
         return {
             "iteration_count": new_iteration,
             "review_feedback": f"Max retries ({max_retries}) exceeded. Validator feedback:\n{verdict_text}",
             "messages": state.get("messages", []) + [response],
-            "next_node": "architect",
+            "next_node": "planner",
         }
 
-    print(f"[QA] [{branch_id}] — FAIL (attempt {new_iteration}/{max_retries}, retrying)")
+    print(f"[{validator_display}] [{branch_id}] — FAIL (attempt {new_iteration}/{max_retries}, retrying)")
     return {
         "iteration_count": new_iteration,
         "review_feedback": verdict_text,

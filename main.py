@@ -2,7 +2,7 @@
 
 Usage:
   uv run main.py                           Full workflow (reads doc/GOALS.md)
-  uv run main.py "update FLOWCHART"        Quick task (Architect only, no SWE/QA)
+  uv run main.py "update FLOWCHART"        Quick task (Planner only, no downstream agents)
   uv run main.py evolve "instruction"      Self-evolution (modify AIDE itself)
   uv run main.py setup                     Interactive project setup
   uv run main.py log                       Show recent issues
@@ -21,7 +21,7 @@ import sys
 
 import yaml
 
-from aide.config import _AIDE_ROOT, load_project_config, get_project_root
+from aide.config import _AIDE_ROOT, load_project_config, get_project_root, get_role_name
 from aide.store import Store
 
 
@@ -35,7 +35,7 @@ def _read_goals_md() -> str:
         goals_path.parent.mkdir(parents=True, exist_ok=True)
         goals_path.write_text(
             "# Goals\n\n"
-            "Write your goals below. The Architect will read this file and discuss with you.\n\n"
+            "Write your goals below. The Planner will read this file and discuss with you.\n\n"
             "---\n\n"
         )
         print(f"[AIDE] Created {goals_path}")
@@ -114,7 +114,8 @@ def _tasks_to_blueprint(tasks: list[dict]) -> list[dict]:
 
 def _show_blueprint(tasks: list[dict]):
     print()
-    print(f"[ARCHITECT] Blueprint ({len(tasks)} tasks) — see doc/BLUEPRINT.md")
+    planner_display = get_role_name("planner").upper()
+    print(f"[{planner_display}] Blueprint ({len(tasks)} tasks) — see doc/BLUEPRINT.md")
     for t in tasks:
         bid = t.get("branch_id") or t.get("task_id", "?")
         label = t.get("title") or t["description"][:80]
@@ -123,16 +124,17 @@ def _show_blueprint(tasks: list[dict]):
 
 
 def _approve_blueprint(store: Store, issue_id: int) -> bool:
-    approval = input("[Chief Architect] Approve this blueprint? (yes/no): ").strip().lower()
+    owner_display = get_role_name("owner")
+    approval = input(f"[{owner_display}] Approve this blueprint? (yes/no): ").strip().lower()
     if approval not in ("yes", "y"):
-        store.log(issue_id, None, "cto", "blueprint_rejected", {},
-                  summary="Chief Architect rejected blueprint")
+        store.log(issue_id, None, "owner", "blueprint_rejected", {},
+                  summary=f"{owner_display} rejected blueprint")
         store.close_issue(issue_id, "rejected")
         print("[AIDE] Blueprint rejected. Issue closed.")
         return False
 
-    store.log(issue_id, None, "cto", "blueprint_approved", {},
-              summary="Chief Architect approved blueprint")
+    store.log(issue_id, None, "owner", "blueprint_approved", {},
+              summary=f"{owner_display} approved blueprint")
     print()
     print("[AIDE] Blueprint approved. Generating execution plan...")
     print("-" * 40)
@@ -140,7 +142,7 @@ def _approve_blueprint(store: Store, issue_id: int) -> bool:
 
 
 def _quick_task(store: Store, instruction: str):
-    """Quick-task flow: gatekeeper → Architect handles directly. No SWE/QA."""
+    """Quick-task flow: gatekeeper → Planner handles directly. No downstream agents."""
     project_cfg = load_project_config()
     project_root = get_project_root()
 
@@ -153,9 +155,9 @@ def _quick_task(store: Store, instruction: str):
 
     project_context = _scan_project_context(store, issue_id, instruction)
 
-    from aide.nodes.architect import architect_quick_task
+    from aide.nodes.planner import planner_quick_task
 
-    result = architect_quick_task(instruction, project_context, issue_id)
+    result = planner_quick_task(instruction, project_context, issue_id)
 
     store.close_issue(issue_id, "completed")
     print("-" * 40)
@@ -257,8 +259,8 @@ def _health_check() -> bool:
 
 
 def _evolve(store: Store, instruction: str):
-    """Self-evolution flow: scan AIDE → Architect plans → Chief Architect approves
-    → git snapshot → Architect executes → health check."""
+    """Self-evolution flow: scan AIDE → Planner plans → Owner approves
+    → git snapshot → Planner executes → health check."""
     from aide.permissions import evolve_context
 
     print(_EVOLVE_WARNING)
@@ -276,17 +278,18 @@ def _evolve(store: Store, instruction: str):
     with evolve_context():
         aide_context = _scan_aide_context(store, issue_id, instruction)
 
-    # Phase 2: Architect generates plan (within evolve context for reads)
+    # Phase 2: Planner generates plan (within evolve context for reads)
     with evolve_context():
-        from aide.nodes.architect import architect_evolve
-        plan = architect_evolve(instruction, aide_context, issue_id)
+        from aide.nodes.planner import planner_evolve
+        plan = planner_evolve(instruction, aide_context, issue_id)
 
     if not plan or not plan.strip():
-        print("[EVOLVE] Architect produced no plan. Aborting.")
+        print("[EVOLVE] Planner produced no plan. Aborting.")
         store.close_issue(issue_id, "failed")
         return
 
-    # Phase 3: Chief Architect reviews
+    # Phase 3: Owner reviews
+    owner_display = get_role_name("owner")
     print()
     print("=" * 60)
     print("[EVOLVE] Review the evolution plan in doc/EVOLUTION.md")
@@ -295,22 +298,22 @@ def _evolve(store: Store, instruction: str):
     try:
         input()
     except (KeyboardInterrupt, EOFError):
-        print("\n[EVOLVE] Aborted by Chief Architect.")
-        store.log(issue_id, None, "cto", "evolve_rejected", {},
-                  summary="Chief Architect aborted self-evolution")
+        print(f"\n[EVOLVE] Aborted by {owner_display}.")
+        store.log(issue_id, None, "owner", "evolve_rejected", {},
+                  summary=f"{owner_display} aborted self-evolution")
         store.close_issue(issue_id, "rejected")
         return
 
-    store.log(issue_id, None, "cto", "evolve_approved", {},
-              summary="Chief Architect approved evolution plan")
+    store.log(issue_id, None, "owner", "evolve_approved", {},
+              summary=f"{owner_display} approved evolution plan")
 
     # Phase 4: Git snapshot
     _git_snapshot(instruction)
 
-    # Phase 5: Architect executes (within evolve context for full AIDE access)
+    # Phase 5: Planner executes (within evolve context for full AIDE access)
     with evolve_context():
-        from aide.nodes.architect import architect_evolve_execute
-        result = architect_evolve_execute(instruction, plan, aide_context, issue_id)
+        from aide.nodes.planner import planner_evolve_execute
+        result = planner_evolve_execute(instruction, plan, aide_context, issue_id)
 
     # Phase 6: Health check
     healthy = _health_check()
@@ -374,8 +377,8 @@ def _run_execution_plan(
     project_context: str,
     blueprint: list[dict],
 ):
-    """Generate EXECUTION.md by calling architect_execution_plan directly."""
-    from aide.nodes.architect import architect_execution_plan
+    """Generate EXECUTION.md by calling planner_execution_plan directly."""
+    from aide.nodes.planner import planner_execution_plan
 
     state = {
         "objective": goals_md,
@@ -390,7 +393,7 @@ def _run_execution_plan(
         "messages": [],
         "next_node": "",
     }
-    architect_execution_plan(state)
+    planner_execution_plan(state)
 
 
 def _run_execution(
@@ -451,7 +454,7 @@ def _fresh_start(store: Store):
     graph = build_graph()
     thread = {"configurable": {"thread_id": f"issue-{issue_id}"}}
 
-    # architect_plan runs and halts at interrupt
+    # planner_plan runs and halts at interrupt
     state = graph.invoke(
         {
             "objective": goals_md,
@@ -471,7 +474,7 @@ def _fresh_start(store: Store):
 
     blueprint = state.get("blueprint", [])
     if not blueprint:
-        print("[ARCHITECT] No blueprint was generated.")
+        print(f"[{get_role_name('planner').upper()}] No blueprint was generated.")
         store.close_issue(issue_id, "failed")
         sys.exit(1)
 
@@ -482,7 +485,7 @@ def _fresh_start(store: Store):
     if not _approve_blueprint(store, issue_id):
         sys.exit(0)
 
-    # Resume: architect_execution_plan → executor ↔ validator
+    # Resume: planner_execution_plan → executor ↔ validator
     state = graph.invoke(None, config=thread)
 
     _finalize_issue(store, issue_id)
@@ -496,7 +499,7 @@ def _resume(store: Store, issue: dict):
 
     Phases cascade: completing one phase falls through to the next.
       1. Discussion incomplete → resume discussion
-      2. No tasks in DB       → run architect_plan → approve → execution plan → execute
+      2. No tasks in DB       → run planner_plan → approve → execution plan → execute
       3. Blueprint not approved → show blueprint, ask approval
       4. Blueprint approved but no execution plan → generate EXECUTION.md
       5. Pending/failed tasks  → resume execution from first actionable task
@@ -526,7 +529,7 @@ def _resume(store: Store, issue: dict):
 
         run_discussion(goals_md, ctx, store, issue_id)
 
-    # Phase 2: No tasks → need architect_plan to generate blueprint + flowchart + QA plan
+    # Phase 2: No tasks → need planner_plan to generate blueprint + flowchart + QA plan
     tasks = store.get_tasks(issue_id)
     if not tasks:
         print("[AIDE] Phase: planning (pending)")
@@ -557,7 +560,7 @@ def _resume(store: Store, issue: dict):
 
         blueprint = state.get("blueprint", [])
         if not blueprint:
-            print("[ARCHITECT] No blueprint was generated.")
+            print(f"[{get_role_name('planner').upper()}] No blueprint was generated.")
             store.close_issue(issue_id, "failed")
             sys.exit(1)
 
@@ -567,7 +570,7 @@ def _resume(store: Store, issue: dict):
             sys.exit(0)
 
         # Within same process — MemorySaver still alive, resume graph
-        # architect_execution_plan → executor ↔ validator
+        # planner_execution_plan → executor ↔ validator
         state = graph.invoke(None, config=thread)
         _finalize_issue(store, issue_id)
         return
@@ -630,12 +633,37 @@ def setup():
     test_cmd = input("Test command [pytest]: ").strip() or "pytest"
     max_retries = input("Max retries per task [3]: ").strip() or "3"
 
+    # ── Role Naming ────────────────────────────────────────
+    print()
+    print("Role naming — choose a preset or keep defaults:")
+    print("  1) Generic  (Project Owner → Planner → Executor → Validator)")
+    print("  2) IT Company  (Chief Architect → Architect → SWE → QA Engineer)")
+    print("  3) Custom  (enter your own names)")
+    role_choice = input("Choice [1]: ").strip() or "1"
+
+    roles_cfg: dict = {}
+    if role_choice == "2":
+        roles_cfg = {
+            "preset": "it-company",
+            "owner": "Chief Architect",
+            "planner": "Architect",
+            "executor": "SWE",
+            "validator": "QA Engineer",
+        }
+    elif role_choice == "3":
+        roles_cfg["owner"] = input("  Human role name [Project Owner]: ").strip() or "Project Owner"
+        roles_cfg["planner"] = input("  Planner role name [Planner]: ").strip() or "Planner"
+        roles_cfg["executor"] = input("  Executor role name [Executor]: ").strip() or "Executor"
+        roles_cfg["validator"] = input("  Validator role name [Validator]: ").strip() or "Validator"
+
     config = {
         "name": name,
         "root_dir": "..",
         "test_command": test_cmd,
         "max_retry_per_task": int(max_retries),
     }
+    if roles_cfg:
+        config["roles"] = roles_cfg
 
     config_path = _AIDE_ROOT / "config" / "project.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -649,7 +677,7 @@ def setup():
         doc_dir.mkdir(parents=True, exist_ok=True)
         goals_path.write_text(
             "# Goals\n\n"
-            "Write your goals below. The Architect will read this file and discuss with you.\n\n"
+            "Write your goals below. The Planner will read this file and discuss with you.\n\n"
             "---\n\n"
         )
         print(f"  Created {goals_path}")
@@ -709,7 +737,7 @@ def setup():
                     "command": "npx",
                     "args": ["-y", "@notionhq/notion-mcp-server"],
                     "env": {"NOTION_TOKEN": "${NOTION_TOKEN}"},
-                    "agents": ["architect"],
+                    "agents": ["planner"],
                 }
                 if "NOTION_TOKEN" not in existing_env:
                     new_env_lines.append(f"NOTION_TOKEN={token}")
@@ -721,7 +749,7 @@ def setup():
                     "command": "npx",
                     "args": ["-y", "@modelcontextprotocol/server-github"],
                     "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
-                    "agents": ["architect", "executor"],
+                    "agents": ["planner", "executor"],
                 }
                 if "GITHUB_TOKEN" not in existing_env:
                     new_env_lines.append(f"GITHUB_TOKEN={token}")
@@ -733,7 +761,7 @@ def setup():
                     "command": "npx",
                     "args": ["-y", "@anthropic/slack-mcp-server"],
                     "env": {"SLACK_BOT_TOKEN": "${SLACK_BOT_TOKEN}"},
-                    "agents": ["architect"],
+                    "agents": ["planner"],
                 }
                 if "SLACK_BOT_TOKEN" not in existing_env:
                     new_env_lines.append(f"SLACK_BOT_TOKEN={token}")
@@ -874,7 +902,7 @@ def main():
         print()
         print("Usage:")
         print("  uv run main.py                           Full workflow (reads doc/GOALS.md)")
-        print('  uv run main.py "update FLOWCHART"        Quick task (Architect only)')
+        print('  uv run main.py "update FLOWCHART"        Quick task (Planner only)')
         print('  uv run main.py evolve "instruction"      Self-evolution (modify AIDE)')
         print("  uv run main.py setup                     Interactive project setup")
         print("  uv run main.py log                       Show recent issues")

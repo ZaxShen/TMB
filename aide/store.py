@@ -1,8 +1,8 @@
 """SQLite audit store — full workflow history.
 
 Tables:
-  issues       — Chief Architect objectives (from doc/GOALS.md)
-  discussions  — Architect–Chief Architect Q&A exchanges (kept permanently, doc/DISCUSSION.md is overwritten)
+  issues       — Project Owner objectives (from doc/GOALS.md)
+  discussions  — Planner–Owner Q&A exchanges (kept permanently, doc/DISCUSSION.md is overwritten)
   tasks        — Blueprint items assigned to Executor
   ledger       — Append-only log of every agent action
 
@@ -235,7 +235,7 @@ class Store:
         )
         self._conn.commit()
         issue_id = cur.lastrowid
-        self.log(issue_id, None, "cto", "issue_opened", {"objective": objective},
+        self.log(issue_id, None, "owner", "issue_opened", {"objective": objective},
                  summary=f"Issue opened: {objective[:100]}")
         return issue_id
 
@@ -316,7 +316,8 @@ class Store:
             "",
         ]
         for d in discussions:
-            label = "**Chief Architect**" if d["role"] == "cto" else "**Architect**"
+            from aide.config import get_role_name
+            label = f"**{get_role_name('owner')}**" if d["role"] in ("cto", "owner") else f"**{get_role_name('planner')}**"
             lines.append(f"### {label}")
             lines.append(f"*{d['created_at']}*")
             lines.append("")
@@ -335,7 +336,7 @@ class Store:
             self._conn.execute(
                 "DELETE FROM tasks WHERE issue_id = ?", (issue_id,)
             )
-            self.log(issue_id, None, "architect", "blueprint_superseded", {
+            self.log(issue_id, None, "planner", "blueprint_superseded", {
                 "old_task_count": len(existing),
             }, summary=f"Replaced {len(existing)} old tasks")
 
@@ -362,7 +363,7 @@ class Store:
                 ),
             )
         self._conn.commit()
-        self.log(issue_id, None, "architect", "blueprint_created", {
+        self.log(issue_id, None, "planner", "blueprint_created", {
             "task_count": len(blueprint),
         }, summary=f"Blueprint: {len(blueprint)} tasks")
 
@@ -548,7 +549,7 @@ class Store:
     def create_skill(self, name: str, description: str, file_path: str,
                      created_by: str = "system", tags: list[str] | None = None,
                      when_to_use: str = "", when_not_to_use: str = "") -> int:
-        is_curated = created_by in ("system", "human", "chief_architect")
+        is_curated = created_by in ("system", "human", "chief_architect", "owner")
         trust_tier = "curated" if is_curated else "agent"
         status = "active" if is_curated else "draft"
         now = _now()
@@ -698,7 +699,8 @@ class Store:
         if discussions:
             print(f"\n  Discussion ({len(discussions)} messages):")
             for d in discussions:
-                label = "Chief Architect" if d["role"] == "cto" else "Architect"
+                from aide.config import get_role_name
+                label = get_role_name("owner") if d["role"] in ("cto", "owner") else get_role_name("planner")
                 preview = d["content"][:80].replace("\n", " ")
                 print(f"    {d['created_at']}  [{label}] {preview}...")
 
@@ -749,7 +751,8 @@ class Store:
         if discussions:
             lines += ["---", "", "## Discussion", ""]
             for d in discussions:
-                label = "Chief Architect" if d["role"] == "cto" else "Architect"
+                from aide.config import get_role_name
+                label = get_role_name("owner") if d["role"] in ("cto", "owner") else get_role_name("planner")
                 lines += [
                     f"### {label}",
                     f"*{d['created_at']}*",

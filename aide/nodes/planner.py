@@ -1,8 +1,8 @@
-"""Architect nodes — planning and execution plan generation.
+"""Planner nodes — planning and execution plan generation.
 
 Two graph nodes:
-  architect_plan          — explores codebase, then generates BLUEPRINT.md, FLOWCHART.md, QA_PLAN.md
-  architect_execution_plan — generates EXECUTION.md (after approval)
+  planner_plan          — explores codebase, then generates BLUEPRINT.md, FLOWCHART.md, QA_PLAN.md
+  planner_execution_plan — generates EXECUTION.md (after approval)
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import json
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from aide.config import get_llm, load_prompt, load_nodes_config, get_project_root, _AIDE_ROOT
+from aide.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, _AIDE_ROOT
 from aide.permissions import assert_aide_write
 from aide.state import AgentState
 from aide.store import Store
@@ -59,7 +59,7 @@ def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds):
                 result_str = str(result)
                 if len(result_str) > 8000:
                     result_str = result_str[:8000] + "\n... (truncated)"
-                print(f"  [architect:{tc['name']}] done")
+                print(f"  [planner:{tc['name']}] done")
                 messages.append(ToolMessage(content=result_str, tool_call_id=tc["id"]))
             else:
                 messages.append(ToolMessage(
@@ -127,32 +127,33 @@ QA_PLAN_INSTRUCTION = (
     "Return ONLY the Markdown content, no JSON wrapping."
 )
 
-EXECUTION_PLAN_INSTRUCTION = (
-    "The Chief Architect has approved the blueprint. Now produce a detailed execution plan.\n"
-    "For each task, write step-by-step instructions that a junior developer can follow.\n"
-    "Use your tools to read relevant source files if you need to understand existing code.\n"
-    "Include:\n"
-    "- Exact commands to run\n"
-    "- File paths to create or modify\n"
-    "- Expected outputs at each step\n"
-    "- Dependencies on previous tasks\n\n"
-    "Format as Markdown with a ## section per task using the branch_id: `## Task <branch_id>: <title>`.\n"
-    "Example: `## Task 1.1: Add email verification`\n"
-    "Return ONLY the Markdown content."
-)
+def _exec_plan_instruction():
+    return (
+        f"The {get_role_name('owner')} has approved the blueprint. Now produce a detailed execution plan.\n"
+        "For each task, write step-by-step instructions that a junior developer can follow.\n"
+        "Use your tools to read relevant source files if you need to understand existing code.\n"
+        "Include:\n"
+        "- Exact commands to run\n"
+        "- File paths to create or modify\n"
+        "- Expected outputs at each step\n"
+        "- Dependencies on previous tasks\n\n"
+        "Format as Markdown with a ## section per task using the branch_id: `## Task <branch_id>: <title>`.\n"
+        "Example: `## Task 1.1: Add email verification`\n"
+        "Return ONLY the Markdown content."
+    )
 
 
-def architect_plan(state: AgentState) -> dict:
+def planner_plan(state: AgentState) -> dict:
     """Explore codebase, then generate BLUEPRINT.md, FLOWCHART.md, and QA_PLAN.md."""
-    node_cfg = load_nodes_config().get("architect", {})
+    node_cfg = load_nodes_config().get("planner", {})
     project_root = str(get_project_root())
-    llm = get_llm("architect")
-    system_prompt = load_prompt("architect")
+    llm = get_llm("planner")
+    system_prompt = load_prompt("planner")
     store = Store()
     issue_id = state.get("issue_id")
 
     tool_names = node_cfg.get("tools", [])
-    tools = get_tools_for_node(tool_names, project_root, node_name="architect")
+    tools = get_tools_for_node(tool_names, project_root, node_name="planner")
     tool_map = {t.name: t for t in tools} if tools else {}
 
     if tools:
@@ -160,6 +161,8 @@ def architect_plan(state: AgentState) -> dict:
     else:
         llm_with_tools = llm
 
+    planner_display = get_role_name("planner").upper()
+    owner_display = get_role_name("owner")
     objective = state["objective"]
     feedback = state.get("review_feedback", "")
     escalation_log = state.get("execution_log", "")
@@ -171,13 +174,13 @@ def architect_plan(state: AgentState) -> dict:
     # ── 0. Explore the codebase ──────────────────────────────
     exploration_summary = ""
     if tools and not is_replan:
-        print("[ARCHITECT] Exploring codebase...")
+        print(f"[{planner_display}] Exploring codebase...")
         explore_parts = []
         if project_context:
             explore_parts.append(f"## Project Context\n{project_context}")
         explore_parts.append(f"## Goals\n{objective}")
         if discussion:
-            explore_parts.append(f"## Discussion with Chief Architect\n{discussion}")
+            explore_parts.append(f"## Discussion with {owner_display}\n{discussion}")
         explore_parts.append(EXPLORE_INSTRUCTION)
 
         explore_messages = [
@@ -189,19 +192,19 @@ def architect_plan(state: AgentState) -> dict:
             llm_with_tools, explore_messages, tool_map, _MAX_EXPLORE_ROUNDS,
         )
         exploration_summary = _normalize_content(explore_response.content)
-        store.log(issue_id, None, "architect", "codebase_explored", {
+        store.log(issue_id, None, "planner", "codebase_explored", {
             "summary_length": len(exploration_summary),
         }, summary="Explored codebase structure and key modules")
-        print(f"[ARCHITECT] Exploration complete ({len(exploration_summary)} chars)")
+        print(f"[{planner_display}] Exploration complete ({len(exploration_summary)} chars)")
     elif is_replan:
-        print("[ARCHITECT] Re-planning based on feedback...")
+        print(f"[{planner_display}] Re-planning based on feedback...")
     else:
-        print("[ARCHITECT] Building blueprint from discussion...")
+        print(f"[{planner_display}] Building blueprint from discussion...")
 
     # ── 0b. Review pending skills ─────────────────────────────
     pending_skills = store.get_skills_pending_review()
     if pending_skills:
-        print(f"[ARCHITECT] Reviewing {len(pending_skills)} pending skills...")
+        print(f"[{planner_display}] Reviewing {len(pending_skills)} pending skills...")
         for ps in pending_skills:
             review_prompt = (
                 f"An agent created a skill during execution. Review it and decide "
@@ -233,16 +236,16 @@ def architect_plan(state: AgentState) -> dict:
             verdict = _normalize_content(review_resp.content).strip().upper()
             if verdict.startswith("APPROVE"):
                 store.activate_skill(ps["name"])
-                store.log(issue_id, None, "architect", "skill_approved", {
+                store.log(issue_id, None, "planner", "skill_approved", {
                     "skill": ps["name"],
                 }, summary=f"Approved skill: {ps['name']}")
-                print(f"  [ARCHITECT] Approved skill: {ps['name']}")
+                print(f"  [{planner_display}] Approved skill: {ps['name']}")
             else:
                 store.deprecate_skill(ps["name"])
-                store.log(issue_id, None, "architect", "skill_rejected", {
+                store.log(issue_id, None, "planner", "skill_rejected", {
                     "skill": ps["name"], "reason": verdict[:200],
                 }, summary=f"Rejected skill: {ps['name']}")
-                print(f"  [ARCHITECT] Rejected skill: {ps['name']}")
+                print(f"  [{planner_display}] Rejected skill: {ps['name']}")
 
     # ── 1. Generate Blueprint ────────────────────────────────
     existing_tree = store.get_all_root_tasks()
@@ -252,7 +255,7 @@ def architect_plan(state: AgentState) -> dict:
         parts.append(f"## Project Context\n{project_context}")
     parts.append(f"## Goals\n{objective}")
     if discussion:
-        parts.append(f"## Discussion with Chief Architect\n{discussion}")
+        parts.append(f"## Discussion with {owner_display}\n{discussion}")
     if exploration_summary:
         parts.append(f"## Codebase Exploration\n{exploration_summary}")
     if existing_tree:
@@ -298,17 +301,17 @@ def architect_plan(state: AgentState) -> dict:
 
     store.create_tasks(issue_id, blueprint)
     if is_replan:
-        store.log(issue_id, None, "architect", "blueprint_revised", {
+        store.log(issue_id, None, "planner", "blueprint_revised", {
             "reason": feedback[:500],
             "task_count": len(blueprint),
         }, summary=f"Blueprint revised: {len(blueprint)} tasks")
 
     blueprint_md = store.export_blueprint_md(issue_id, blueprint)
     _write_doc("BLUEPRINT.md", blueprint_md)
-    print(f"[ARCHITECT] Blueprint saved to doc/BLUEPRINT.md ({len(blueprint)} tasks)")
+    print(f"[{planner_display}] Blueprint saved to doc/BLUEPRINT.md ({len(blueprint)} tasks)")
 
     # ── 2. Generate Flowchart ────────────────────────────────
-    print("[ARCHITECT] Generating flowchart...")
+    print(f"[{planner_display}] Generating flowchart...")
     fc_parts = [
         f"## Blueprint\n```json\n{json.dumps(blueprint, indent=2)}\n```",
         f"## Goals\n{objective}",
@@ -330,12 +333,12 @@ def architect_plan(state: AgentState) -> dict:
         f"{fc_raw}\n"
     )
     _write_doc("FLOWCHART.md", flowchart_md)
-    store.log(issue_id, None, "architect", "flowchart_generated", {},
+    store.log(issue_id, None, "planner", "flowchart_generated", {},
              summary="Generated FLOWCHART.md")
-    print("[ARCHITECT] Flowchart saved to doc/FLOWCHART.md")
+    print(f"[{planner_display}] Flowchart saved to doc/FLOWCHART.md")
 
     # ── 3. Generate QA Plan ──────────────────────────────────
-    print("[ARCHITECT] Generating QA plan...")
+    print(f"[{planner_display}] Generating QA plan...")
     qa_parts = [
         f"## Blueprint\n```json\n{json.dumps(blueprint, indent=2)}\n```",
         f"## Goals\n{objective}",
@@ -358,11 +361,11 @@ def architect_plan(state: AgentState) -> dict:
         f"{qa_raw}\n"
     )
     _write_doc("QA_PLAN.md", qa_plan_md)
-    store.log(issue_id, None, "architect", "qa_plan_generated", {},
+    store.log(issue_id, None, "planner", "qa_plan_generated", {},
              summary="Generated QA_PLAN.md")
-    print("[ARCHITECT] QA plan saved to doc/QA_PLAN.md")
+    print(f"[{planner_display}] QA plan saved to doc/QA_PLAN.md")
 
-    print(f"[ARCHITECT] Planning complete: {len(blueprint)} tasks")
+    print(f"[{planner_display}] Planning complete: {len(blueprint)} tasks")
 
     return {
         "blueprint": blueprint,
@@ -375,28 +378,29 @@ def architect_plan(state: AgentState) -> dict:
     }
 
 
-QUICK_TASK_INSTRUCTION = (
-    "You are handling a quick task directly — no SWE or QA involved.\n"
-    "The Chief Architect gave you a single instruction to execute yourself.\n\n"
-    "Steps:\n"
-    "1. Use `file_read` and `search` to understand the current state of relevant files.\n"
-    "2. Use `file_write` to make the changes directly.\n"
-    "3. If the instruction involves updating a doc/ file (FLOWCHART, BLUEPRINT, etc.), "
-    "read the existing file first, understand the codebase, then rewrite it.\n\n"
-    "When done, provide a short summary of what you changed."
-)
+def _quick_task_instruction():
+    return (
+        "You are handling a quick task directly — no downstream agents involved.\n"
+        f"The {get_role_name('owner')} gave you a single instruction to execute yourself.\n\n"
+        "Steps:\n"
+        "1. Use `file_read` and `search` to understand the current state of relevant files.\n"
+        "2. Use `file_write` to make the changes directly.\n"
+        "3. If the instruction involves updating a doc/ file (FLOWCHART, BLUEPRINT, etc.), "
+        "read the existing file first, understand the codebase, then rewrite it.\n\n"
+        "When done, provide a short summary of what you changed."
+    )
 
 
-def architect_quick_task(instruction: str, project_context: str, issue_id: int):
-    """Architect handles a simple task directly — no graph, no SWE, no QA."""
-    node_cfg = load_nodes_config().get("architect", {})
+def planner_quick_task(instruction: str, project_context: str, issue_id: int):
+    """Planner handles a simple task directly — no graph, no executor, no validator."""
+    node_cfg = load_nodes_config().get("planner", {})
     project_root = str(get_project_root())
-    llm = get_llm("architect")
-    system_prompt = load_prompt("architect")
+    llm = get_llm("planner")
+    system_prompt = load_prompt("planner")
     store = Store()
 
     quick_tools_names = list(set(node_cfg.get("tools", []) + ["file_write"]))
-    tools = get_tools_for_node(quick_tools_names, project_root, node_name="architect")
+    tools = get_tools_for_node(quick_tools_names, project_root, node_name="planner")
     tool_map = {t.name: t for t in tools}
     llm_with_tools = llm.bind_tools(tools)
 
@@ -404,75 +408,79 @@ def architect_quick_task(instruction: str, project_context: str, issue_id: int):
     if project_context:
         parts.append(f"## Project Context\n{project_context}")
     parts.append(f"## Instruction\n{instruction}")
-    parts.append(QUICK_TASK_INSTRUCTION)
+    parts.append(_quick_task_instruction())
 
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content="\n\n".join(parts)),
     ]
 
-    print("[ARCHITECT] Working on quick task...")
+    planner_display = get_role_name("planner").upper()
+    print(f"[{planner_display}] Working on quick task...")
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS,
     )
     result = _normalize_content(response.content)
 
-    store.log(issue_id, None, "architect", "quick_task_completed", {},
+    store.log(issue_id, None, "planner", "quick_task_completed", {},
              summary=f"Quick: {instruction[:150]}")
-    print(f"[ARCHITECT] Done.")
+    print(f"[{planner_display}] Done.")
     return result
 
 
-EVOLVE_PLAN_INSTRUCTION = (
-    "You are in **self-evolution mode**. You are modifying the AIDE framework itself.\n\n"
-    "The Chief Architect has given you an instruction to improve or change the AIDE engine.\n"
-    "You have full read access to AIDE's own source code.\n\n"
-    "Steps:\n"
-    "1. Use `file_read` and `search` to explore the AIDE codebase.\n"
-    "2. Understand the current architecture — modules, tools, permissions, engine, prompts, config.\n"
-    "3. Produce a structured **Evolution Plan** in Markdown:\n\n"
-    "```\n"
-    "# Evolution Plan\n\n"
-    "## Instruction\n"
-    "{the instruction}\n\n"
-    "## Analysis\n"
-    "{what you found in the codebase}\n\n"
-    "## Proposed Changes\n"
-    "- **file**: path — **change**: description\n"
-    "- ...\n\n"
-    "## Risk Assessment\n"
-    "{what could break, edge cases}\n\n"
-    "## Rollback\n"
-    "git revert HEAD\n"
-    "```\n\n"
-    "Return ONLY the Markdown plan, nothing else."
-)
-
-EVOLVE_EXECUTE_INSTRUCTION = (
-    "You are in **self-evolution mode** — executing an approved evolution plan.\n\n"
-    "The Chief Architect has reviewed and approved your plan. Now execute it.\n\n"
-    "Rules:\n"
-    "- Use `file_read` to read files before modifying them.\n"
-    "- Use `file_write` to make changes.\n"
-    "- Use `shell` only if you need to run commands (e.g. formatting, testing).\n"
-    "- Follow the approved plan precisely. Do not deviate.\n"
-    "- After all changes, provide a summary of what was modified.\n"
-)
+def _evolve_plan_instruction():
+    return (
+        "You are in **self-evolution mode**. You are modifying the AIDE framework itself.\n\n"
+        f"The {get_role_name('owner')} has given you an instruction to improve or change the AIDE engine.\n"
+        "You have full read access to AIDE's own source code.\n\n"
+        "Steps:\n"
+        "1. Use `file_read` and `search` to explore the AIDE codebase.\n"
+        "2. Understand the current architecture — modules, tools, permissions, engine, prompts, config.\n"
+        "3. Produce a structured **Evolution Plan** in Markdown:\n\n"
+        "```\n"
+        "# Evolution Plan\n\n"
+        "## Instruction\n"
+        "{the instruction}\n\n"
+        "## Analysis\n"
+        "{what you found in the codebase}\n\n"
+        "## Proposed Changes\n"
+        "- **file**: path — **change**: description\n"
+        "- ...\n\n"
+        "## Risk Assessment\n"
+        "{what could break, edge cases}\n\n"
+        "## Rollback\n"
+        "git revert HEAD\n"
+        "```\n\n"
+        "Return ONLY the Markdown plan, nothing else."
+    )
 
 
-def architect_evolve(instruction: str, aide_context: str, issue_id: int) -> str:
+def _evolve_execute_instruction():
+    return (
+        "You are in **self-evolution mode** — executing an approved evolution plan.\n\n"
+        f"The {get_role_name('owner')} has reviewed and approved your plan. Now execute it.\n\n"
+        "Rules:\n"
+        "- Use `file_read` to read files before modifying them.\n"
+        "- Use `file_write` to make changes.\n"
+        "- Use `shell` only if you need to run commands (e.g. formatting, testing).\n"
+        "- Follow the approved plan precisely. Do not deviate.\n"
+        "- After all changes, provide a summary of what was modified.\n"
+    )
+
+
+def planner_evolve(instruction: str, aide_context: str, issue_id: int) -> str:
     """Exploration + plan phase of self-evolution. Returns the plan markdown.
 
     Runs inside evolve_context() — AIDE/** blacklist is lifted for reads.
     """
-    node_cfg = load_nodes_config().get("evolve", load_nodes_config().get("architect", {}))
-    llm = get_llm("architect")
-    system_prompt = load_prompt("architect")
+    node_cfg = load_nodes_config().get("evolve", load_nodes_config().get("planner", {}))
+    llm = get_llm("planner")
+    system_prompt = load_prompt("planner")
     store = Store()
 
     aide_root_str = str(_AIDE_ROOT)
     tool_names = ["file_read", "search"]
-    tools = get_tools_for_node(tool_names, aide_root_str, node_name="architect")
+    tools = get_tools_for_node(tool_names, aide_root_str, node_name="planner")
     tool_map = {t.name: t for t in tools}
     llm_with_tools = llm.bind_tools(tools)
 
@@ -480,45 +488,46 @@ def architect_evolve(instruction: str, aide_context: str, issue_id: int) -> str:
     if aide_context:
         parts.append(f"## AIDE Codebase Context\n{aide_context}")
     parts.append(f"## Instruction\n{instruction}")
-    parts.append(EVOLVE_PLAN_INSTRUCTION)
+    parts.append(_evolve_plan_instruction())
 
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content="\n\n".join(parts)),
     ]
 
-    print("[ARCHITECT] Exploring AIDE codebase for evolution plan...")
+    planner_display = get_role_name("planner").upper()
+    print(f"[{planner_display}] Exploring AIDE codebase for evolution plan...")
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS,
     )
     plan = _normalize_content(response.content)
 
     _write_doc("EVOLUTION.md", plan)
-    store.log(issue_id, None, "architect", "evolve_plan_generated", {
+    store.log(issue_id, None, "planner", "evolve_plan_generated", {
         "instruction": instruction[:300],
     }, summary=f"Evolution plan: {instruction[:120]}")
 
-    print("[ARCHITECT] Evolution plan saved to doc/EVOLUTION.md")
+    print(f"[{planner_display}] Evolution plan saved to doc/EVOLUTION.md")
     return plan
 
 
-def architect_evolve_execute(
+def planner_evolve_execute(
     instruction: str, plan: str, aide_context: str, issue_id: int,
 ) -> str:
     """Execution phase of self-evolution. Applies the approved plan.
 
     Runs inside evolve_context() — full AIDE read/write access.
     """
-    node_cfg = load_nodes_config().get("evolve", load_nodes_config().get("architect", {}))
-    llm = get_llm("architect")
-    system_prompt = load_prompt("architect")
+    node_cfg = load_nodes_config().get("evolve", load_nodes_config().get("planner", {}))
+    llm = get_llm("planner")
+    system_prompt = load_prompt("planner")
     store = Store()
 
     aide_root_str = str(_AIDE_ROOT)
     tool_names = list(set(
         node_cfg.get("tools", ["file_read", "search"]) + ["file_write", "shell"]
     ))
-    tools = get_tools_for_node(tool_names, aide_root_str, node_name="architect")
+    tools = get_tools_for_node(tool_names, aide_root_str, node_name="planner")
     tool_map = {t.name: t for t in tools}
     llm_with_tools = llm.bind_tools(tools)
 
@@ -526,7 +535,7 @@ def architect_evolve_execute(
         f"## AIDE Codebase Context\n{aide_context}" if aide_context else "",
         f"## Instruction\n{instruction}",
         f"## Approved Evolution Plan\n{plan}",
-        EVOLVE_EXECUTE_INSTRUCTION,
+        _evolve_execute_instruction(),
     ]
     parts = [p for p in parts if p]
 
@@ -535,34 +544,35 @@ def architect_evolve_execute(
         HumanMessage(content="\n\n".join(parts)),
     ]
 
-    print("[ARCHITECT] Executing evolution plan...")
+    planner_display = get_role_name("planner").upper()
+    print(f"[{planner_display}] Executing evolution plan...")
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, 15,
     )
     result = _normalize_content(response.content)
 
-    store.log(issue_id, None, "architect", "evolve_executed", {
+    store.log(issue_id, None, "planner", "evolve_executed", {
         "instruction": instruction[:300],
     }, summary=f"Executed evolution: {instruction[:120]}")
 
-    print("[ARCHITECT] Evolution execution complete.")
+    print(f"[{planner_display}] Evolution execution complete.")
     return result
 
 
-def architect_execution_plan(state: AgentState) -> dict:
-    """Generate EXECUTION.md — detailed step-by-step plan for SWEs.
+def planner_execution_plan(state: AgentState) -> dict:
+    """Generate EXECUTION.md — detailed step-by-step plan for executors.
 
     Uses tools to read relevant source files for accurate step-by-step instructions.
     """
-    node_cfg = load_nodes_config().get("architect", {})
+    node_cfg = load_nodes_config().get("planner", {})
     project_root = str(get_project_root())
-    llm = get_llm("architect")
-    system_prompt = load_prompt("architect")
+    llm = get_llm("planner")
+    system_prompt = load_prompt("planner")
     store = Store()
     issue_id = state.get("issue_id")
 
     tool_names = node_cfg.get("tools", [])
-    tools = get_tools_for_node(tool_names, project_root, node_name="architect")
+    tools = get_tools_for_node(tool_names, project_root, node_name="planner")
     tool_map = {t.name: t for t in tools} if tools else {}
 
     if tools:
@@ -570,18 +580,19 @@ def architect_execution_plan(state: AgentState) -> dict:
     else:
         llm_with_tools = llm
 
+    planner_display = get_role_name("planner").upper()
     blueprint = state["blueprint"]
     objective = state["objective"]
     project_context = state.get("project_context", "")
 
-    print("[ARCHITECT] Generating execution plan...")
+    print(f"[{planner_display}] Generating execution plan...")
 
     parts = []
     if project_context:
         parts.append(f"## Project Context\n{project_context}")
     parts.append(f"## Goals\n{objective}")
     parts.append(f"## Approved Blueprint\n```json\n{json.dumps(blueprint, indent=2)}\n```")
-    parts.append(EXECUTION_PLAN_INSTRUCTION)
+    parts.append(_exec_plan_instruction())
 
     messages = [
         SystemMessage(content=system_prompt),
@@ -600,10 +611,10 @@ def architect_execution_plan(state: AgentState) -> dict:
         f"{raw}\n"
     )
     _write_doc("EXECUTION.md", execution_md)
-    store.log(issue_id, None, "architect", "execution_plan_generated", {
+    store.log(issue_id, None, "planner", "execution_plan_generated", {
         "task_count": len(blueprint),
     }, summary=f"Generated EXECUTION.md for {len(blueprint)} tasks")
-    print("[ARCHITECT] Execution plan saved to doc/EXECUTION.md")
+    print(f"[{planner_display}] Execution plan saved to doc/EXECUTION.md")
 
     return {
         "messages": state.get("messages", []) + [response],

@@ -1,7 +1,7 @@
 [project]
 name = "baymax"
 version = "0.1.0"
-description = "AI Direction & Execution — a multi-agent workflow engine: Project Owner → Planner → Executor → Validator."
+description = "Multi-agent workflow engine for industrial-grade software projects: Project Owner → Planner → Executor → Validator."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

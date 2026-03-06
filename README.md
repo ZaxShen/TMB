@@ -1,4 +1,4 @@
-# Baymax: AI Direction & Execution
+# Baymax
 
 > A multi-agent framework for building and maintaining **industrial-grade** software projects with LLMs.
 

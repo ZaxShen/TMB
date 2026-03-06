@@ -1,27 +1,10 @@
-name: yik-yak-eda
-root_dir: ..              # relative to Baymax/ directory — '..' means the parent project
+name: yikyak
+root_dir: ..
 test_command: pytest
 max_retry_per_task: 3
-
-# Role display names — shown in CLI, logs, and SQLite.
-# Uncomment and customize to match your team's terminology.
-# Default generic names: Project Owner, Planner, Executor, Validator
-# roles:
-#   preset: it-company          # loads prompts from prompts/samples/it-company/
-#   owner: Chief Architect
-#   planner: Architect
-#   executor: SWE
-#   validator: QA Engineer
-
-# Blacklist — agents can NEVER read, write, or search these paths.
-# Glob patterns relative to project root. Checked on every tool call.
-blacklist:
-  - ".env"
-  - ".env.*"
-  - "**/.env"
-  - "**/secrets/**"
-  - "**/credentials/**"
-  - "**/*.pem"
-  - "**/*.key"
-  - "**/*secret*"
-  - "Baymax/**"             # agents cannot touch the Baymax framework itself
+roles:
+  preset: it-company
+  owner: Chief Architect
+  planner: Architect
+  executor: SWE
+  validator: QA Engineer

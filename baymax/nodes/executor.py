@@ -6,7 +6,7 @@ import json
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from baymax.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, _BAYMAX_ROOT
+from baymax.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, _BAYMAX_ROOT, extract_token_usage
 from baymax.state import AgentState
 from baymax.store import Store
 from baymax.tools import get_tools_for_node
@@ -137,10 +137,15 @@ def executor(state: AgentState) -> dict:
 
     tool_map = {t.name: t for t in tools} if tools else {}
     tool_outputs = []
+    token_accum = {"input_tokens": 0, "output_tokens": 0}
 
     for _round in range(_MAX_TOOL_ROUNDS):
         response = llm_with_tools.invoke(messages)
         messages.append(response)
+
+        usage = extract_token_usage(response)
+        token_accum["input_tokens"] += usage["input_tokens"]
+        token_accum["output_tokens"] += usage["output_tokens"]
 
         if not hasattr(response, "tool_calls") or not response.tool_calls:
             break
@@ -161,6 +166,8 @@ def executor(state: AgentState) -> dict:
                     content=f"[error] Unknown tool: {tc['name']}",
                     tool_call_id=tc["id"],
                 ))
+
+    store.log_tokens(issue_id, "executor", token_accum["input_tokens"], token_accum["output_tokens"])
 
     execution_log = _normalize_content(response.content)
     if tool_outputs:

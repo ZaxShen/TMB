@@ -13,7 +13,7 @@ import re
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from baymax.config import get_llm, load_prompt, load_nodes_config, load_project_config, get_project_root, get_role_name, _BAYMAX_ROOT
+from baymax.config import get_llm, load_prompt, load_nodes_config, load_project_config, get_project_root, get_role_name, _BAYMAX_ROOT, extract_token_usage
 from baymax.permissions import assert_baymax_write
 from baymax.state import AgentState
 from baymax.store import Store
@@ -41,10 +41,11 @@ def _write_doc(name: str, content: str):
     path.write_text(content)
 
 
-def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = ""):
+def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = "", token_accum: dict | None = None):
     """Run a multi-turn tool loop, returning the final response.
 
     Shows live progress on a single line, overwritten after each tool call.
+    If *token_accum* is provided, accumulates {"input_tokens": N, "output_tokens": N} across calls.
     """
     import sys
     import time
@@ -68,6 +69,11 @@ def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = 
             _print_progress()
         response = llm_with_tools.invoke(messages)
         messages.append(response)
+
+        if token_accum is not None:
+            usage = extract_token_usage(response)
+            token_accum["input_tokens"] = token_accum.get("input_tokens", 0) + usage["input_tokens"]
+            token_accum["output_tokens"] = token_accum.get("output_tokens", 0) + usage["output_tokens"]
 
         if not hasattr(response, "tool_calls") or not response.tool_calls:
             break
@@ -262,6 +268,7 @@ def planner_plan(state: AgentState) -> dict:
     escalation_log = state.get("execution_log", "")
     project_context = state.get("project_context", "")
     discussion = state.get("discussion", "")
+    token_accum = {"input_tokens": 0, "output_tokens": 0}
 
     is_replan = bool(feedback)
 
@@ -284,7 +291,7 @@ def planner_plan(state: AgentState) -> dict:
 
         explore_response, explore_messages = _run_tool_loop(
             llm_with_tools, explore_messages, tool_map, _MAX_EXPLORE_ROUNDS,
-            label="explore",
+            label="explore", token_accum=token_accum,
         )
         exploration_summary = _normalize_content(explore_response.content)
         store.log(issue_id, None, "planner", "codebase_explored", {
@@ -326,7 +333,7 @@ def planner_plan(state: AgentState) -> dict:
         ]
 
         print(f"[{planner_display}] Provisioning skills for downstream agents...")
-        _run_tool_loop(llm_with_tools, provision_messages, tool_map, _MAX_EXPLORE_ROUNDS, label="skills")
+        _run_tool_loop(llm_with_tools, provision_messages, tool_map, _MAX_EXPLORE_ROUNDS, label="skills", token_accum=token_accum)
 
         new_skills = store.get_all_skills()
         created_count = len(new_skills) - len(available_skills)
@@ -372,7 +379,7 @@ def planner_plan(state: AgentState) -> dict:
                     SystemMessage(content=system_prompt),
                     HumanMessage(content=create_prompt),
                 ]
-                _run_tool_loop(llm_with_tools, create_msgs, tool_map, 5)
+                _run_tool_loop(llm_with_tools, create_msgs, tool_map, 5, token_accum=token_accum)
                 new_skill = store.search_skills(req["need"])
                 skill_name = new_skill[0]["name"] if new_skill else None
                 store.resolve_skill_request(
@@ -420,6 +427,9 @@ def planner_plan(state: AgentState) -> dict:
                 HumanMessage(content=review_prompt),
             ]
             review_resp = llm.invoke(review_msgs)
+            usage = extract_token_usage(review_resp)
+            token_accum["input_tokens"] += usage["input_tokens"]
+            token_accum["output_tokens"] += usage["output_tokens"]
             verdict = _normalize_content(review_resp.content).strip().upper()
             if verdict.startswith("APPROVE"):
                 store.activate_skill(ps["name"])
@@ -476,7 +486,7 @@ def planner_plan(state: AgentState) -> dict:
     ]
 
     print(f"[{planner_display}] Generating blueprint...")
-    response, messages = _run_tool_loop(llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS, label="blueprint")
+    response, messages = _run_tool_loop(llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS, label="blueprint", token_accum=token_accum)
     raw = _normalize_content(response.content)
 
     try:
@@ -500,6 +510,7 @@ def planner_plan(state: AgentState) -> dict:
     # ── 2. Generate Flowchart ────────────────────────────────
     if not blueprint:
         print(f"[{planner_display}] No blueprint was generated.")
+        store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
         return {
             "blueprint": [],
             "next_node": "planner",
@@ -520,10 +531,16 @@ def planner_plan(state: AgentState) -> dict:
         HumanMessage(content="\n\n".join(fc_parts)),
     ]
     fc_response = llm.invoke(fc_messages)
+    usage = extract_token_usage(fc_response)
+    token_accum["input_tokens"] += usage["input_tokens"]
+    token_accum["output_tokens"] += usage["output_tokens"]
     fc_raw = _normalize_content(fc_response.content)
     if "mermaid" not in fc_raw.lower() and len(fc_raw) < 200:
         print(f"[{planner_display}] Flowchart too short, retrying...")
         fc_response = llm.invoke(fc_messages)
+        usage = extract_token_usage(fc_response)
+        token_accum["input_tokens"] += usage["input_tokens"]
+        token_accum["output_tokens"] += usage["output_tokens"]
         fc_raw = _normalize_content(fc_response.content)
 
     flowchart_md = (
@@ -537,6 +554,7 @@ def planner_plan(state: AgentState) -> dict:
     print(f"[{planner_display}] Flowchart saved to doc/FLOWCHART.md")
 
     print(f"[{planner_display}] Planning complete: {len(blueprint)} tasks")
+    store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
 
     return {
         "blueprint": blueprint,
@@ -555,10 +573,10 @@ def _quick_task_instruction():
         f"The {get_role_name('owner')} gave you a single instruction to execute yourself.\n\n"
         "Steps:\n"
         "1. Use `file_read` and `search` to understand the current state of relevant files.\n"
-        "2. Use `file_write` to make the changes directly.\n"
-        "3. If the instruction involves updating a doc/ file (FLOWCHART, BLUEPRINT, etc.), "
-        "read the existing file first, understand the codebase, then rewrite it.\n\n"
-        "When done, provide a short summary of what you changed."
+        "2. Use `shell` to run scripts, tests, or commands to diagnose issues.\n"
+        "3. Use `file_write` to make changes directly.\n"
+        "4. Use `shell` again to verify your fix works.\n\n"
+        "When done, provide a short summary of what you found and changed."
     )
 
 
@@ -570,7 +588,9 @@ def planner_quick_task(instruction: str, project_context: str, issue_id: int):
     system_prompt = load_prompt("planner")
     store = Store()
 
-    quick_tools_names = list(set(node_cfg.get("tools", []) + ["file_write"]))
+    quick_tools_names = list(set(
+        node_cfg.get("tools", []) + ["file_read", "file_write", "shell"]
+    ))
     tools = get_tools_for_node(quick_tools_names, project_root, node_name="planner")
     tool_map = {t.name: t for t in tools}
     llm_with_tools = llm.bind_tools(tools)
@@ -588,11 +608,14 @@ def planner_quick_task(instruction: str, project_context: str, issue_id: int):
 
     planner_display = get_role_name("planner").upper()
     print(f"[{planner_display}] Working on quick task...")
+    token_accum = {"input_tokens": 0, "output_tokens": 0}
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS,
+        token_accum=token_accum,
     )
     result = _normalize_content(response.content)
 
+    store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
     store.log(issue_id, None, "planner", "quick_task_completed", {},
              summary=f"Quick: {instruction[:150]}")
     print(f"[{planner_display}] Done.")
@@ -668,11 +691,14 @@ def planner_evolve(instruction: str, baymax_context: str, issue_id: int) -> str:
 
     planner_display = get_role_name("planner").upper()
     print(f"[{planner_display}] Exploring Baymax codebase for evolution plan...")
+    token_accum = {"input_tokens": 0, "output_tokens": 0}
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS,
+        token_accum=token_accum,
     )
     plan = _normalize_content(response.content)
 
+    store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
     _write_doc("EVOLUTION.md", plan)
     store.log(issue_id, None, "planner", "evolve_plan_generated", {
         "instruction": instruction[:300],
@@ -717,11 +743,14 @@ def planner_evolve_execute(
 
     planner_display = get_role_name("planner").upper()
     print(f"[{planner_display}] Executing evolution plan...")
+    token_accum = {"input_tokens": 0, "output_tokens": 0}
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, 15,
+        token_accum=token_accum,
     )
     result = _normalize_content(response.content)
 
+    store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
     store.log(issue_id, None, "planner", "evolve_executed", {
         "instruction": instruction[:300],
     }, summary=f"Executed evolution: {instruction[:120]}")
@@ -768,6 +797,7 @@ def planner_execution_plan(state: AgentState) -> dict:
     ]
 
     last_response = None
+    token_accum = {"input_tokens": 0, "output_tokens": 0}
     for i, task in enumerate(blueprint):
         branch_id = task["branch_id"]
         description = task.get("description", "")
@@ -805,6 +835,7 @@ def planner_execution_plan(state: AgentState) -> dict:
         print(f"  [{branch_id}] planning ({i+1}/{total})...")
         response, messages = _run_tool_loop(
             llm_with_tools, messages, tool_map, 5, label=f"task-{branch_id}",
+            token_accum=token_accum,
         )
         plan_md = _normalize_content(response.content)
         last_response = response
@@ -816,6 +847,7 @@ def planner_execution_plan(state: AgentState) -> dict:
 
         summary_lines.append(f"## Task {branch_id}\n{description[:120]}\n")
 
+    store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
     summary_md = "\n".join(summary_lines) + "\n"
     _write_doc("EXECUTION.md", summary_md)
     store.log(issue_id, None, "planner", "execution_plan_generated", {
@@ -960,9 +992,13 @@ def planner_validate(state: AgentState) -> dict:
         HumanMessage(content=verify_prompt),
     ]
 
+    token_accum = {"input_tokens": 0, "output_tokens": 0}
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, 10, label=f"validate-{branch_id}",
+        token_accum=token_accum,
     )
+    store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
+
     verdict_text = _normalize_content(response.content)
     is_pass = _extract_verdict(verdict_text)
 

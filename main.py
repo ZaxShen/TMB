@@ -142,7 +142,10 @@ def _approve_blueprint(store: Store, issue_id: int) -> bool:
 
 
 def _quick_task(store: Store, instruction: str):
-    """Quick-task flow: gatekeeper → Planner handles directly. No downstream agents."""
+    """Quick-task flow: same pipeline as full workflow, minus discussion and manual approval.
+
+    gatekeeper → planner_plan (auto-approved) → execution plans → executor ↔ planner_validate
+    """
     project_cfg = load_project_config()
     project_root = get_project_root()
 
@@ -155,17 +158,44 @@ def _quick_task(store: Store, instruction: str):
 
     project_context = _scan_project_context(store, issue_id, instruction)
 
-    from baymax.nodes.planner import planner_quick_task
+    from baymax.engine import build_graph
 
-    result = planner_quick_task(instruction, project_context, issue_id)
+    graph = build_graph()
+    thread = {"configurable": {"thread_id": f"issue-{issue_id}"}}
 
-    store.close_issue(issue_id, "completed")
+    state = graph.invoke(
+        {
+            "objective": instruction,
+            "project_context": project_context,
+            "discussion": "",
+            "issue_id": issue_id,
+            "blueprint": [],
+            "current_task_idx": 0,
+            "execution_log": "",
+            "review_feedback": "",
+            "iteration_count": 0,
+            "messages": [],
+            "next_node": "",
+        },
+        config=thread,
+    )
+
+    blueprint = state.get("blueprint", [])
+    if not blueprint:
+        print(f"[{get_role_name('planner').upper()}] No blueprint was generated.")
+        store.close_issue(issue_id, "failed")
+        return
+
+    _show_blueprint(blueprint)
+
+    store.log(issue_id, None, "owner", "blueprint_approved", {},
+              summary="Auto-approved (quick task)")
+    print("[Baymax] Blueprint auto-approved (quick task)")
     print("-" * 40)
-    print(f"[Baymax] Quick task complete. Issue #{issue_id} closed.")
-    if result:
-        print()
-        print(result[:500])
-    print()
+
+    state = graph.invoke(None, config=thread)
+
+    _finalize_issue(store, issue_id)
 
 
 def _scan_baymax_context(store: Store, issue_id: int, instruction: str) -> str:
@@ -341,6 +371,21 @@ def _evolve(store: Store, instruction: str):
     print()
 
 
+def _print_token_summary(store: Store, issue_id: int):
+    """Print a compact token usage report for the issue."""
+    summary = store.get_token_summary(issue_id)
+    if not summary or summary.get("total", {}).get("in", 0) == 0:
+        return
+    print()
+    print(f"Token Usage — Issue #{issue_id}")
+    for node, counts in sorted(summary.items()):
+        if node == "total":
+            continue
+        print(f"  {node:20s}  {counts['in']:>9,} in / {counts['out']:>9,} out")
+    t = summary["total"]
+    print(f"  {'total':20s}  {t['in']:>9,} in / {t['out']:>9,} out")
+
+
 def _finalize_issue(store: Store, issue_id: int):
     """Check task statuses and close the issue appropriately."""
     tasks = store.get_tasks(issue_id)
@@ -367,6 +412,7 @@ def _finalize_issue(store: Store, issue_id: int):
 
     print("-" * 40)
     store.print_summary(issue_id)
+    _print_token_summary(store, issue_id)
     print("[Baymax] See doc/ for DISCUSSION, BLUEPRINT, FLOWCHART, and EXECUTION.")
 
 
@@ -816,6 +862,7 @@ def log_history(issue_id: int | None = None):
 
     if issue_id:
         store.print_summary(issue_id)
+        _print_token_summary(store, issue_id)
     else:
         conn = store._conn
         rows = conn.execute(

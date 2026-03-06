@@ -125,6 +125,15 @@ class Store:
                 created_at      TEXT    NOT NULL,
                 resolved_at     TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                issue_id        INTEGER NOT NULL REFERENCES issues(id),
+                node            TEXT    NOT NULL,
+                input_tokens    INTEGER NOT NULL DEFAULT 0,
+                output_tokens   INTEGER NOT NULL DEFAULT 0,
+                created_at      TEXT    NOT NULL
+            );
         """)
         self._migrate()
 
@@ -530,6 +539,40 @@ class Store:
             (issue_id, branch_id, from_node, event_type, summary[:200], content, _now()),
         )
         self._conn.commit()
+
+    # ── Token usage ────────────────────────────────────────────
+
+    def log_tokens(self, issue_id: int, node: str, input_tokens: int, output_tokens: int):
+        """Record token usage from a single node invocation."""
+        if input_tokens == 0 and output_tokens == 0:
+            return
+        self._conn.execute(
+            "INSERT INTO token_usage (issue_id, node, input_tokens, output_tokens, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (issue_id, node, input_tokens, output_tokens, _now()),
+        )
+        self._conn.commit()
+
+    def get_token_summary(self, issue_id: int) -> dict:
+        """Aggregate token usage by node for an issue.
+
+        Returns {"planner": {"in": N, "out": N}, ..., "total": {"in": N, "out": N}}
+        """
+        rows = self._conn.execute(
+            "SELECT node, SUM(input_tokens) as inp, SUM(output_tokens) as outp "
+            "FROM token_usage WHERE issue_id = ? GROUP BY node ORDER BY node",
+            (issue_id,),
+        ).fetchall()
+        result = {}
+        total_in = total_out = 0
+        for r in rows:
+            result[r["node"]] = {"in": r["inp"], "out": r["outp"]}
+            total_in += r["inp"]
+            total_out += r["outp"]
+        result["total"] = {"in": total_in, "out": total_out}
+        return result
+
+    # ── Ledger ────────────────────────────────────────────────
 
     def get_ledger(self, issue_id: int, branch_id: str | None = None) -> list[dict]:
         if branch_id is not None:

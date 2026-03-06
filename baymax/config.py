@@ -147,3 +147,17 @@ def get_llm(node_name: str):
         return ChatOpenAI(model=model_name, temperature=temperature)
     else:
         raise ValueError(f"Unsupported provider: {provider}")
+
+
+def extract_token_usage(response) -> dict:
+    """Extract token counts from an AIMessage, normalized across providers."""
+    meta = getattr(response, "response_metadata", {}) or {}
+    usage = meta.get("usage", {})
+    if usage:
+        return {"input_tokens": usage.get("input_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0)}
+    usage = meta.get("token_usage", {})
+    if usage:
+        return {"input_tokens": usage.get("prompt_tokens", 0),
+                "output_tokens": usage.get("completion_tokens", 0)}
+    return {"input_tokens": 0, "output_tokens": 0}

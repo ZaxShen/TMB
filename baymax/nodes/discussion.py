@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
-from baymax.config import get_llm, get_role_name, get_project_root, load_nodes_config, _BAYMAX_ROOT
+from baymax.config import get_llm, get_role_name, get_project_root, load_nodes_config, _BAYMAX_ROOT, extract_token_usage
 from baymax.permissions import assert_baymax_write
 from baymax.store import Store
 from baymax.tools import get_tools_for_node
@@ -103,7 +103,7 @@ def _read_owner_answer(path) -> str:
 _MAX_TOOL_ROUNDS = 10
 
 
-def _run_discussion_tool_loop(llm_with_tools, messages, tool_map):
+def _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum: dict | None = None):
     """Let the planner use tools (file_inspect, search) before responding to the owner."""
     import sys
     import time
@@ -127,6 +127,11 @@ def _run_discussion_tool_loop(llm_with_tools, messages, tool_map):
             _print_progress()
         response = llm_with_tools.invoke(messages)
         messages.append(response)
+
+        if token_accum is not None:
+            usage = extract_token_usage(response)
+            token_accum["input_tokens"] = token_accum.get("input_tokens", 0) + usage["input_tokens"]
+            token_accum["output_tokens"] = token_accum.get("output_tokens", 0) + usage["output_tokens"]
 
         if not hasattr(response, "tool_calls") or not response.tool_calls:
             break
@@ -216,9 +221,10 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
         print()
         print(f"[DISCUSSION] {planner_display} is reviewing your goals...")
 
+    token_accum = {"input_tokens": 0, "output_tokens": 0}
     while True:
         if not needs_owner_input:
-            response, messages = _run_discussion_tool_loop(llm_with_tools, messages, tool_map)
+            response, messages = _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum=token_accum)
             planner_msg = response.content
             if isinstance(planner_msg, list):
                 planner_msg = "\n".join(
@@ -262,5 +268,6 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
         messages.append(HumanMessage(content=owner_answer))
         print(f"[{owner_display}]: {owner_answer[:120]}...")
 
+    store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
     discussion_md = store.export_discussion_md(issue_id)
     return discussion_md

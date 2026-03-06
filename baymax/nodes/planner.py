@@ -42,13 +42,28 @@ def _write_doc(name: str, content: str):
 def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = ""):
     """Run a multi-turn tool loop, returning the final response.
 
-    Prints a single summary line instead of per-call output.
+    Shows live progress on a single line, overwritten after each tool call.
     """
+    import sys
     import time
     start = time.monotonic()
     counts: dict[str, int] = {}
     response = None
+    prefix = f"  [{label}] " if label else "  "
+
+    def _print_progress(final: bool = False):
+        elapsed = time.monotonic() - start
+        parts = [f"{v} {k}" for k, v in sorted(counts.items())]
+        line = f"{prefix}{', '.join(parts)} ({elapsed:.0f}s)"
+        if final:
+            print(f"\r{line}{'':20}")
+        else:
+            sys.stdout.write(f"\r{line}...{'':20}")
+            sys.stdout.flush()
+
     for _ in range(max_rounds):
+        if counts:
+            _print_progress()
         response = llm_with_tools.invoke(messages)
         messages.append(response)
 
@@ -66,17 +81,15 @@ def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = 
                 if len(result_str) > 8000:
                     result_str = result_str[:8000] + "\n... (truncated)"
                 counts[tc["name"]] = counts.get(tc["name"], 0) + 1
+                _print_progress()
                 messages.append(ToolMessage(content=result_str, tool_call_id=tc["id"]))
             else:
                 messages.append(ToolMessage(
                     content=f"[error] Unknown tool: {tc['name']}",
                     tool_call_id=tc["id"],
                 ))
-    elapsed = time.monotonic() - start
     if counts:
-        parts = [f"{v} {k}" for k, v in sorted(counts.items())]
-        prefix = f"  [{label}] " if label else "  "
-        print(f"{prefix}{', '.join(parts)} ({elapsed:.0f}s)")
+        _print_progress(final=True)
     return response, messages
 
 

@@ -105,11 +105,26 @@ _MAX_TOOL_ROUNDS = 10
 
 def _run_discussion_tool_loop(llm_with_tools, messages, tool_map):
     """Let the planner use tools (file_inspect, search) before responding to the owner."""
+    import sys
     import time
     start = time.monotonic()
     counts: dict[str, int] = {}
     response = None
+    prefix = "  [discuss] "
+
+    def _print_progress(final: bool = False):
+        elapsed = time.monotonic() - start
+        parts = [f"{v} {k}" for k, v in sorted(counts.items())]
+        line = f"{prefix}{', '.join(parts)} ({elapsed:.0f}s)"
+        if final:
+            print(f"\r{line}{'':20}")
+        else:
+            sys.stdout.write(f"\r{line}...{'':20}")
+            sys.stdout.flush()
+
     for _ in range(_MAX_TOOL_ROUNDS):
+        if counts:
+            _print_progress()
         response = llm_with_tools.invoke(messages)
         messages.append(response)
 
@@ -127,6 +142,7 @@ def _run_discussion_tool_loop(llm_with_tools, messages, tool_map):
                 if len(result_str) > 8000:
                     result_str = result_str[:8000] + "\n... (truncated)"
                 counts[tc["name"]] = counts.get(tc["name"], 0) + 1
+                _print_progress()
                 messages.append(ToolMessage(content=result_str, tool_call_id=tc["id"]))
             else:
                 messages.append(ToolMessage(
@@ -134,10 +150,8 @@ def _run_discussion_tool_loop(llm_with_tools, messages, tool_map):
                     tool_call_id=tc["id"],
                 ))
 
-    elapsed = time.monotonic() - start
     if counts:
-        parts = [f"{v} {k}" for k, v in sorted(counts.items())]
-        print(f"  [discuss] {', '.join(parts)} ({elapsed:.0f}s)")
+        _print_progress(final=True)
     return response, messages
 
 

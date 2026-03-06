@@ -82,7 +82,7 @@ _NODE_RESTRICTED: dict[str, set[str]] = {
     "Baymax/doc/BLUEPRINT.md": {"planner", "owner"},
     "Baymax/doc/FLOWCHART.md": {"planner", "owner"},
     "Baymax/doc/EXECUTION.md": {"planner", "executor"},
-    "Baymax/doc/QA_PLAN.md": {"planner", "validator"},
+    "Baymax/doc/QA_PLAN.md": {"planner"},
     "Baymax/doc/EVOLUTION.md": {"planner"},
 }
 

@@ -20,15 +20,6 @@ executor:
     - search
     - skill_request
 
-validator:
-  model:
-    provider: anthropic
-    name: claude-haiku-4-5
-    temperature: 0
-  tools:
-    - shell
-    - skill_request
-
 evolve:
   model:
     provider: anthropic

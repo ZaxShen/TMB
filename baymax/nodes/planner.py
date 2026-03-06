@@ -1,17 +1,19 @@
-"""Planner nodes — planning and execution plan generation.
+"""Planner nodes — planning, validation, and execution plan generation.
 
-Two graph nodes:
-  planner_plan          — explores codebase, then generates BLUEPRINT.md, FLOWCHART.md, QA_PLAN.md
-  planner_execution_plan — generates EXECUTION.md (after approval)
+Graph nodes:
+  planner_plan          — explores codebase, generates BLUEPRINT.md + FLOWCHART.md
+  planner_execution_plan — generates per-task execution plans in SQLite (after approval)
+  planner_validate       — validates executor output against success criteria
 """
 
 from __future__ import annotations
 
 import json
+import re
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from baymax.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, _BAYMAX_ROOT
+from baymax.config import get_llm, load_prompt, load_nodes_config, load_project_config, get_project_root, get_role_name, _BAYMAX_ROOT
 from baymax.permissions import assert_baymax_write
 from baymax.state import AgentState
 from baymax.store import Store
@@ -134,8 +136,8 @@ EXPLORE_INSTRUCTION = (
 )
 
 SKILL_PROVISION_INSTRUCTION = (
-    "You have just explored the codebase. Now **provision skills** that downstream "
-    "agents ({role_executor}, {role_validator}) will need.\n\n"
+    "You have just explored the codebase. Now **provision skills** that the "
+    "{role_executor} will need.\n\n"
     "## What to Provision\n"
     "Look at the file formats, libraries, and domain patterns you discovered during "
     "exploration and discussion. For each one that does NOT already have a skill, "
@@ -192,45 +194,51 @@ BLUEPRINT_INSTRUCTION = (
 )
 
 FLOWCHART_INSTRUCTION = (
-    "Based on the blueprint you just created and your understanding of the codebase, "
-    "produce a high-level architecture or data-flow diagram in Mermaid syntax. "
-    "Use `graph TD` or `flowchart TD`.\n\n"
-    "## CRITICAL: Keep It High-Level\n"
-    "Show only the **core logic, decision points, and data flow** — NOT mechanical steps.\n"
-    "- OMIT: loading files, writing output, installing packages, importing libraries.\n"
-    "- INCLUDE: filters, algorithms, branching logic, validation rules, key transformations.\n"
-    "Think: if you were explaining the system on a whiteboard, what boxes would you draw?\n\n"
+    "Based on the blueprint, produce a **whiteboard-level** diagram in Mermaid syntax.\n\n"
+    "## Hard Constraints\n"
+    "- **Max 12 nodes.** If you need more, you're too detailed.\n"
+    "- Use `flowchart TD`.\n"
+    "- Each node = one **decision, algorithm, or transformation**.\n"
+    "- Edges = data flow or control flow between those steps.\n\n"
+    "## OMIT (these are obvious and waste space)\n"
+    "- File I/O (read CSV, write output, open file)\n"
+    "- Imports, installs, setup, teardown\n"
+    "- Error handling boxes\n"
+    "- Per-field details (don't list every column)\n\n"
+    "## INCLUDE (the things a human cares about)\n"
+    "- Core algorithm steps (matching, filtering, scoring)\n"
+    "- Decision points (if/else logic that matters)\n"
+    "- Data transformations (grouping, aggregation, joins)\n"
+    "- Validation checkpoints\n\n"
+    "Think: 5-minute whiteboard sketch for a colleague.\n\n"
     "Return ONLY the Mermaid code block (```mermaid ... ```), no other text."
 )
 
-QA_PLAN_INSTRUCTION = (
-    "Based on the blueprint and your understanding of the codebase, produce a QA plan in Markdown. "
-    "For each task (or group of related tasks), specify:\n"
-    "- **What to test**: the specific behavior or output to verify\n"
-    "- **How to test**: concrete commands, assertions, or checks\n"
-    "- **Risk level**: high/medium/low — focus detail on high-risk items\n"
-    "- **Edge cases**: any tricky scenarios the QA engineer should watch for\n\n"
-    "Return ONLY the Markdown content, no JSON wrapping."
-)
-
-def _exec_plan_instruction():
+def _per_task_exec_instruction():
     return (
-        f"The {get_role_name('owner')} has approved the blueprint. Now produce a detailed execution plan.\n"
-        "For each task, write step-by-step instructions that a junior developer can follow.\n"
-        "Use your tools to read relevant source files if you need to understand existing code.\n"
-        "Include:\n"
-        "- Exact commands to run\n"
-        "- File paths to create or modify\n"
-        "- Expected outputs at each step\n"
-        "- Dependencies on previous tasks\n\n"
-        "Format as Markdown with a ## section per task using the branch_id: `## Task <branch_id>: <title>`.\n"
-        "Example: `## Task 1.1: Add email verification`\n"
-        "Return ONLY the Markdown content."
+        f"The {get_role_name('owner')} has approved the blueprint. "
+        "Write a concise execution plan for THIS SINGLE TASK.\n\n"
+        "## Rules\n"
+        "- You provide the **roadmap** — the Executor writes the code.\n"
+        "- Do NOT include full source code or complete scripts.\n"
+        "- DO include: key decisions, algorithm outlines, file paths, commands to run, expected outputs.\n"
+        "- Keep it under 40 lines. Focus on what a competent developer needs to know, not what they already know.\n\n"
+        "## Format\n"
+        "```\n"
+        "### Steps\n"
+        "1. ...\n"
+        "2. ...\n\n"
+        "### Key Decisions\n"
+        "- ...\n\n"
+        "### Expected Output\n"
+        "- ...\n"
+        "```\n\n"
+        "Return ONLY the Markdown for this one task."
     )
 
 
 def planner_plan(state: AgentState) -> dict:
-    """Explore codebase, then generate BLUEPRINT.md, FLOWCHART.md, and QA_PLAN.md."""
+    """Explore codebase, then generate BLUEPRINT.md and FLOWCHART.md."""
     node_cfg = load_nodes_config().get("planner", {})
     project_root = str(get_project_root())
     llm = get_llm("planner")
@@ -301,7 +309,6 @@ def planner_plan(state: AgentState) -> dict:
 
         provision_prompt = SKILL_PROVISION_INSTRUCTION.format(
             role_executor=get_role_name("executor"),
-            role_validator=get_role_name("validator"),
         )
         provision_parts = []
         if exploration_summary:
@@ -529,38 +536,6 @@ def planner_plan(state: AgentState) -> dict:
              summary="Generated FLOWCHART.md")
     print(f"[{planner_display}] Flowchart saved to doc/FLOWCHART.md")
 
-    # ── 3. Generate QA Plan ──────────────────────────────────
-    print(f"[{planner_display}] Generating QA plan...")
-    qa_parts = [
-        f"## Blueprint\n```json\n{json.dumps(blueprint, indent=2)}\n```",
-        f"## Goals\n{objective}",
-    ]
-    if exploration_summary:
-        qa_parts.append(f"## Codebase Understanding\n{exploration_summary}")
-    qa_parts.append(QA_PLAN_INSTRUCTION)
-
-    qa_messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content="\n\n".join(qa_parts)),
-    ]
-    qa_response = llm.invoke(qa_messages)
-    qa_raw = _normalize_content(qa_response.content)
-    if len(qa_raw) < 200:
-        print(f"[{planner_display}] QA plan too short ({len(qa_raw)} chars), retrying...")
-        qa_response = llm.invoke(qa_messages)
-        qa_raw = _normalize_content(qa_response.content)
-
-    qa_plan_md = (
-        f"# QA Plan — Issue #{issue_id}\n\n"
-        f"**Objective**: {objective[:120]}\n\n"
-        f"---\n\n"
-        f"{qa_raw}\n"
-    )
-    _write_doc("QA_PLAN.md", qa_plan_md)
-    store.log(issue_id, None, "planner", "qa_plan_generated", {},
-             summary="Generated QA_PLAN.md")
-    print(f"[{planner_display}] QA plan saved to doc/QA_PLAN.md")
-
     print(f"[{planner_display}] Planning complete: {len(blueprint)} tasks")
 
     return {
@@ -756,9 +731,11 @@ def planner_evolve_execute(
 
 
 def planner_execution_plan(state: AgentState) -> dict:
-    """Generate EXECUTION.md — detailed step-by-step plan for executors.
+    """Generate per-task execution plans and store each in SQLite.
 
-    Uses tools to read relevant source files for accurate step-by-step instructions.
+    Loops over blueprint tasks, generating a concise plan for each one
+    individually. Writes a lightweight summary to doc/EXECUTION.md for
+    human review.
     """
     node_cfg = load_nodes_config().get("planner", {})
     project_root = str(get_project_root())
@@ -781,38 +758,265 @@ def planner_execution_plan(state: AgentState) -> dict:
     objective = state["objective"]
     project_context = state.get("project_context", "")
 
-    print(f"[{planner_display}] Generating execution plan...")
+    total = len(blueprint)
+    print(f"[{planner_display}] Generating execution plans for {total} tasks...")
 
+    summary_lines = [
+        f"# Execution Plan — Issue #{issue_id}\n",
+        f"**Objective**: {objective[:120]}\n",
+        f"---\n",
+    ]
+
+    last_response = None
+    for i, task in enumerate(blueprint):
+        branch_id = task["branch_id"]
+        description = task.get("description", "")
+        success_criteria = task.get("success_criteria", "")
+        skills = task.get("skills_required", [])
+        title = description[:80]
+
+        existing_plan = store.get_task_execution_plan(issue_id, branch_id)
+        if existing_plan:
+            print(f"  [{branch_id}] already has plan, skipping")
+            summary_lines.append(f"## Task {branch_id}\n{description[:120]}...\n")
+            continue
+
+        parts = []
+        if project_context:
+            parts.append(f"## Project Context (summary)\n{project_context[:1000]}")
+        parts.append(f"## Goal\n{objective[:300]}")
+        parts.append(
+            f"## Current Task ({i+1}/{total})\n"
+            f"**Branch ID**: {branch_id}\n"
+            f"**Description**: {description}\n"
+            f"**Success Criteria**: {success_criteria}\n"
+            f"**Skills**: {', '.join(skills) if skills else 'none'}"
+        )
+        if i > 0:
+            prev_titles = [f"- [{t['branch_id']}] {t.get('description', '')[:60]}" for t in blueprint[:i]]
+            parts.append(f"## Previous Tasks (already planned)\n" + "\n".join(prev_titles))
+        parts.append(_per_task_exec_instruction())
+
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content="\n\n".join(parts)),
+        ]
+
+        print(f"  [{branch_id}] planning ({i+1}/{total})...")
+        response, messages = _run_tool_loop(
+            llm_with_tools, messages, tool_map, 5, label=f"task-{branch_id}",
+        )
+        plan_md = _normalize_content(response.content)
+        last_response = response
+
+        store.update_task_execution_plan(issue_id, branch_id, plan_md)
+        store.log(issue_id, branch_id, "planner", "task_plan_generated", {
+            "chars": len(plan_md),
+        }, summary=f"Execution plan for [{branch_id}]: {title}")
+
+        summary_lines.append(f"## Task {branch_id}\n{description[:120]}\n")
+
+    summary_md = "\n".join(summary_lines) + "\n"
+    _write_doc("EXECUTION.md", summary_md)
+    store.log(issue_id, None, "planner", "execution_plan_generated", {
+        "task_count": total,
+    }, summary=f"Generated per-task execution plans for {total} tasks")
+    print(f"[{planner_display}] Execution plans stored in DB. Summary at doc/EXECUTION.md")
+
+    return {
+        "messages": state.get("messages", []) + ([last_response] if last_response else []),
+        "next_node": "executor",
+    }
+
+
+# ── Validation helpers (migrated from validator.py) ───────────
+
+
+def _extract_verdict(text: str) -> bool:
+    """Determine PASS/FAIL from validator output.
+
+    Strategy (in priority order):
+      1. Parse JSON block and read the "verdict" field
+      2. Regex for "verdict": "PASS" / "FAIL" pattern
+      3. Fallback: first occurrence of standalone PASS or FAIL keyword
+    """
+    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if json_match:
+        try:
+            obj = json.loads(json_match.group(1))
+            v = str(obj.get("verdict", "")).upper()
+            if v in ("PASS", "FAIL"):
+                return v == "PASS"
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+    field_match = re.search(r'"verdict"\s*:\s*"(PASS|FAIL)"', text, re.IGNORECASE)
+    if field_match:
+        return field_match.group(1).upper() == "PASS"
+
+    upper = text.upper()
+    pass_pos = upper.find("PASS")
+    fail_pos = upper.find("FAIL")
+    if pass_pos >= 0 and fail_pos < 0:
+        return True
+    if fail_pos >= 0 and pass_pos < 0:
+        return False
+    if pass_pos >= 0 and fail_pos >= 0:
+        return pass_pos < fail_pos
+
+    return False
+
+
+def _load_skills(store: Store, skill_names: list[str]) -> str:
+    """Load skill file contents for the given names, return combined text."""
+    if not skill_names:
+        return ""
+    skills = store.get_skills_by_names(skill_names)
     parts = []
-    if project_context:
-        parts.append(f"## Project Context\n{project_context}")
-    parts.append(f"## Goals\n{objective}")
-    parts.append(f"## Approved Blueprint\n```json\n{json.dumps(blueprint, indent=2)}\n```")
-    parts.append(_exec_plan_instruction())
+    for s in skills:
+        skill_path = _BAYMAX_ROOT / s["file_path"]
+        if skill_path.exists():
+            parts.append(skill_path.read_text().strip())
+    return "\n\n---\n\n".join(parts)
+
+
+def _record_skill_outcomes(store: Store, skill_names: list[str], is_pass: bool):
+    """Update effectiveness counters for every skill used in this task."""
+    for name in skill_names:
+        msg = store.record_skill_outcome(name, is_pass)
+        if msg:
+            print(f"[{get_role_name('planner').upper()}] {msg}")
+
+
+# ── Planner Validate ─────────────────────────────────────────
+
+
+def planner_validate(state: AgentState) -> dict:
+    """Validate executor output against success criteria.
+
+    The Planner validates because it already holds full context — data
+    schema, algorithm design, success criteria, edge cases.  No context
+    re-learning needed.
+    """
+    node_cfg = load_nodes_config().get("planner", {})
+    project_root = str(get_project_root())
+    llm = get_llm("planner")
+    system_prompt = load_prompt("planner")
+    project_cfg = load_project_config()
+    max_retries = project_cfg.get("max_retry_per_task", 3)
+    store = Store()
+    issue_id = state.get("issue_id")
+
+    validate_tools = ["shell", "file_inspect", "search"]
+    tools = get_tools_for_node(validate_tools, project_root, node_name="planner")
+    tool_map = {t.name: t for t in tools} if tools else {}
+    llm_with_tools = llm.bind_tools(tools) if tools else llm
+
+    blueprint = state["blueprint"]
+    idx = state["current_task_idx"]
+    task = blueprint[idx]
+    branch_id = task["branch_id"]
+    total = len(blueprint)
+    execution_log = state.get("execution_log", "")
+    iteration_count = state.get("iteration_count", 0)
+
+    skill_names = task.get("skills_required", [])
+    if not skill_names:
+        db_task = store.get_task_row(issue_id, branch_id)
+        if db_task:
+            raw_sr = db_task.get("skills_required", "[]")
+            try:
+                skill_names = json.loads(raw_sr) if isinstance(raw_sr, str) else raw_sr
+            except (json.JSONDecodeError, TypeError):
+                skill_names = []
+    skills_text = _load_skills(store, skill_names) if skill_names else ""
+
+    planner_display = get_role_name("planner").upper()
+    print(f"[{planner_display}] [{branch_id}] validating ({idx+1}/{total})...")
+
+    verify_prompt = (
+        f"## Validation Task\n"
+        f"You are now **validating** the Executor's work on task [{branch_id}].\n\n"
+        f"**Success criteria**: {task['success_criteria']}\n\n"
+    )
+    if skills_text:
+        verify_prompt += f"## Reference Skills\n{skills_text}\n\n"
+    verify_prompt += (
+        f"## Executor's Log\n{execution_log}\n\n"
+        "## Instructions\n"
+        "1. Use `shell` to run any verification commands (tests, scripts, checks).\n"
+        "2. Use `file_inspect` or `search` to examine outputs if needed.\n"
+        "3. Compare actual results against the success criteria.\n"
+        "4. Render your verdict:\n\n"
+        "```json\n"
+        '{"verdict": "PASS" or "FAIL", "evidence": "...", "failure_details": "..."}\n'
+        "```\n\n"
+        "If FAIL: be specific about what went wrong so the Executor can fix it.\n"
+        "If PASS: briefly confirm what you verified."
+    )
 
     messages = [
         SystemMessage(content=system_prompt),
-        HumanMessage(content="\n\n".join(parts)),
+        HumanMessage(content=verify_prompt),
     ]
 
     response, messages = _run_tool_loop(
-        llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS,
+        llm_with_tools, messages, tool_map, 10, label=f"validate-{branch_id}",
     )
-    raw = _normalize_content(response.content)
+    verdict_text = _normalize_content(response.content)
+    is_pass = _extract_verdict(verdict_text)
 
-    execution_md = (
-        f"# Execution Plan — Issue #{issue_id}\n\n"
-        f"**Objective**: {objective[:120]}\n\n"
-        f"---\n\n"
-        f"{raw}\n"
-    )
-    _write_doc("EXECUTION.md", execution_md)
-    store.log(issue_id, None, "planner", "execution_plan_generated", {
-        "task_count": len(blueprint),
-    }, summary=f"Generated EXECUTION.md for {len(blueprint)} tasks")
-    print(f"[{planner_display}] Execution plan saved to doc/EXECUTION.md")
+    _record_skill_outcomes(store, skill_names, is_pass)
 
+    if is_pass:
+        next_idx = idx + 1
+        is_done = next_idx >= len(blueprint)
+
+        store.update_task_status(issue_id, branch_id, "completed")
+        store.archive_task_qa_results(issue_id, branch_id, verdict_text[:2000])
+        store.log(issue_id, branch_id, "planner", "verdict_pass", {
+            "evidence": verdict_text[:1000],
+        }, summary=f"PASS: [{branch_id}]")
+
+        print(f"[{planner_display}] [{branch_id}] — PASS")
+
+        if is_done:
+            print(f"\n[{planner_display}] All {total} tasks passed.")
+
+        return {
+            "current_task_idx": next_idx,
+            "iteration_count": 0,
+            "review_feedback": "",
+            "execution_log": "",
+            "messages": state.get("messages", []) + [response],
+            "next_node": "__end__" if is_done else "executor",
+        }
+
+    new_iteration = iteration_count + 1
+
+    store.log(issue_id, branch_id, "planner", "verdict_fail", {
+        "attempt": new_iteration,
+        "max_retries": max_retries,
+        "feedback": verdict_text[:1000],
+    }, summary=f"FAIL: [{branch_id}] (attempt {new_iteration}/{max_retries})")
+
+    if new_iteration >= max_retries:
+        store.update_task_status(issue_id, branch_id, "failed")
+        store.log(issue_id, branch_id, "planner", "max_retries_exceeded", {
+            "attempts": new_iteration,
+        }, summary=f"Max retries hit for [{branch_id}]")
+        print(f"[{planner_display}] [{branch_id}] — FAIL (attempt {new_iteration}/{max_retries}, escalating)")
+        return {
+            "iteration_count": new_iteration,
+            "review_feedback": f"Max retries ({max_retries}) exceeded. Feedback:\n{verdict_text}",
+            "messages": state.get("messages", []) + [response],
+            "next_node": "__end__",
+        }
+
+    print(f"[{planner_display}] [{branch_id}] — FAIL (attempt {new_iteration}/{max_retries}, retrying)")
     return {
+        "iteration_count": new_iteration,
+        "review_feedback": verdict_text,
         "messages": state.get("messages", []) + [response],
         "next_node": "executor",
     }

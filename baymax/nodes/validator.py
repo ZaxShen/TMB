@@ -8,7 +8,6 @@ import re
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
 from baymax.config import get_llm, load_prompt, load_project_config, load_nodes_config, get_project_root, get_role_name, _BAYMAX_ROOT
-from baymax.permissions import assert_baymax_write
 from baymax.state import AgentState
 from baymax.store import Store
 from baymax.tools import get_tools_for_node
@@ -92,38 +91,13 @@ def _record_skill_outcomes(store: Store, skill_names: list[str], is_pass: bool):
 
 
 def _archive_task_from_execution_md(store: Store, issue_id: int, branch_id: str):
-    """Remove a completed task's section from EXECUTION.md and archive it in the DB."""
-    exec_path = _BAYMAX_ROOT / "doc" / "EXECUTION.md"
-    if not exec_path.exists():
-        return
+    """Log that a task's execution plan has been consumed.
 
-    content = exec_path.read_text()
-    task_header = f"## Task {branch_id}"
-    lines = content.split("\n")
-
-    task_start = None
-    task_end = None
-    for i, line in enumerate(lines):
-        if line.strip().startswith(task_header):
-            task_start = i
-        elif task_start is not None and line.strip().startswith("## Task "):
-            task_end = i
-            break
-
-    if task_start is None:
-        return
-
-    if task_end is None:
-        task_end = len(lines)
-
-    archived_section = "\n".join(lines[task_start:task_end]).strip()
-    store.archive_task_execution(issue_id, branch_id, archived_section)
+    Plans are stored per-task in SQLite from the start, so no file
+    parsing is needed. This just logs the archive event.
+    """
     store.log(issue_id, branch_id, "validator", "execution_task_archived", {},
-             summary=f"Archived [{branch_id}] from EXECUTION.md")
-
-    remaining = lines[:task_start] + lines[task_end:]
-    assert_baymax_write(exec_path)
-    exec_path.write_text("\n".join(remaining))
+             summary=f"Archived [{branch_id}]")
 
 
 def validator(state: AgentState) -> dict:

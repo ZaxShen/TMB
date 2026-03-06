@@ -4,8 +4,9 @@ planner:
     name: claude-opus-4-6
     temperature: 0.3
   tools:
-    - file_read
+    - file_inspect
     - search
+    - skill_create
 
 executor:
   model:
@@ -17,15 +18,7 @@ executor:
     - file_read
     - file_write
     - search
-    - skill_create
-
-validator:
-  model:
-    provider: anthropic
-    name: claude-haiku-4-5
-    temperature: 0
-  tools:
-    - shell
+    - skill_request
 
 evolve:
   model:

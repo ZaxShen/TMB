@@ -2,9 +2,9 @@
 
 Two graph variants:
   build_graph()           — full workflow: planner_plan → [owner interrupt] →
-                            planner_execution_plan → Executor ↔ Validator.
+                            planner_execution_plan → Executor ↔ planner_validate.
                             Uses MemorySaver for the within-process interrupt_after=["planner_plan"].
-  build_execution_graph() — execution-only: Executor ↔ Validator (no Planner, no interrupt).
+  build_execution_graph() — execution-only: Executor ↔ planner_validate (no planning, no interrupt).
                             Used for cross-process resume when the blueprint is already approved.
 
 Gatekeeper and Discussion run pre-graph (they need terminal I/O).
@@ -16,9 +16,8 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from baymax.state import AgentState
-from baymax.nodes.planner import planner_plan, planner_execution_plan
+from baymax.nodes.planner import planner_plan, planner_execution_plan, planner_validate
 from baymax.nodes.executor import executor
-from baymax.nodes.validator import validator
 
 
 def _route(state: AgentState) -> str:
@@ -29,14 +28,14 @@ def build_graph() -> StateGraph:
     """Full graph with planner interrupt — used for fresh runs.
 
     Flow: planner_plan → [interrupt for approval] →
-          planner_execution_plan → executor ↔ validator
+          planner_execution_plan → executor ↔ planner_validate
     """
     graph = StateGraph(AgentState)
 
     graph.add_node("planner_plan", planner_plan)
     graph.add_node("planner_execution_plan", planner_execution_plan)
     graph.add_node("executor", executor)
-    graph.add_node("validator", validator)
+    graph.add_node("planner_validate", planner_validate)
 
     graph.add_edge(START, "planner_plan")
 
@@ -50,14 +49,12 @@ def build_graph() -> StateGraph:
     })
 
     graph.add_conditional_edges("executor", _route, {
-        "validator": "validator",
-        "planner": END,
+        "planner_validate": "planner_validate",
         "__end__": END,
     })
 
-    graph.add_conditional_edges("validator", _route, {
+    graph.add_conditional_edges("planner_validate", _route, {
         "executor": "executor",
-        "planner": END,
         "__end__": END,
     })
 
@@ -75,19 +72,17 @@ def build_execution_graph() -> StateGraph:
     graph = StateGraph(AgentState)
 
     graph.add_node("executor", executor)
-    graph.add_node("validator", validator)
+    graph.add_node("planner_validate", planner_validate)
 
     graph.add_edge(START, "executor")
 
     graph.add_conditional_edges("executor", _route, {
-        "validator": "validator",
-        "planner": END,
+        "planner_validate": "planner_validate",
         "__end__": END,
     })
 
-    graph.add_conditional_edges("validator", _route, {
+    graph.add_conditional_edges("planner_validate", _route, {
         "executor": "executor",
-        "planner": END,
         "__end__": END,
     })
 

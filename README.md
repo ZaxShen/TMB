@@ -15,14 +15,13 @@ Most AI coding tools treat every session as a blank slate. They dump your entire
 **Baymax is different.** It models how a real engineering team works:
 
 - A **Project Owner** (you) defines goals in plain language
-- A **Planner** (LLM) discusses requirements, explores the codebase with tools, and produces a reviewable plan — before any code is written
+- A **Planner** (LLM) discusses requirements, explores the codebase with tools, produces a reviewable plan, and **validates** each task — before and after code is written
 - An **Executor** (LLM) executes atomic, scoped tasks — one module at a time, with detailed instructions
-- A **Validator** (LLM) validates each task against defined criteria, with retries and escalation
 - Everything is **logged to SQLite** — discussions, decisions, task results, verdicts. Run `uv run main.py report 12` six months later and see exactly what happened
 - The system **resumes from any interrupt** — Ctrl+C, crash, "I'll continue tomorrow." No wasted LLM calls, no repeated work
 - **Information firewalls** keep each agent focused — Executors see only their task and execution plan, not the full strategic context. This isn't security; it's attention management for LLMs
 
-> **Configurable roles** — by default Baymax uses generic names (Project Owner, Planner, Executor, Validator). Run `uv run main.py setup` to pick a preset like **IT Company** (Chief Architect → Architect → SWE → QA Engineer) or define your own names. Role names flow into CLI output, SQLite logs, and agent prompts.
+> **Configurable roles** — by default Baymax uses generic names (Project Owner, Planner, Executor). Run `uv run main.py setup` to pick a preset like **IT Company** (Chief Architect → Architect → SWE) or define your own names. Role names flow into CLI output, SQLite logs, and agent prompts.
 
 The result: maintainable, auditable software — not disposable demos.
 
@@ -88,7 +87,7 @@ For simple changes that don't need the full pipeline:
 
 ```bash
 uv run main.py "update our FLOWCHART based on current codebase"
-uv run main.py "refresh QA_PLAN.md to cover the new auth module"
+uv run main.py "add error handling to the login module"
 ```
 
 The Planner handles these directly — reads the codebase, makes the changes, done. No discussion, no downstream agents. Still logged to SQLite.
@@ -133,23 +132,22 @@ Project Owner writes doc/GOALS.md
            ▼
   ┌─── PLANNING ──────┐
   │  Planner writes:  │    BLUEPRINT.md  — task breakdown
-  │  3 documents      │    FLOWCHART.md  — architecture diagram
-  │                   │    QA_PLAN.md    — testing framework
+  │  2 documents      │    FLOWCHART.md  — architecture diagram (max 12 nodes)
   └────────┬──────────┘
            ▼
     Project Owner reviews & approves
            │
            ▼
   ┌─── EXECUTION PLAN ┐
-  │  Planner writes   │    EXECUTION.md — detailed steps per task
-  │  detailed plan    │    Read by Executor, pruned on completion
+  │  Planner generates │    Per-task plans stored in SQLite
+  │  per-task plans    │    EXECUTION.md — lightweight summary for humans
   └────────┬──────────┘
            ▼
   ┌─── EXECUTION ──────┐
-  │  Executor runs     │──→  Validator checks (against QA_PLAN.md)
-  │  task (shell,      │←──  PASS → archive task, next
+  │  Executor runs     │──→  Planner validates (same agent, full context)
+  │  task (shell,      │←──  PASS → next task
   │  files)            │←──  FAIL → retry (max 3)
-  └────────┬──────────┘←──  MAX FAIL → Planner replans
+  └────────┬──────────┘←──  MAX FAIL → escalate to human
            ▼
          DONE
 ```
@@ -222,9 +220,8 @@ Role names are configurable via `config/project.yaml`. Defaults shown, with IT C
 | Role | Default | IT Company | Responsibility |
 |------|---------|------------|----------------|
 | **owner** | Project Owner | Chief Architect | Writes goals. Discusses with Planner. Reviews blueprints. |
-| **planner** | Planner | Architect | Discusses requirements. Designs blueprint, flowchart, QA plan. Writes execution plan. Handles escalations. |
+| **planner** | Planner | Architect | Discusses requirements. Designs blueprint and flowchart. Writes per-task execution plans. **Validates** each task (has full context — no re-learning needed). Handles escalations. |
 | **executor** | Executor | SWE | Executes tasks using shell, filesystem, and search tools. Reports issues to Planner. |
-| **validator** | Validator | QA Engineer | Verifies each task against QA plan and success criteria. Reports discrepancies to Planner. |
 
 ### The Documents
 
@@ -235,34 +232,32 @@ All artifacts live in `Baymax/doc/`:
 | `GOALS.md` | Owner (you) | Planner | What you want done — plain language |
 | `DISCUSSION.md` | System | Owner, Planner | Planner–Owner Q&A transcript |
 | `BLUEPRINT.md` | Planner | Owner | High-level system design and task breakdown |
-| `FLOWCHART.md` | Planner | Owner | Architecture/data-flow diagram (Mermaid) |
-| `EXECUTION.md` | Planner | Executor | Detailed execution plan — tasks removed on completion |
-| `QA_PLAN.md` | Planner | Validator | Testing framework — risk areas, test types, edge cases |
+| `FLOWCHART.md` | Planner | Owner | Architecture/data-flow diagram (Mermaid, max 12 nodes) |
+| `EXECUTION.md` | Planner | Owner | Lightweight summary of per-task plans (full plans in SQLite) |
 | `EVOLUTION.md` | Planner | Owner | Self-evolution plan (only during `evolve` mode) |
 
 ### Permissions
 
-| Resource | Owner | Planner | Executor | Validator |
-|----------|-------|---------|----------|-----------|
-| `doc/GOALS.md` | Edit | Read | — | — |
-| `doc/DISCUSSION.md` | Read | Edit | — | — |
-| `doc/BLUEPRINT.md` | Read | Edit | — | — |
-| `doc/FLOWCHART.md` | Read | Edit | — | — |
-| `doc/EXECUTION.md` | Read | Edit | Read | — |
-| `doc/QA_PLAN.md` | Read | Edit | — | Read |
-| `baymax_history.db` | Read | Read / Write | Read / Write | Read / Write |
-| DB: tasks | — | Write (create) | Read (own task) | Read (current task) |
-| DB: ledger | Read | Write | Write | Write |
-| Project files | — | — | Edit | Read |
-| `.env`, secrets | — | — | — | — |
-| `doc/EVOLUTION.md` | Read | Edit | — | — |
-| `Baymax/**` (engine) | Edit (manual) | Edit (evolve mode only) | — | — |
+| Resource | Owner | Planner | Executor |
+|----------|-------|---------|----------|
+| `doc/GOALS.md` | Edit | Read | — |
+| `doc/DISCUSSION.md` | Read | Edit | — |
+| `doc/BLUEPRINT.md` | Read | Edit | — |
+| `doc/FLOWCHART.md` | Read | Edit | — |
+| `doc/EXECUTION.md` | Read | Edit | — |
+| `baymax_history.db` | Read | Read / Write | Read / Write |
+| DB: tasks | — | Write (create) | Read (own task) |
+| DB: ledger | Read | Write | Write |
+| Project files | — | — | Edit |
+| `.env`, secrets | — | — | — |
+| `doc/EVOLUTION.md` | Read | Edit | — |
+| `Baymax/**` (engine) | Edit (manual) | Edit (evolve mode only) | — |
 
 **Key rules:**
 - Executors never see GOALS.md, DISCUSSION.md, BLUEPRINT.md, or FLOWCHART.md — high-level context could mislead execution.
-- Executors read EXECUTION.md for detailed task steps, and get their task assignment from the DB.
-- Validators read QA_PLAN.md for testing requirements but never see high-level planning docs.
-- Both Executors and Validators can report implementation-vs-design discrepancies to the Planner.
+- Executors get their task's execution plan from SQLite (not a shared file), keeping their context window focused.
+- The Planner validates each task directly — it already holds the full project context (data schema, algorithm design, edge cases), so no re-learning is needed.
+- Executors can report implementation-vs-design discrepancies to the Planner.
 - Secrets and the Baymax engine itself are inaccessible to all agents during normal operation.
 - In **evolve mode** (`uv run main.py evolve "..."`), the Planner gets temporary full access to Baymax source — gated by double approval and automatic git snapshot.
 
@@ -318,8 +313,8 @@ Baymax/skills/
 **How it works:**
 
 1. **Planner assigns skills per task** — sees available skills with effectiveness scores and applicability conditions, assigns relevant ones to `skills_required`
-2. **Executor and Validator load only assigned skills** — skill content is injected into context alongside the task prompt. No irrelevant knowledge, no wasted tokens
-3. **Agents can create new skills** — Executor has a `skill_create` tool. New skills start as `draft` and must pass Planner review before becoming available
+2. **Executor loads only assigned skills** — skill content is injected into context alongside the task prompt. No irrelevant knowledge, no wasted tokens
+3. **Agents can request new skills** — Executor has a `skill_request` tool. The Planner creates and reviews all skills
 4. **Built-in skills auto-seed** — on first run, Baymax registers all `.md` files in `skills/` as curated, trusted skills
 
 **Validation and trust:**
@@ -359,7 +354,6 @@ max_retry_per_task: 3
 #   owner: Chief Architect
 #   planner: Architect
 #   executor: SWE
-#   validator: QA Engineer
 ```
 
 ### `config/nodes.yaml`
@@ -372,21 +366,14 @@ planner:
     provider: anthropic
     name: claude-sonnet-4-20250514
     temperature: 0.3
-  tools: [file_read, search]
+  tools: [file_inspect, search, skill_create]
 
 executor:
   model:
     provider: anthropic
     name: claude-sonnet-4-20250514
     temperature: 0
-  tools: [shell, file_read, file_write, search, skill_create]
-
-validator:
-  model:
-    provider: anthropic
-    name: claude-sonnet-4-20250514
-    temperature: 0
-  tools: [shell]
+  tools: [shell, file_read, file_write, search, skill_request]
 ```
 
 ### API Keys
@@ -403,12 +390,11 @@ ANTHROPIC_API_KEY=sk-ant-...
 Agent prompts are Markdown files in `Baymax/prompts/`. Edit to change behavior without touching Python:
 
 ```
-prompts/planner.md      # How the Planner thinks and plans
+prompts/planner.md      # How the Planner plans, validates, and manages skills
 prompts/executor.md     # How the Executor executes and reports
-prompts/validator.md    # How the Validator evaluates pass/fail
 ```
 
-Prompts support template variables: `{role_owner}`, `{role_planner}`, `{role_executor}`, `{role_validator}` — replaced with display names from `project.yaml` at load time.
+Prompts support template variables: `{role_owner}`, `{role_planner}`, `{role_executor}` — replaced with display names from `project.yaml` at load time.
 
 **Presets** — set `roles.preset: it-company` in `project.yaml` to load domain-specific prompts from `prompts/samples/it-company/` (falls back to defaults for missing files).
 
@@ -424,8 +410,7 @@ your-project/                # ← Baymax operates on this
 │   │   ├── DISCUSSION.md    # Generated: Planner–Owner Q&A
 │   │   ├── BLUEPRINT.md     # Generated: high-level task breakdown
 │   │   ├── FLOWCHART.md     # Generated: architecture diagram (Mermaid)
-│   │   ├── EXECUTION.md     # Generated: detailed plan (pruned on completion)
-│   │   ├── QA_PLAN.md       # Generated: testing framework
+│   │   ├── EXECUTION.md     # Generated: lightweight summary (full plans in SQLite)
 │   │   └── EVOLUTION.md     # Generated: self-evolution plan (evolve mode)
 │   ├── config/
 │   │   ├── nodes.default.yaml    # Tracked — LLM providers & tools
@@ -437,7 +422,6 @@ your-project/                # ← Baymax operates on this
 │   ├── prompts/
 │   │   ├── planner.md
 │   │   ├── executor.md
-│   │   ├── validator.md
 │   │   └── samples/
 │   │       └── it-company/    # IT Company preset prompts
 │   ├── skills/              # Reusable knowledge artifacts
@@ -527,8 +511,8 @@ Templates handle common patterns (REST wrappers, DB connectors, file servers). G
 
 - **File-driven** — Write goals in Markdown, not CLI arguments.
 - **Discussion first** — Planner clarifies before planning. No blind execution.
-- **Layered documents** — Strategic docs (BLUEPRINT, FLOWCHART) for Owner review; operational docs (EXECUTION, QA_PLAN) for agent consumption.
-- **Living execution plan** — EXECUTION.md shrinks as tasks complete; completed work archived in SQLite.
+- **Layered documents** — Strategic docs (BLUEPRINT, FLOWCHART) for Owner review; per-task execution plans in SQLite for agent consumption.
+- **Per-task execution plans** — Each task gets its own plan in SQLite. Executors load only their current task. EXECUTION.md is a lightweight summary for humans.
 - **Full audit trail** — Every action logged to SQLite with lightweight summaries. Full JSON stored but never bulk-read.
 - **Skills over re-reading** — Agents compress discovered patterns into reusable skills, loaded on demand instead of re-scanning source files.
 - **Config over code** — YAML and Markdown control behavior. Engine is immutable during normal operation.

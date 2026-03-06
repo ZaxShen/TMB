@@ -14,31 +14,9 @@ from baymax.tools import get_tools_for_node
 _MAX_TOOL_ROUNDS = 15
 
 
-def _read_execution_plan_section(branch_id: str) -> str:
-    """Extract the section for a specific task from doc/EXECUTION.md."""
-    path = _BAYMAX_ROOT / "doc" / "EXECUTION.md"
-    if not path.exists():
-        return ""
-    content = path.read_text()
-    task_header = f"## Task {branch_id}"
-    lines = content.split("\n")
-
-    task_start = None
-    task_end = None
-    for i, line in enumerate(lines):
-        if line.strip().startswith(task_header):
-            task_start = i
-        elif task_start is not None and line.strip().startswith("## Task "):
-            task_end = i
-            break
-
-    if task_start is None:
-        return ""
-
-    if task_end is None:
-        task_end = len(lines)
-
-    return "\n".join(lines[task_start:task_end]).strip()
+def _get_execution_plan(store: Store, issue_id: int, branch_id: str) -> str:
+    """Read the per-task execution plan from SQLite."""
+    return store.get_task_execution_plan(issue_id, branch_id)
 
 
 def _normalize_content(content) -> str:
@@ -101,7 +79,7 @@ def executor(state: AgentState) -> dict:
     description = db_task["description"] if db_task else task["description"]
     success_criteria = db_task["success_criteria"] if db_task else task["success_criteria"]
 
-    exec_plan_section = _read_execution_plan_section(branch_id)
+    exec_plan_section = _get_execution_plan(store, issue_id, branch_id)
 
     skill_names = task.get("skills_required", [])
     if not skill_names and db_task:
@@ -115,7 +93,7 @@ def executor(state: AgentState) -> dict:
     total = len(blueprint)
     executor_display = get_role_name("executor").upper()
     planner_display = get_role_name("planner")
-    validator_display = get_role_name("validator")
+    validator_display = get_role_name("planner")
     if is_retry:
         print(f"[{executor_display}] [{branch_id}] {total} tasks — retrying: {description[:60]}")
     else:
@@ -206,5 +184,5 @@ def executor(state: AgentState) -> dict:
     return {
         "execution_log": execution_log,
         "messages": state.get("messages", []) + [response],
-        "next_node": "planner" if is_escalation else "validator",
+        "next_node": "__end__" if is_escalation else "planner_validate",
     }

@@ -367,7 +367,7 @@ def _finalize_issue(store: Store, issue_id: int):
 
     print("-" * 40)
     store.print_summary(issue_id)
-    print("[Baymax] See doc/ for DISCUSSION, BLUEPRINT, FLOWCHART, EXECUTION, and QA_PLAN.")
+    print("[Baymax] See doc/ for DISCUSSION, BLUEPRINT, FLOWCHART, and EXECUTION.")
 
 
 def _run_execution_plan(
@@ -432,7 +432,7 @@ def _run_execution(
 
 
 def _fresh_start(store: Store):
-    """Full workflow: goals → discuss → plan (blueprint + flowchart + QA) → approve → execution plan → execute."""
+    """Full workflow: goals → discuss → plan (blueprint + flowchart) → approve → execution plan → execute."""
     project_cfg = load_project_config()
     project_root = get_project_root()
 
@@ -479,7 +479,7 @@ def _fresh_start(store: Store):
         sys.exit(1)
 
     _show_blueprint(blueprint)
-    print("[Baymax] Review doc/BLUEPRINT.md, doc/FLOWCHART.md, and doc/QA_PLAN.md")
+    print("[Baymax] Review doc/BLUEPRINT.md and doc/FLOWCHART.md")
     print()
 
     if not _approve_blueprint(store, issue_id):
@@ -529,7 +529,7 @@ def _resume(store: Store, issue: dict):
 
         run_discussion(goals_md, ctx, store, issue_id)
 
-    # Phase 2: No tasks → need planner_plan to generate blueprint + flowchart + QA plan
+    # Phase 2: No tasks → need planner_plan to generate blueprint + flowchart
     tasks = store.get_tasks(issue_id)
     if not tasks:
         print("[Baymax] Phase: planning (pending)")
@@ -570,7 +570,7 @@ def _resume(store: Store, issue: dict):
             sys.exit(0)
 
         # Within same process — MemorySaver still alive, resume graph
-        # planner_execution_plan → executor ↔ validator
+        # planner_execution_plan → executor ↔ planner_validate
         state = graph.invoke(None, config=thread)
         _finalize_issue(store, issue_id)
         return
@@ -636,8 +636,8 @@ def setup():
     # ── Role Naming ────────────────────────────────────────
     print()
     print("Role naming — choose a preset or keep defaults:")
-    print("  1) Generic  (Project Owner → Planner → Executor → Validator)")
-    print("  2) IT Company  (Chief Architect → Architect → SWE → QA Engineer)")
+    print("  1) Generic  (Project Owner → Planner → Executor)")
+    print("  2) IT Company  (Chief Architect → Architect → SWE)")
     print("  3) Custom  (enter your own names)")
     role_choice = input("Choice [1]: ").strip() or "1"
 
@@ -648,13 +648,11 @@ def setup():
             "owner": "Chief Architect",
             "planner": "Architect",
             "executor": "SWE",
-            "validator": "QA Engineer",
         }
     elif role_choice == "3":
         roles_cfg["owner"] = input("  Human role name [Project Owner]: ").strip() or "Project Owner"
         roles_cfg["planner"] = input("  Planner role name [Planner]: ").strip() or "Planner"
         roles_cfg["executor"] = input("  Executor role name [Executor]: ").strip() or "Executor"
-        roles_cfg["validator"] = input("  Validator role name [Validator]: ").strip() or "Validator"
 
     config = {
         "name": name,

@@ -1,7 +1,7 @@
 """Tool bindings for agent nodes."""
 
 from baymax.tools.shell import create_shell_tool
-from baymax.tools.filesystem import create_file_read_tool, create_file_write_tool
+from baymax.tools.filesystem import create_file_read_tool, create_file_write_tool, create_file_inspect_tool
 from baymax.tools.search import create_search_tool
 from baymax.tools.skills import create_skill_tool
 from baymax.mcp.generator import create_mcp_generate_tool
@@ -17,6 +17,7 @@ def get_tools_for_node(tool_names: list[str], project_root: str, node_name: str 
         "shell": lambda: create_shell_tool(project_root),
         "file_read": lambda: create_file_read_tool(project_root, node_name),
         "file_write": lambda: create_file_write_tool(project_root, node_name),
+        "file_inspect": lambda: create_file_inspect_tool(project_root, node_name),
         "search": lambda: create_search_tool(project_root),
         "skill_create": lambda: create_skill_tool(creator_node=node_name),
         "mcp_generate": lambda: create_mcp_generate_tool(),

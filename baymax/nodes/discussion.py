@@ -142,7 +142,7 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
 
     node_cfg = load_nodes_config().get("planner", {})
     project_root = str(get_project_root())
-    read_only_tools = ["file_read", "search"]
+    read_only_tools = ["file_inspect", "file_read", "search"]
     tool_names = [t for t in node_cfg.get("tools", []) if t in read_only_tools]
     tools = get_tools_for_node(tool_names, project_root, node_name="planner")
     tool_map = {t.name: t for t in tools} if tools else {}

@@ -93,6 +93,12 @@ BLUEPRINT_INSTRUCTION = (
     "produce a Blueprint as a JSON array.\n\n"
     "Each element must have: branch_id (str), description (str), tools_required (list[str]), "
     "skills_required (list[str]), success_criteria (str).\n\n"
+    "## CRITICAL: Keep Tasks Focused on Core Logic\n"
+    "Each task must capture a meaningful **unit of logic or decision** — NOT mechanical steps.\n"
+    "- WRONG: \"Load CSV\", \"Write output file\", \"Install dependencies\" — these are obvious boilerplate.\n"
+    "- RIGHT: \"Implement pool-based matching by school × has_face\", \"Add mutual gender-preference filter\"\n\n"
+    "Think of tasks like drawing a flowchart: you wouldn't draw a box for 'open the file'. "
+    "Focus on the filters, algorithms, decision points, and validations that define the system.\n\n"
     "## Branch ID Convention\n"
     "Branch IDs are **hierarchical strings** that encode semantic relationships:\n"
     "- Root branches: \"1\", \"2\", \"3\"\n"
@@ -112,8 +118,12 @@ BLUEPRINT_INSTRUCTION = (
 FLOWCHART_INSTRUCTION = (
     "Based on the blueprint you just created and your understanding of the codebase, "
     "produce a high-level architecture or data-flow diagram in Mermaid syntax. "
-    "Use `graph TD` or `flowchart TD`. "
-    "The diagram should show the main components/steps and their relationships. "
+    "Use `graph TD` or `flowchart TD`.\n\n"
+    "## CRITICAL: Keep It High-Level\n"
+    "Show only the **core logic, decision points, and data flow** — NOT mechanical steps.\n"
+    "- OMIT: loading files, writing output, installing packages, importing libraries.\n"
+    "- INCLUDE: filters, algorithms, branching logic, validation rules, key transformations.\n"
+    "Think: if you were explaining the system on a whiteboard, what boxes would you draw?\n\n"
     "Return ONLY the Mermaid code block (```mermaid ... ```), no other text."
 )
 
@@ -313,6 +323,14 @@ def planner_plan(state: AgentState) -> dict:
     print(f"[{planner_display}] Blueprint saved to doc/BLUEPRINT.md ({len(blueprint)} tasks)")
 
     # ── 2. Generate Flowchart ────────────────────────────────
+    if not blueprint:
+        print(f"[{planner_display}] No blueprint was generated.")
+        return {
+            "blueprint": [],
+            "next_node": "planner",
+            "review_feedback": "Blueprint was empty — planner should retry.",
+        }
+
     print(f"[{planner_display}] Generating flowchart...")
     fc_parts = [
         f"## Blueprint\n```json\n{json.dumps(blueprint, indent=2)}\n```",

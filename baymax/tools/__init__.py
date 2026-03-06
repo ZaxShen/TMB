@@ -1,10 +1,10 @@
 """Tool bindings for agent nodes."""
 
-from aide.tools.shell import create_shell_tool
-from aide.tools.filesystem import create_file_read_tool, create_file_write_tool
-from aide.tools.search import create_search_tool
-from aide.tools.skills import create_skill_tool
-from aide.mcp.generator import create_mcp_generate_tool
+from baymax.tools.shell import create_shell_tool
+from baymax.tools.filesystem import create_file_read_tool, create_file_write_tool
+from baymax.tools.search import create_search_tool
+from baymax.tools.skills import create_skill_tool
+from baymax.mcp.generator import create_mcp_generate_tool
 
 
 def get_tools_for_node(tool_names: list[str], project_root: str, node_name: str = "executor") -> list:
@@ -29,7 +29,7 @@ def get_tools_for_node(tool_names: list[str], project_root: str, node_name: str 
         tools.append(factory())
 
     try:
-        from aide.mcp.client import get_mcp_tools_sync
+        from baymax.mcp.client import get_mcp_tools_sync
         mcp_tools = get_mcp_tools_sync(node_name)
         if mcp_tools:
             tools.extend(mcp_tools)

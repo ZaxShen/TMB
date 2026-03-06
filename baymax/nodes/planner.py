@@ -11,11 +11,11 @@ import json
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from aide.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, _AIDE_ROOT
-from aide.permissions import assert_aide_write
-from aide.state import AgentState
-from aide.store import Store
-from aide.tools import get_tools_for_node
+from baymax.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, _BAYMAX_ROOT
+from baymax.permissions import assert_baymax_write
+from baymax.state import AgentState
+from baymax.store import Store
+from baymax.tools import get_tools_for_node
 
 _MAX_EXPLORE_ROUNDS = 10
 
@@ -32,10 +32,10 @@ def _normalize_content(content) -> str:
 
 
 def _write_doc(name: str, content: str):
-    doc_dir = _AIDE_ROOT / "doc"
+    doc_dir = _BAYMAX_ROOT / "doc"
     doc_dir.mkdir(parents=True, exist_ok=True)
     path = doc_dir / name
-    assert_aide_write(path)
+    assert_baymax_write(path)
     path.write_text(content)
 
 
@@ -216,7 +216,7 @@ def planner_plan(state: AgentState) -> dict:
                 f"**Created by**: {ps['created_by']}\n"
                 f"**Tags**: {ps.get('tags', '[]')}\n\n"
             )
-            skill_path = _AIDE_ROOT / ps.get("file_path", "")
+            skill_path = _BAYMAX_ROOT / ps.get("file_path", "")
             if skill_path.exists():
                 content = skill_path.read_text()
                 if len(content) > 3000:
@@ -430,11 +430,11 @@ def planner_quick_task(instruction: str, project_context: str, issue_id: int):
 
 def _evolve_plan_instruction():
     return (
-        "You are in **self-evolution mode**. You are modifying the AIDE framework itself.\n\n"
-        f"The {get_role_name('owner')} has given you an instruction to improve or change the AIDE engine.\n"
-        "You have full read access to AIDE's own source code.\n\n"
+        "You are in **self-evolution mode**. You are modifying the Baymax framework itself.\n\n"
+        f"The {get_role_name('owner')} has given you an instruction to improve or change the Baymax engine.\n"
+        "You have full read access to Baymax's own source code.\n\n"
         "Steps:\n"
-        "1. Use `file_read` and `search` to explore the AIDE codebase.\n"
+        "1. Use `file_read` and `search` to explore the Baymax codebase.\n"
         "2. Understand the current architecture — modules, tools, permissions, engine, prompts, config.\n"
         "3. Produce a structured **Evolution Plan** in Markdown:\n\n"
         "```\n"
@@ -468,25 +468,25 @@ def _evolve_execute_instruction():
     )
 
 
-def planner_evolve(instruction: str, aide_context: str, issue_id: int) -> str:
+def planner_evolve(instruction: str, baymax_context: str, issue_id: int) -> str:
     """Exploration + plan phase of self-evolution. Returns the plan markdown.
 
-    Runs inside evolve_context() — AIDE/** blacklist is lifted for reads.
+    Runs inside evolve_context() — Baymax/** blacklist is lifted for reads.
     """
     node_cfg = load_nodes_config().get("evolve", load_nodes_config().get("planner", {}))
     llm = get_llm("planner")
     system_prompt = load_prompt("planner")
     store = Store()
 
-    aide_root_str = str(_AIDE_ROOT)
+    baymax_root_str = str(_BAYMAX_ROOT)
     tool_names = ["file_read", "search"]
-    tools = get_tools_for_node(tool_names, aide_root_str, node_name="planner")
+    tools = get_tools_for_node(tool_names, baymax_root_str, node_name="planner")
     tool_map = {t.name: t for t in tools}
     llm_with_tools = llm.bind_tools(tools)
 
     parts = []
-    if aide_context:
-        parts.append(f"## AIDE Codebase Context\n{aide_context}")
+    if baymax_context:
+        parts.append(f"## Baymax Codebase Context\n{baymax_context}")
     parts.append(f"## Instruction\n{instruction}")
     parts.append(_evolve_plan_instruction())
 
@@ -496,7 +496,7 @@ def planner_evolve(instruction: str, aide_context: str, issue_id: int) -> str:
     ]
 
     planner_display = get_role_name("planner").upper()
-    print(f"[{planner_display}] Exploring AIDE codebase for evolution plan...")
+    print(f"[{planner_display}] Exploring Baymax codebase for evolution plan...")
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS,
     )
@@ -512,27 +512,27 @@ def planner_evolve(instruction: str, aide_context: str, issue_id: int) -> str:
 
 
 def planner_evolve_execute(
-    instruction: str, plan: str, aide_context: str, issue_id: int,
+    instruction: str, plan: str, baymax_context: str, issue_id: int,
 ) -> str:
     """Execution phase of self-evolution. Applies the approved plan.
 
-    Runs inside evolve_context() — full AIDE read/write access.
+    Runs inside evolve_context() — full Baymax read/write access.
     """
     node_cfg = load_nodes_config().get("evolve", load_nodes_config().get("planner", {}))
     llm = get_llm("planner")
     system_prompt = load_prompt("planner")
     store = Store()
 
-    aide_root_str = str(_AIDE_ROOT)
+    baymax_root_str = str(_BAYMAX_ROOT)
     tool_names = list(set(
         node_cfg.get("tools", ["file_read", "search"]) + ["file_write", "shell"]
     ))
-    tools = get_tools_for_node(tool_names, aide_root_str, node_name="planner")
+    tools = get_tools_for_node(tool_names, baymax_root_str, node_name="planner")
     tool_map = {t.name: t for t in tools}
     llm_with_tools = llm.bind_tools(tools)
 
     parts = [
-        f"## AIDE Codebase Context\n{aide_context}" if aide_context else "",
+        f"## Baymax Codebase Context\n{baymax_context}" if baymax_context else "",
         f"## Instruction\n{instruction}",
         f"## Approved Evolution Plan\n{plan}",
         _evolve_execute_instruction(),

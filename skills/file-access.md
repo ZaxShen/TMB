@@ -1,18 +1,18 @@
 # Skill: File Access & Permissions
 
-> Rules for reading and writing files within AIDE's permission model.
+> Rules for reading and writing files within Baymax's permission model.
 
 ---
 
 ## Permission Layers
 
-AIDE enforces three layers of access control:
+Baymax enforces three layers of access control:
 
-1. **Global blacklist** — files no agent can ever access (`.env`, secrets, `AIDE/**` internals)
-2. **AIDE write allowlist** — only these AIDE-managed files can be written by any agent:
+1. **Global blacklist** — files no agent can ever access (`.env`, secrets, `Baymax/**` internals)
+2. **Baymax write allowlist** — only these Baymax-managed files can be written by any agent:
    - `doc/DISCUSSION.md`, `doc/BLUEPRINT.md`, `doc/FLOWCHART.md`
    - `doc/EXECUTION.md`, `doc/QA_PLAN.md`
-   - `aide_history.db`
+   - `baymax_history.db`
 3. **Node-specific restrictions** — certain doc files are restricted to specific agents
 
 ## Who Can Access What

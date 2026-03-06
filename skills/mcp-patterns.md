@@ -1,6 +1,6 @@
 # Skill: MCP Patterns
 
-> Patterns for using and generating MCP (Model Context Protocol) servers within AIDE.
+> Patterns for using and generating MCP (Model Context Protocol) servers within Baymax.
 
 ---
 
@@ -21,7 +21,7 @@ No special invocation — call them like any other tool.
 ## Checking Available MCP Servers
 
 ```python
-from aide.config import load_mcp_config
+from baymax.config import load_mcp_config
 
 cfg = load_mcp_config()
 servers = cfg.get("servers", {})
@@ -51,11 +51,11 @@ Generated servers are auto-registered in `config/mcp.yaml`.
 
 - MCP tool access is gated by `agents` in `config/mcp.yaml`
 - Tool output goes through the blacklist scrubber (same as shell output)
-- External MCP hosts connecting to AIDE's server get read-only access
+- External MCP hosts connecting to Baymax's server get read-only access
 
 ## Rules
 
 1. **Never hardcode API tokens** in MCP server code — use `${VAR}` env references in `mcp.yaml`.
 2. **Check `agents` field** before assuming a tool is available — not all nodes have the same MCP access.
 3. **Prefer existing MCP servers** from the community before generating custom ones.
-4. **Generated servers go to `mcp_servers/`** — never into `aide/` (engine internals).
+4. **Generated servers go to `mcp_servers/`** — never into `baymax/` (engine internals).

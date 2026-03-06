@@ -1,5 +1,5 @@
 name: my-project
-root_dir: ..              # relative to AIDE/ directory — '..' means the parent project
+root_dir: ..              # relative to Baymax/ directory — '..' means the parent project
 test_command: pytest
 max_retry_per_task: 3
 
@@ -24,4 +24,4 @@ blacklist:
   - "**/*.pem"
   - "**/*.key"
   - "**/*secret*"
-  - "AIDE/**"             # agents cannot touch the AIDE framework itself
+  - "Baymax/**"             # agents cannot touch the Baymax framework itself

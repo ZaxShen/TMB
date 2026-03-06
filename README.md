@@ -1,8 +1,8 @@
-# AIDE: AI Direction & Execution
+# Baymax: AI Direction & Execution
 
 > A multi-agent framework for building and maintaining **industrial-grade** software projects with LLMs.
 
-## Why AIDE?
+## Why Baymax?
 
 Most AI coding tools treat every session as a blank slate. They dump your entire codebase into a context window, generate code, and forget everything by the next run. That works for prototypes — it breaks down for real projects.
 
@@ -12,7 +12,7 @@ Most AI coding tools treat every session as a blank slate. They dump your entire
 - **No verification** — code is generated but rarely validated against real criteria
 - **No audit trail** — three months later, nobody knows *why* a change was made
 
-**AIDE is different.** It models how a real engineering team works:
+**Baymax is different.** It models how a real engineering team works:
 
 - A **Project Owner** (you) defines goals in plain language
 - A **Planner** (LLM) discusses requirements, explores the codebase with tools, and produces a reviewable plan — before any code is written
@@ -22,7 +22,7 @@ Most AI coding tools treat every session as a blank slate. They dump your entire
 - The system **resumes from any interrupt** — Ctrl+C, crash, "I'll continue tomorrow." No wasted LLM calls, no repeated work
 - **Information firewalls** keep each agent focused — Executors see only their task and execution plan, not the full strategic context. This isn't security; it's attention management for LLMs
 
-> **Configurable roles** — by default AIDE uses generic names (Project Owner, Planner, Executor, Validator). Run `uv run main.py setup` to pick a preset like **IT Company** (Chief Architect → Architect → SWE → QA Engineer) or define your own names. Role names flow into CLI output, SQLite logs, and agent prompts.
+> **Configurable roles** — by default Baymax uses generic names (Project Owner, Planner, Executor, Validator). Run `uv run main.py setup` to pick a preset like **IT Company** (Chief Architect → Architect → SWE → QA Engineer) or define your own names. Role names flow into CLI output, SQLite logs, and agent prompts.
 
 The result: maintainable, auditable software — not disposable demos.
 
@@ -34,18 +34,18 @@ The result: maintainable, auditable software — not disposable demos.
 
 ### Option A: Git Submodule (recommended)
 
-Keeps AIDE as a versioned dependency — update with `git submodule update --remote`.
+Keeps Baymax as a versioned dependency — update with `git submodule update --remote`.
 
 ```bash
-# 1. Add AIDE as a submodule
+# 1. Add Baymax as a submodule
 cd your-project/
-git submodule add https://github.com/ZaxShen/AIDE.git
+git submodule add https://github.com/ZaxShen/Baymax.git
 
-# 2. Tell git to ignore AIDE's runtime files (one-time)
-git config submodule.AIDE.ignore dirty
+# 2. Tell git to ignore Baymax's runtime files (one-time)
+git config submodule.Baymax.ignore dirty
 
 # 3. Setup
-cd AIDE
+cd Baymax
 uv sync
 uv run main.py setup    # creates your local config (gitignored)
 
@@ -54,13 +54,13 @@ uv run main.py setup    # creates your local config (gitignored)
 uv run main.py
 ```
 
-To update AIDE later: `cd AIDE && git pull origin main`
+To update Baymax later: `cd Baymax && git pull origin main`
 
-**Cloning a project that already has AIDE as a submodule:**
+**Cloning a project that already has Baymax as a submodule:**
 
 ```bash
 git clone --recurse-submodules <your-project-url>
-cd your-project/AIDE
+cd your-project/Baymax
 uv sync
 uv run main.py setup
 ```
@@ -71,16 +71,16 @@ If you don't need version tracking:
 
 ```bash
 cd your-project/
-git clone https://github.com/ZaxShen/AIDE.git
-cd AIDE
+git clone https://github.com/ZaxShen/Baymax.git
+cd Baymax
 uv sync
 uv run main.py setup
 uv run main.py
 ```
 
-**How it stays clean** — AIDE ships tracked defaults (`config/*.default.yaml`). Running `setup` creates your local configs (`config/project.yaml`, etc.) which are gitignored. All runtime files (`doc/`, `aide_history.db`, `.env`) are also gitignored. The submodule never appears dirty in your parent repo.
+**How it stays clean** — Baymax ships tracked defaults (`config/*.default.yaml`). Running `setup` creates your local configs (`config/project.yaml`, etc.) which are gitignored. All runtime files (`doc/`, `baymax_history.db`, `.env`) are also gitignored. The submodule never appears dirty in your parent repo.
 
-That's it. AIDE reads your goals, the Planner discusses them with you, builds a blueprint, and the Executor carries it out — all logged to SQLite.
+That's it. Baymax reads your goals, the Planner discusses them with you, builds a blueprint, and the Executor carries it out — all logged to SQLite.
 
 ### Quick Tasks
 
@@ -95,7 +95,7 @@ The Planner handles these directly — reads the codebase, makes the changes, do
 
 ### Self-Evolution
 
-AIDE can modify its own source code through a guarded self-evolution mode:
+Baymax can modify its own source code through a guarded self-evolution mode:
 
 ```bash
 uv run main.py evolve "add a new CLI command to export tasks as CSV"
@@ -104,13 +104,13 @@ uv run main.py evolve "update README.md to reflect the new auth module"
 
 **Safety gates** — every evolution goes through:
 
-1. **Warning banner** — you'll see a prominent warning that agents will have full AIDE access
-2. **Planner plans first** — explores AIDE's own codebase, writes `doc/EVOLUTION.md` with proposed changes and risk assessment
+1. **Warning banner** — you'll see a prominent warning that agents will have full Baymax access
+2. **Planner plans first** — explores Baymax's own codebase, writes `doc/EVOLUTION.md` with proposed changes and risk assessment
 3. **Double approval** — the Planner designs the plan (its approval), then you review and press Enter (your approval)
-4. **Automatic git snapshot** — AIDE commits its current state before any file is touched, so `git revert HEAD` always works
-5. **Health check** — after changes, AIDE verifies it can still import and passes lint
+4. **Automatic git snapshot** — Baymax commits its current state before any file is touched, so `git revert HEAD` always works
+5. **Health check** — after changes, Baymax verifies it can still import and passes lint
 
-If the health check fails, you get the exact rollback command. The `AIDE/**` blacklist is only lifted during the evolve session — normal workflow remains locked down.
+If the health check fails, you get the exact rollback command. The `Baymax/**` blacklist is only lifted during the evolve session — normal workflow remains locked down.
 
 ---
 
@@ -118,7 +118,7 @@ If the health check fails, you get the exact rollback command. The `AIDE/**` bla
 
 ### The Workflow
 
-AIDE has three entry points:
+Baymax has three entry points:
 
 **Full workflow** (`uv run main.py`) — for complex, multi-step work:
 
@@ -173,7 +173,7 @@ Project Owner passes instruction via CLI
          DONE
 ```
 
-**Self-evolution** (`uv run main.py evolve "..."`) — for modifying AIDE itself:
+**Self-evolution** (`uv run main.py evolve "..."`) — for modifying Baymax itself:
 
 ```
 Project Owner passes instruction via CLI
@@ -185,11 +185,11 @@ Project Owner passes instruction via CLI
   └────────┬───────┘
            ▼
   ┌─── GATEKEEPER ───┐
-  │  Scan AIDE/      │    (not the parent project)
+  │  Scan Baymax/      │    (not the parent project)
   └────────┬─────────┘
            ▼
   ┌─── PLANNER ──────┐
-  │  Explore AIDE    │    Full read access to AIDE/**
+  │  Explore Baymax    │    Full read access to Baymax/**
   │  source code     │    Writes doc/EVOLUTION.md
   │  Generate plan   │
   └────────┬─────────┘
@@ -203,12 +203,12 @@ Project Owner passes instruction via CLI
   └────────┬─────────┘
            ▼
   ┌─── PLANNER ──────┐
-  │  Execute plan    │    Full read/write to AIDE/**
+  │  Execute plan    │    Full read/write to Baymax/**
   │  Modify source   │
   └────────┬─────────┘
            ▼
   ┌─── HEALTH CHECK ─┐
-  │  Import test     │    Verify AIDE still works
+  │  Import test     │    Verify Baymax still works
   │  Lint check      │
   └────────┬─────────┘
            ▼
@@ -228,7 +228,7 @@ Role names are configurable via `config/project.yaml`. Defaults shown, with IT C
 
 ### The Documents
 
-All artifacts live in `AIDE/doc/`:
+All artifacts live in `Baymax/doc/`:
 
 | File | Written By | Read By | Purpose |
 |------|-----------|---------|---------|
@@ -250,25 +250,25 @@ All artifacts live in `AIDE/doc/`:
 | `doc/FLOWCHART.md` | Read | Edit | — | — |
 | `doc/EXECUTION.md` | Read | Edit | Read | — |
 | `doc/QA_PLAN.md` | Read | Edit | — | Read |
-| `aide_history.db` | Read | Read / Write | Read / Write | Read / Write |
+| `baymax_history.db` | Read | Read / Write | Read / Write | Read / Write |
 | DB: tasks | — | Write (create) | Read (own task) | Read (current task) |
 | DB: ledger | Read | Write | Write | Write |
 | Project files | — | — | Edit | Read |
 | `.env`, secrets | — | — | — | — |
 | `doc/EVOLUTION.md` | Read | Edit | — | — |
-| `AIDE/**` (engine) | Edit (manual) | Edit (evolve mode only) | — | — |
+| `Baymax/**` (engine) | Edit (manual) | Edit (evolve mode only) | — | — |
 
 **Key rules:**
 - Executors never see GOALS.md, DISCUSSION.md, BLUEPRINT.md, or FLOWCHART.md — high-level context could mislead execution.
 - Executors read EXECUTION.md for detailed task steps, and get their task assignment from the DB.
 - Validators read QA_PLAN.md for testing requirements but never see high-level planning docs.
 - Both Executors and Validators can report implementation-vs-design discrepancies to the Planner.
-- Secrets and the AIDE engine itself are inaccessible to all agents during normal operation.
-- In **evolve mode** (`uv run main.py evolve "..."`), the Planner gets temporary full access to AIDE source — gated by double approval and automatic git snapshot.
+- Secrets and the Baymax engine itself are inaccessible to all agents during normal operation.
+- In **evolve mode** (`uv run main.py evolve "..."`), the Planner gets temporary full access to Baymax source — gated by double approval and automatic git snapshot.
 
 ### The Database
 
-Everything is persisted in `aide_history.db` (SQLite + JSON):
+Everything is persisted in `baymax_history.db` (SQLite + JSON):
 
 | Table | What's In It |
 |-------|-------------|
@@ -292,7 +292,7 @@ id=3  branch_id="2"       ← Dashboard redesign (unrelated to login)
 id=4  branch_id="1.1.1"   ← Handle expired verification tokens
 ```
 
-**Branch operations** — when you need to replace email login with phone login, `branch_id LIKE '1.%'` finds every related task across all issues. Task id=3 (dashboard) is untouched even though it was created between id=2 and id=4. Git can't do this because reverts are sequential — AIDE's branch IDs are semantic.
+**Branch operations** — when you need to replace email login with phone login, `branch_id LIKE '1.%'` finds every related task across all issues. Task id=3 (dashboard) is untouched even though it was created between id=2 and id=4. Git can't do this because reverts are sequential — Baymax's branch IDs are semantic.
 
 The Planner auto-generates branch IDs by reviewing the existing task tree before planning.
 
@@ -301,7 +301,7 @@ uv run main.py log               # List recent issues
 uv run main.py log 1             # Full detail for issue #1
 uv run main.py report 1          # Export full markdown report
 uv run main.py "fix X"           # Quick task (Planner only)
-uv run main.py evolve "fix Y"    # Self-evolution (modify AIDE itself)
+uv run main.py evolve "fix Y"    # Self-evolution (modify Baymax itself)
 ```
 
 ### Skills
@@ -309,7 +309,7 @@ uv run main.py evolve "fix Y"    # Self-evolution (modify AIDE itself)
 Skills are **reusable knowledge artifacts** — concise markdown guides that agents load on demand instead of re-deriving patterns or reading large source files every time.
 
 ```
-AIDE/skills/
+Baymax/skills/
 ├── db-operations.md        # Store API: lightweight vs. full queries
 ├── branch-operations.md    # Hierarchical branch ID patterns
 └── file-access.md          # Permission model rules
@@ -320,7 +320,7 @@ AIDE/skills/
 1. **Planner assigns skills per task** — sees available skills with effectiveness scores and applicability conditions, assigns relevant ones to `skills_required`
 2. **Executor and Validator load only assigned skills** — skill content is injected into context alongside the task prompt. No irrelevant knowledge, no wasted tokens
 3. **Agents can create new skills** — Executor has a `skill_create` tool. New skills start as `draft` and must pass Planner review before becoming available
-4. **Built-in skills auto-seed** — on first run, AIDE registers all `.md` files in `skills/` as curated, trusted skills
+4. **Built-in skills auto-seed** — on first run, Baymax registers all `.md` files in `skills/` as curated, trusted skills
 
 **Validation and trust:**
 
@@ -343,13 +343,13 @@ Config files use a **default/override pattern** for submodule compatibility:
 - `config/*.default.yaml` — tracked by git, ship with sane defaults
 - `config/*.yaml` — created by `setup`, gitignored, override the defaults
 
-AIDE tries `<name>.yaml` first, falls back to `<name>.default.yaml`. You only create overrides for what you want to change.
+Baymax tries `<name>.yaml` first, falls back to `<name>.default.yaml`. You only create overrides for what you want to change.
 
 ### `config/project.yaml`
 
 ```yaml
 name: my-project
-root_dir: ..                  # Your project root, relative to AIDE/
+root_dir: ..                  # Your project root, relative to Baymax/
 test_command: pytest
 max_retry_per_task: 3
 
@@ -394,13 +394,13 @@ validator:
 Set via `.env` (created by `setup`) or environment variables:
 
 ```bash
-# AIDE/.env
+# Baymax/.env
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ### Prompts
 
-Agent prompts are Markdown files in `AIDE/prompts/`. Edit to change behavior without touching Python:
+Agent prompts are Markdown files in `Baymax/prompts/`. Edit to change behavior without touching Python:
 
 ```
 prompts/planner.md      # How the Planner thinks and plans
@@ -417,8 +417,8 @@ Prompts support template variables: `{role_owner}`, `{role_planner}`, `{role_exe
 ## Project Structure
 
 ```
-your-project/                # ← AIDE operates on this
-├── AIDE/                    # ← Framework lives here
+your-project/                # ← Baymax operates on this
+├── Baymax/                    # ← Framework lives here
 │   ├── doc/
 │   │   ├── GOALS.md         # You write this
 │   │   ├── DISCUSSION.md    # Generated: Planner–Owner Q&A
@@ -446,9 +446,9 @@ your-project/                # ← AIDE operates on this
 │   │   ├── file-access.md
 │   │   └── mcp-patterns.md
 │   ├── mcp_servers/         # Generated MCP servers (auto-scaffold)
-│   ├── aide/                # Engine (don't edit)
+│   ├── baymax/                # Engine (don't edit)
 │   ├── main.py
-│   ├── aide_history.db      # SQLite audit trail
+│   ├── baymax_history.db      # SQLite audit trail
 │   └── .env
 ├── src/
 └── ...
@@ -456,9 +456,9 @@ your-project/                # ← AIDE operates on this
 
 ## MCP Integration
 
-AIDE supports the [Model Context Protocol](https://modelcontextprotocol.io/) as both a **client** and a **server**, plus the ability to **generate** new MCP servers.
+Baymax supports the [Model Context Protocol](https://modelcontextprotocol.io/) as both a **client** and a **server**, plus the ability to **generate** new MCP servers.
 
-### AIDE as MCP Client
+### Baymax as MCP Client
 
 Connect agents to external services (Notion, GitHub, Slack, etc.) by configuring `config/mcp.yaml`:
 
@@ -483,27 +483,27 @@ MCP tools are auto-discovered at startup, converted to LangChain tools, and pref
 
 Run `uv run main.py setup` for an interactive wizard that configures common MCP servers.
 
-### AIDE as MCP Server
+### Baymax as MCP Server
 
-Expose AIDE's store and workflow to external hosts (Claude Desktop, Cursor, etc.):
+Expose Baymax's store and workflow to external hosts (Claude Desktop, Cursor, etc.):
 
 ```bash
 uv run main.py serve              # stdio (for Claude Desktop / Cursor)
 uv run main.py serve --http 8080  # HTTP (for remote access)
 ```
 
-**Exposed tools**: `aide_list_issues`, `aide_get_tasks`, `aide_get_ledger`, `aide_get_skills`, `aide_query_branch`, `aide_quick_task`, `aide_export_report`
+**Exposed tools**: `baymax_list_issues`, `baymax_get_tasks`, `baymax_get_ledger`, `baymax_get_skills`, `baymax_query_branch`, `baymax_quick_task`, `baymax_export_report`
 
-**Exposed resources**: `aide://issues`, `aide://issues/{id}`, `aide://skills`, `aide://blueprint`
+**Exposed resources**: `baymax://issues`, `baymax://issues/{id}`, `baymax://skills`, `baymax://blueprint`
 
 Add to Claude Desktop config:
 ```json
 {
   "mcpServers": {
-    "aide": {
+    "baymax": {
       "command": "uv",
       "args": ["run", "main.py", "serve"],
-      "cwd": "/path/to/project/AIDE"
+      "cwd": "/path/to/project/Baymax"
     }
   }
 }
@@ -532,10 +532,10 @@ Templates handle common patterns (REST wrappers, DB connectors, file servers). G
 - **Full audit trail** — Every action logged to SQLite with lightweight summaries. Full JSON stored but never bulk-read.
 - **Skills over re-reading** — Agents compress discovered patterns into reusable skills, loaded on demand instead of re-scanning source files.
 - **Config over code** — YAML and Markdown control behavior. Engine is immutable during normal operation.
-- **Guarded self-evolution** — Agents can modify AIDE itself, but only with Planner plan + Owner approval + git snapshot + health check.
+- **Guarded self-evolution** — Agents can modify Baymax itself, but only with Planner plan + Owner approval + git snapshot + health check.
 - **Configurable roles** — Generic by default, customizable to match your team's terminology via config.
 - **Sandboxed execution** — Tools restricted to the project root directory.
-- **MCP-native** — Connect to any MCP server as a client, expose AIDE as a server, or auto-generate project-specific servers.
+- **MCP-native** — Connect to any MCP server as a client, expose Baymax as a server, or auto-generate project-specific servers.
 
 ## License
 

@@ -2,21 +2,21 @@
 
 Four layers:
 
-1. AIDE write allowlist — agents may only write specific doc files
-   inside the AIDE directory (bypassed in evolve mode).
+1. Baymax write allowlist — agents may only write specific doc files
+   inside the Baymax directory (bypassed in evolve mode).
 
 2. Project blacklist — agents can NEVER access paths matching patterns
    in config/project.yaml → blacklist[]. Applies to all nodes.
-   In evolve mode, the ``AIDE/**`` pattern is lifted while all other
+   In evolve mode, the ``Baymax/**`` pattern is lifted while all other
    patterns (secrets, .env, *.pem, etc.) remain enforced.
 
-3. Node-level access — certain AIDE docs are restricted to specific nodes.
+3. Node-level access — certain Baymax docs are restricted to specific nodes.
    High-level docs (GOALS, DISCUSSION, BLUEPRINT, FLOWCHART) are planner-only.
    EXECUTION.md is readable by executor. QA_PLAN.md is readable by validator.
 
 4. Evolve context — a ``contextvars``-based toggle that temporarily lifts
-   the AIDE/** blacklist and write allowlist so the Planner can modify
-   any AIDE source file during a guarded self-evolution flow.
+   the Baymax/** blacklist and write allowlist so the Planner can modify
+   any Baymax source file during a guarded self-evolution flow.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from contextlib import contextmanager
 from fnmatch import fnmatch
 from pathlib import Path
 
-from aide.config import _AIDE_ROOT, load_project_config
+from baymax.config import _BAYMAX_ROOT, load_project_config
 
 
 # ── Evolve-mode context ─────────────────────────────────────
@@ -36,7 +36,7 @@ _evolve_mode = contextvars.ContextVar("evolve_mode", default=False)
 
 @contextmanager
 def evolve_context():
-    """Temporarily lift the AIDE/** blacklist and write allowlist
+    """Temporarily lift the Baymax/** blacklist and write allowlist
     for a guarded self-evolution session."""
     token = _evolve_mode.set(True)
     try:
@@ -49,41 +49,41 @@ def is_evolve_mode() -> bool:
     return _evolve_mode.get()
 
 
-# ── AIDE internal write allowlist ───────────────────────────
+# ── Baymax internal write allowlist ───────────────────────────
 
-_AIDE_WRITABLE = {
-    _AIDE_ROOT / "doc" / "DISCUSSION.md",
-    _AIDE_ROOT / "doc" / "BLUEPRINT.md",
-    _AIDE_ROOT / "doc" / "FLOWCHART.md",
-    _AIDE_ROOT / "doc" / "EXECUTION.md",
-    _AIDE_ROOT / "doc" / "QA_PLAN.md",
-    _AIDE_ROOT / "doc" / "EVOLUTION.md",
+_BAYMAX_WRITABLE = {
+    _BAYMAX_ROOT / "doc" / "DISCUSSION.md",
+    _BAYMAX_ROOT / "doc" / "BLUEPRINT.md",
+    _BAYMAX_ROOT / "doc" / "FLOWCHART.md",
+    _BAYMAX_ROOT / "doc" / "EXECUTION.md",
+    _BAYMAX_ROOT / "doc" / "QA_PLAN.md",
+    _BAYMAX_ROOT / "doc" / "EVOLUTION.md",
 }
 
 
-def assert_aide_write(path: Path):
-    """Raise if the path is not in the AIDE write allowlist.
+def assert_baymax_write(path: Path):
+    """Raise if the path is not in the Baymax write allowlist.
     Bypassed entirely when evolve mode is active."""
     if _evolve_mode.get():
         return
     resolved = path.resolve()
-    if resolved not in _AIDE_WRITABLE:
+    if resolved not in _BAYMAX_WRITABLE:
         raise PermissionError(
-            f"Write blocked: {path} is not in the AIDE write allowlist. "
-            f"Allowed: {', '.join(str(p.relative_to(_AIDE_ROOT)) for p in _AIDE_WRITABLE)}"
+            f"Write blocked: {path} is not in the Baymax write allowlist. "
+            f"Allowed: {', '.join(str(p.relative_to(_BAYMAX_ROOT)) for p in _BAYMAX_WRITABLE)}"
         )
 
 
 # ── Node-level access control ──────────────────────────────
 
 _NODE_RESTRICTED: dict[str, set[str]] = {
-    "AIDE/doc/GOALS.md": {"planner", "gatekeeper"},
-    "AIDE/doc/DISCUSSION.md": {"planner"},
-    "AIDE/doc/BLUEPRINT.md": {"planner", "owner"},
-    "AIDE/doc/FLOWCHART.md": {"planner", "owner"},
-    "AIDE/doc/EXECUTION.md": {"planner", "executor"},
-    "AIDE/doc/QA_PLAN.md": {"planner", "validator"},
-    "AIDE/doc/EVOLUTION.md": {"planner"},
+    "Baymax/doc/GOALS.md": {"planner", "gatekeeper"},
+    "Baymax/doc/DISCUSSION.md": {"planner"},
+    "Baymax/doc/BLUEPRINT.md": {"planner", "owner"},
+    "Baymax/doc/FLOWCHART.md": {"planner", "owner"},
+    "Baymax/doc/EXECUTION.md": {"planner", "executor"},
+    "Baymax/doc/QA_PLAN.md": {"planner", "validator"},
+    "Baymax/doc/EVOLUTION.md": {"planner"},
 }
 
 
@@ -106,14 +106,14 @@ def assert_node_access(file_path: str, node_name: str):
 
 # ── Project blacklist ───────────────────────────────────────
 
-_AIDE_BLACKLIST_PATTERN = "AIDE/**"
+_BAYMAX_BLACKLIST_PATTERN = "Baymax/**"
 
 
 def _load_blacklist() -> list[str]:
     cfg = load_project_config()
     patterns = cfg.get("blacklist", [])
     if _evolve_mode.get():
-        patterns = [p for p in patterns if p != _AIDE_BLACKLIST_PATTERN]
+        patterns = [p for p in patterns if p != _BAYMAX_BLACKLIST_PATTERN]
     return patterns
 
 

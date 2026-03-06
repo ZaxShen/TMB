@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from langchain_core.tools import tool
 
-from aide.config import _AIDE_ROOT
-from aide.store import Store
+from baymax.config import _BAYMAX_ROOT
+from baymax.store import Store
 
 
 def create_skill_tool(creator_node: str = "executor"):
@@ -34,7 +34,7 @@ def create_skill_tool(creator_node: str = "executor"):
         """
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
         file_path = f"skills/{name}.md"
-        full_path = _AIDE_ROOT / file_path
+        full_path = _BAYMAX_ROOT / file_path
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_text(content)
 

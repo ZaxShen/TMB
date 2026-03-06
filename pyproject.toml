@@ -1,5 +1,5 @@
 [project]
-name = "aide"
+name = "baymax"
 version = "0.1.0"
 description = "AI Direction & Execution — a multi-agent workflow engine: Project Owner → Planner → Executor → Validator."
 readme = "README.md"

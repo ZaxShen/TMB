@@ -1,4 +1,4 @@
-"""AIDE engine — builds and compiles the LangGraph workflow.
+"""Baymax engine — builds and compiles the LangGraph workflow.
 
 Two graph variants:
   build_graph()           — full workflow: planner_plan → [owner interrupt] →
@@ -15,10 +15,10 @@ from __future__ import annotations
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
-from aide.state import AgentState
-from aide.nodes.planner import planner_plan, planner_execution_plan
-from aide.nodes.executor import executor
-from aide.nodes.validator import validator
+from baymax.state import AgentState
+from baymax.nodes.planner import planner_plan, planner_execution_plan
+from baymax.nodes.executor import executor
+from baymax.nodes.validator import validator
 
 
 def _route(state: AgentState) -> str:

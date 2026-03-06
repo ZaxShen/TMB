@@ -11,8 +11,8 @@ from typing import Any
 
 from langchain_core.tools import BaseTool
 
-from aide.config import load_mcp_config, get_project_root
-from aide.permissions import filter_blacklisted_output
+from baymax.config import load_mcp_config, get_project_root
+from baymax.permissions import filter_blacklisted_output
 
 
 def _build_connections(servers: dict[str, Any]) -> dict[str, dict]:

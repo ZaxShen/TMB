@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 
-_DB_NAME = "aide_history.db"
+_DB_NAME = "baymax_history.db"
 
 def _split_task_description(desc: str) -> tuple[str, str]:
     """Split a task description into a short title and the full body."""
@@ -35,8 +35,8 @@ def _now() -> str:
 class Store:
     def __init__(self, db_path: str | Path | None = None):
         if db_path is None:
-            from aide.config import _AIDE_ROOT
-            db_path = _AIDE_ROOT / _DB_NAME
+            from baymax.config import _BAYMAX_ROOT
+            db_path = _BAYMAX_ROOT / _DB_NAME
         self._conn = sqlite3.connect(str(db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -198,8 +198,8 @@ class Store:
 
     def _seed_skills(self):
         """Register built-in skill files if not already in DB."""
-        from aide.config import _AIDE_ROOT
-        skills_dir = _AIDE_ROOT / "skills"
+        from baymax.config import _BAYMAX_ROOT
+        skills_dir = _BAYMAX_ROOT / "skills"
         if not skills_dir.is_dir():
             return
         existing = {r["name"] for r in self.get_all_skills(include_inactive=True)}
@@ -217,7 +217,7 @@ class Store:
             self.create_skill(
                 name=name,
                 description=desc or name,
-                file_path=str(md.relative_to(_AIDE_ROOT)),
+                file_path=str(md.relative_to(_BAYMAX_ROOT)),
                 created_by="system",
                 tags=["built-in"],
                 when_to_use=applicability.get("when_to_use", ""),
@@ -307,7 +307,7 @@ class Store:
             f"# Discussion — Issue #{issue_id}",
             "",
             f"> This file reflects the **current** discussion only.",
-            f"> Previous discussions are preserved in `aide_history.db`.",
+            f"> Previous discussions are preserved in `baymax_history.db`.",
             "",
             f"**Objective**: {issue['objective']}",
             f"**Date**: {issue['created_at']}",
@@ -316,7 +316,7 @@ class Store:
             "",
         ]
         for d in discussions:
-            from aide.config import get_role_name
+            from baymax.config import get_role_name
             label = f"**{get_role_name('owner')}**" if d["role"] in ("cto", "owner") else f"**{get_role_name('planner')}**"
             lines.append(f"### {label}")
             lines.append(f"*{d['created_at']}*")
@@ -699,7 +699,7 @@ class Store:
         if discussions:
             print(f"\n  Discussion ({len(discussions)} messages):")
             for d in discussions:
-                from aide.config import get_role_name
+                from baymax.config import get_role_name
                 label = get_role_name("owner") if d["role"] in ("cto", "owner") else get_role_name("planner")
                 preview = d["content"][:80].replace("\n", " ")
                 print(f"    {d['created_at']}  [{label}] {preview}...")
@@ -751,7 +751,7 @@ class Store:
         if discussions:
             lines += ["---", "", "## Discussion", ""]
             for d in discussions:
-                from aide.config import get_role_name
+                from baymax.config import get_role_name
                 label = get_role_name("owner") if d["role"] in ("cto", "owner") else get_role_name("planner")
                 lines += [
                     f"### {label}",

@@ -11,11 +11,11 @@ import yaml
 from dotenv import load_dotenv
 
 
-_AIDE_ROOT = Path(__file__).resolve().parent.parent
+_BAYMAX_ROOT = Path(__file__).resolve().parent.parent
 
-# Load .env from AIDE root, then from parent project root (parent takes precedence)
-load_dotenv(_AIDE_ROOT / ".env")
-load_dotenv(_AIDE_ROOT / ".." / ".env", override=True)
+# Load .env from Baymax root, then from parent project root (parent takes precedence)
+load_dotenv(_BAYMAX_ROOT / ".env")
+load_dotenv(_BAYMAX_ROOT / ".." / ".env", override=True)
 
 
 _DEFAULT_ROLE_NAMES = {
@@ -52,10 +52,10 @@ def _config_path(name: str) -> Path:
     Tries ``config/<name>.yaml`` first (user-created, gitignored),
     then ``config/<name>.default.yaml`` (tracked).
     """
-    user = _AIDE_ROOT / "config" / f"{name}.yaml"
+    user = _BAYMAX_ROOT / "config" / f"{name}.yaml"
     if user.exists():
         return user
-    default = _AIDE_ROOT / "config" / f"{name}.default.yaml"
+    default = _BAYMAX_ROOT / "config" / f"{name}.default.yaml"
     if default.exists():
         return default
     return user  # will raise FileNotFoundError with a clear path
@@ -77,12 +77,12 @@ def load_prompt(name: str) -> str:
 
     path = None
     if preset:
-        preset_path = _AIDE_ROOT / "prompts" / "samples" / preset / f"{name}.md"
+        preset_path = _BAYMAX_ROOT / "prompts" / "samples" / preset / f"{name}.md"
         if preset_path.exists():
             path = preset_path
 
     if path is None:
-        path = _AIDE_ROOT / "prompts" / f"{name}.md"
+        path = _BAYMAX_ROOT / "prompts" / f"{name}.md"
 
     text = path.read_text()
 
@@ -101,10 +101,10 @@ def load_project_config() -> dict[str, Any]:
 
 
 def get_project_root() -> Path:
-    """Resolve the target project root relative to AIDE's own directory."""
+    """Resolve the target project root relative to Baymax's own directory."""
     cfg = load_project_config()
     raw = cfg.get("root_dir", "..")
-    return (_AIDE_ROOT / raw).resolve()
+    return (_BAYMAX_ROOT / raw).resolve()
 
 
 def _resolve_env_vars(value: str) -> str:

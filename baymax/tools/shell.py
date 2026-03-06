@@ -7,7 +7,7 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
-from aide.permissions import filter_blacklisted_output
+from baymax.permissions import filter_blacklisted_output
 
 
 def create_shell_tool(project_root: str):

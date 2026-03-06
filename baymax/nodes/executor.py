@@ -6,17 +6,17 @@ import json
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from aide.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, _AIDE_ROOT
-from aide.state import AgentState
-from aide.store import Store
-from aide.tools import get_tools_for_node
+from baymax.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, _BAYMAX_ROOT
+from baymax.state import AgentState
+from baymax.store import Store
+from baymax.tools import get_tools_for_node
 
 _MAX_TOOL_ROUNDS = 15
 
 
 def _read_execution_plan_section(branch_id: str) -> str:
     """Extract the section for a specific task from doc/EXECUTION.md."""
-    path = _AIDE_ROOT / "doc" / "EXECUTION.md"
+    path = _BAYMAX_ROOT / "doc" / "EXECUTION.md"
     if not path.exists():
         return ""
     content = path.read_text()
@@ -60,7 +60,7 @@ def _load_skills(store: Store, skill_names: list[str]) -> str:
     skills = store.get_skills_by_names(skill_names)
     parts = []
     for s in skills:
-        skill_path = _AIDE_ROOT / s["file_path"]
+        skill_path = _BAYMAX_ROOT / s["file_path"]
         if skill_path.exists():
             parts.append(skill_path.read_text().strip())
     return "\n\n---\n\n".join(parts)

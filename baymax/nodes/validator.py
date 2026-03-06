@@ -7,11 +7,11 @@ import re
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from aide.config import get_llm, load_prompt, load_project_config, load_nodes_config, get_project_root, get_role_name, _AIDE_ROOT
-from aide.permissions import assert_aide_write
-from aide.state import AgentState
-from aide.store import Store
-from aide.tools import get_tools_for_node
+from baymax.config import get_llm, load_prompt, load_project_config, load_nodes_config, get_project_root, get_role_name, _BAYMAX_ROOT
+from baymax.permissions import assert_baymax_write
+from baymax.state import AgentState
+from baymax.store import Store
+from baymax.tools import get_tools_for_node
 
 _MAX_TOOL_ROUNDS = 10
 
@@ -64,7 +64,7 @@ def _extract_verdict(text: str) -> bool:
 
 def _read_qa_plan() -> str:
     """Read doc/QA_PLAN.md if it exists."""
-    path = _AIDE_ROOT / "doc" / "QA_PLAN.md"
+    path = _BAYMAX_ROOT / "doc" / "QA_PLAN.md"
     if path.exists():
         return path.read_text()
     return ""
@@ -77,7 +77,7 @@ def _load_skills(store: Store, skill_names: list[str]) -> str:
     skills = store.get_skills_by_names(skill_names)
     parts = []
     for s in skills:
-        skill_path = _AIDE_ROOT / s["file_path"]
+        skill_path = _BAYMAX_ROOT / s["file_path"]
         if skill_path.exists():
             parts.append(skill_path.read_text().strip())
     return "\n\n---\n\n".join(parts)
@@ -93,7 +93,7 @@ def _record_skill_outcomes(store: Store, skill_names: list[str], is_pass: bool):
 
 def _archive_task_from_execution_md(store: Store, issue_id: int, branch_id: str):
     """Remove a completed task's section from EXECUTION.md and archive it in the DB."""
-    exec_path = _AIDE_ROOT / "doc" / "EXECUTION.md"
+    exec_path = _BAYMAX_ROOT / "doc" / "EXECUTION.md"
     if not exec_path.exists():
         return
 
@@ -122,7 +122,7 @@ def _archive_task_from_execution_md(store: Store, issue_id: int, branch_id: str)
              summary=f"Archived [{branch_id}] from EXECUTION.md")
 
     remaining = lines[:task_start] + lines[task_end:]
-    assert_aide_write(exec_path)
+    assert_baymax_write(exec_path)
     exec_path.write_text("\n".join(remaining))
 
 

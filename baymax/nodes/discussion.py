@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
-from aide.config import get_llm, get_role_name, _AIDE_ROOT
-from aide.permissions import assert_aide_write
-from aide.store import Store
+from baymax.config import get_llm, get_role_name, _BAYMAX_ROOT
+from baymax.permissions import assert_baymax_write
+from baymax.store import Store
 
 
 _DISCUSSION_SYSTEM = """You are a {role_planner}. The {role_owner} has written goals in doc/GOALS.md.
@@ -77,7 +77,7 @@ def _write_discussion_file(
             "",
         ]
 
-    assert_aide_write(path)
+    assert_baymax_write(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines))
 
@@ -96,7 +96,7 @@ def _read_owner_answer(path) -> str:
 def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: int) -> str:
     """File-based discussion loop. Returns the full discussion as a string."""
     llm = get_llm("planner")
-    discussion_path = _AIDE_ROOT / "doc" / "DISCUSSION.md"
+    discussion_path = _BAYMAX_ROOT / "doc" / "DISCUSSION.md"
     planner_display = get_role_name("planner")
     owner_display = get_role_name("owner")
 
@@ -165,7 +165,7 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
                 print()
                 print("-" * 40)
                 print("[DISCUSSION] Requirements aligned. Proceeding to blueprint.")
-                print(f"[AIDE] Discussion saved to doc/DISCUSSION.md")
+                print(f"[Baymax] Discussion saved to doc/DISCUSSION.md")
                 break
         else:
             needs_owner_input = False

@@ -1,9 +1,9 @@
-"""AIDE CLI entry point.
+"""Baymax CLI entry point.
 
 Usage:
   uv run main.py                           Full workflow (reads doc/GOALS.md)
   uv run main.py "update FLOWCHART"        Quick task (Planner only, no downstream agents)
-  uv run main.py evolve "instruction"      Self-evolution (modify AIDE itself)
+  uv run main.py evolve "instruction"      Self-evolution (modify Baymax itself)
   uv run main.py setup                     Interactive project setup
   uv run main.py log                       Show recent issues
   uv run main.py log <id>                  Show issue details + ledger
@@ -21,8 +21,8 @@ import sys
 
 import yaml
 
-from aide.config import _AIDE_ROOT, load_project_config, get_project_root, get_role_name
-from aide.store import Store
+from baymax.config import _BAYMAX_ROOT, load_project_config, get_project_root, get_role_name
+from baymax.store import Store
 
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -30,7 +30,7 @@ from aide.store import Store
 
 def _read_goals_md() -> str:
     """Read and clean doc/GOALS.md, stripping template boilerplate."""
-    goals_path = _AIDE_ROOT / "doc" / "GOALS.md"
+    goals_path = _BAYMAX_ROOT / "doc" / "GOALS.md"
     if not goals_path.exists():
         goals_path.parent.mkdir(parents=True, exist_ok=True)
         goals_path.write_text(
@@ -38,7 +38,7 @@ def _read_goals_md() -> str:
             "Write your goals below. The Planner will read this file and discuss with you.\n\n"
             "---\n\n"
         )
-        print(f"[AIDE] Created {goals_path}")
+        print(f"[Baymax] Created {goals_path}")
         print("       Write your goals there, then run again.")
         sys.exit(1)
 
@@ -52,7 +52,7 @@ def _read_goals_md() -> str:
     ).strip()
 
     if not goals_md:
-        print("[AIDE] doc/GOALS.md is empty or still has the template.")
+        print("[Baymax] doc/GOALS.md is empty or still has the template.")
         print("       Write your goals there, then run again.")
         sys.exit(1)
 
@@ -72,7 +72,7 @@ def _derive_objective(goals_md: str) -> str:
 
 
 def _scan_project_context(store: Store, issue_id: int, goals_md: str) -> str:
-    from aide.nodes.gatekeeper import gatekeeper as run_gatekeeper
+    from baymax.nodes.gatekeeper import gatekeeper as run_gatekeeper
 
     gk_state = {
         "objective": goals_md,
@@ -130,13 +130,13 @@ def _approve_blueprint(store: Store, issue_id: int) -> bool:
         store.log(issue_id, None, "owner", "blueprint_rejected", {},
                   summary=f"{owner_display} rejected blueprint")
         store.close_issue(issue_id, "rejected")
-        print("[AIDE] Blueprint rejected. Issue closed.")
+        print("[Baymax] Blueprint rejected. Issue closed.")
         return False
 
     store.log(issue_id, None, "owner", "blueprint_approved", {},
               summary=f"{owner_display} approved blueprint")
     print()
-    print("[AIDE] Blueprint approved. Generating execution plan...")
+    print("[Baymax] Blueprint approved. Generating execution plan...")
     print("-" * 40)
     return True
 
@@ -149,41 +149,41 @@ def _quick_task(store: Store, instruction: str):
     objective = instruction[:120].strip()
     issue_id = store.create_issue(objective, instruction)
 
-    print(f"[AIDE] Quick task — Issue #{issue_id}: {objective}")
-    print(f"[AIDE] Project: {project_cfg['name']}  |  Root: {project_root}")
+    print(f"[Baymax] Quick task — Issue #{issue_id}: {objective}")
+    print(f"[Baymax] Project: {project_cfg['name']}  |  Root: {project_root}")
     print("-" * 40)
 
     project_context = _scan_project_context(store, issue_id, instruction)
 
-    from aide.nodes.planner import planner_quick_task
+    from baymax.nodes.planner import planner_quick_task
 
     result = planner_quick_task(instruction, project_context, issue_id)
 
     store.close_issue(issue_id, "completed")
     print("-" * 40)
-    print(f"[AIDE] Quick task complete. Issue #{issue_id} closed.")
+    print(f"[Baymax] Quick task complete. Issue #{issue_id} closed.")
     if result:
         print()
         print(result[:500])
     print()
 
 
-def _scan_aide_context(store: Store, issue_id: int, instruction: str) -> str:
-    """Scan the AIDE directory itself (not the project) for self-evolution."""
-    from aide.nodes.gatekeeper import _get_tree, _read_key_files
+def _scan_baymax_context(store: Store, issue_id: int, instruction: str) -> str:
+    """Scan the Baymax directory itself (not the project) for self-evolution."""
+    from baymax.nodes.gatekeeper import _get_tree, _read_key_files
 
-    tree = _get_tree(_AIDE_ROOT)
-    key_files = _read_key_files(_AIDE_ROOT)
+    tree = _get_tree(_BAYMAX_ROOT)
+    key_files = _read_key_files(_BAYMAX_ROOT)
 
     context = (
-        f"## AIDE Framework\n"
-        f"## Root: {_AIDE_ROOT}\n\n"
+        f"## Baymax Framework\n"
+        f"## Root: {_BAYMAX_ROOT}\n\n"
         f"### Directory structure\n```\n{tree}\n```\n\n"
         f"### Key files\n{key_files}\n"
     )
-    store.log(issue_id, None, "gatekeeper", "aide_context_scanned", {},
-              summary="Scanned AIDE directory tree for self-evolution")
-    print(f"[GATEKEEPER] Scanned {len(tree.splitlines())} paths in AIDE/")
+    store.log(issue_id, None, "gatekeeper", "baymax_context_scanned", {},
+              summary="Scanned Baymax directory tree for self-evolution")
+    print(f"[GATEKEEPER] Scanned {len(tree.splitlines())} paths in Baymax/")
     return context
 
 
@@ -191,7 +191,7 @@ _EVOLVE_WARNING = """
 ╔══════════════════════════════════════════════════════════════╗
 ║                  ⚠  SELF-EVOLUTION MODE  ⚠                  ║
 ║                                                              ║
-║  Agents will have FULL READ/WRITE access to AIDE source.     ║
+║  Agents will have FULL READ/WRITE access to Baymax source.     ║
 ║  A git snapshot will be created before any changes.          ║
 ║                                                              ║
 ║  Rollback: git revert HEAD  (after evolution completes)      ║
@@ -200,12 +200,12 @@ _EVOLVE_WARNING = """
 
 
 def _git_snapshot(instruction: str) -> bool:
-    """Commit current AIDE state as a safety snapshot before self-evolution.
+    """Commit current Baymax state as a safety snapshot before self-evolution.
     Returns True if a snapshot was created, False if tree was already clean."""
     try:
         status = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=str(_AIDE_ROOT), capture_output=True, text=True, timeout=10,
+            cwd=str(_BAYMAX_ROOT), capture_output=True, text=True, timeout=10,
         )
         if not status.stdout.strip():
             print("[EVOLVE] Working tree clean — no snapshot needed.")
@@ -213,12 +213,12 @@ def _git_snapshot(instruction: str) -> bool:
 
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(_AIDE_ROOT), check=True, timeout=10,
+            cwd=str(_BAYMAX_ROOT), check=True, timeout=10,
         )
-        msg = f"AIDE snapshot before self-evolution: {instruction[:80]}"
+        msg = f"Baymax snapshot before self-evolution: {instruction[:80]}"
         subprocess.run(
             ["git", "commit", "-m", msg],
-            cwd=str(_AIDE_ROOT), check=True, capture_output=True, timeout=15,
+            cwd=str(_BAYMAX_ROOT), check=True, capture_output=True, timeout=15,
         )
         print(f"[EVOLVE] Git snapshot committed: {msg}")
         return True
@@ -228,12 +228,12 @@ def _git_snapshot(instruction: str) -> bool:
 
 
 def _health_check() -> bool:
-    """Verify AIDE can still be imported after self-evolution."""
+    """Verify Baymax can still be imported after self-evolution."""
     print("[EVOLVE] Running health check...")
     try:
         result = subprocess.run(
-            [sys.executable, "-c", "import aide; import aide.engine; import aide.store"],
-            cwd=str(_AIDE_ROOT), capture_output=True, text=True, timeout=30,
+            [sys.executable, "-c", "import baymax; import baymax.engine; import baymax.store"],
+            cwd=str(_BAYMAX_ROOT), capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
             print(f"[EVOLVE] HEALTH CHECK FAILED — import error:")
@@ -245,8 +245,8 @@ def _health_check() -> bool:
 
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "ruff", "check", "aide/"],
-            cwd=str(_AIDE_ROOT), capture_output=True, text=True, timeout=30,
+            [sys.executable, "-m", "ruff", "check", "baymax/"],
+            cwd=str(_BAYMAX_ROOT), capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
             warnings = result.stdout[:500] if result.stdout else result.stderr[:500]
@@ -259,9 +259,9 @@ def _health_check() -> bool:
 
 
 def _evolve(store: Store, instruction: str):
-    """Self-evolution flow: scan AIDE → Planner plans → Owner approves
+    """Self-evolution flow: scan Baymax → Planner plans → Owner approves
     → git snapshot → Planner executes → health check."""
-    from aide.permissions import evolve_context
+    from baymax.permissions import evolve_context
 
     print(_EVOLVE_WARNING)
 
@@ -274,14 +274,14 @@ def _evolve(store: Store, instruction: str):
     print(f"[EVOLVE] Issue #{issue_id}: {objective}")
     print("-" * 60)
 
-    # Phase 1: Scan AIDE codebase (within evolve context so AIDE/** is readable)
+    # Phase 1: Scan Baymax codebase (within evolve context so Baymax/** is readable)
     with evolve_context():
-        aide_context = _scan_aide_context(store, issue_id, instruction)
+        baymax_context = _scan_baymax_context(store, issue_id, instruction)
 
     # Phase 2: Planner generates plan (within evolve context for reads)
     with evolve_context():
-        from aide.nodes.planner import planner_evolve
-        plan = planner_evolve(instruction, aide_context, issue_id)
+        from baymax.nodes.planner import planner_evolve
+        plan = planner_evolve(instruction, baymax_context, issue_id)
 
     if not plan or not plan.strip():
         print("[EVOLVE] Planner produced no plan. Aborting.")
@@ -310,10 +310,10 @@ def _evolve(store: Store, instruction: str):
     # Phase 4: Git snapshot
     _git_snapshot(instruction)
 
-    # Phase 5: Planner executes (within evolve context for full AIDE access)
+    # Phase 5: Planner executes (within evolve context for full Baymax access)
     with evolve_context():
-        from aide.nodes.planner import planner_evolve_execute
-        result = planner_evolve_execute(instruction, plan, aide_context, issue_id)
+        from baymax.nodes.planner import planner_evolve_execute
+        result = planner_evolve_execute(instruction, plan, baymax_context, issue_id)
 
     # Phase 6: Health check
     healthy = _health_check()
@@ -331,8 +331,8 @@ def _evolve(store: Store, instruction: str):
         store.close_issue(issue_id, "failed")
         print()
         print("!" * 60)
-        print("[EVOLVE] HEALTH CHECK FAILED. Your changes may have broken AIDE.")
-        print("[EVOLVE] To rollback:  cd AIDE && git revert HEAD")
+        print("[EVOLVE] HEALTH CHECK FAILED. Your changes may have broken Baymax.")
+        print("[EVOLVE] To rollback:  cd Baymax && git revert HEAD")
         print("!" * 60)
 
     if result:
@@ -356,18 +356,18 @@ def _finalize_issue(store: Store, issue_id: int):
         pending = [t for t in tasks if t["status"] in ("pending", "in_progress")]
         if stuck:
             print(
-                f"[AIDE] {len(stuck)} task(s) failed/escalated. "
+                f"[Baymax] {len(stuck)} task(s) failed/escalated. "
                 f"Issue #{issue_id} stays open — re-run to retry."
             )
         elif pending:
             print(
-                f"[AIDE] {len(pending)} task(s) still pending. "
+                f"[Baymax] {len(pending)} task(s) still pending. "
                 f"Issue #{issue_id} stays open — re-run to continue."
             )
 
     print("-" * 40)
     store.print_summary(issue_id)
-    print("[AIDE] See doc/ for DISCUSSION, BLUEPRINT, FLOWCHART, EXECUTION, and QA_PLAN.")
+    print("[Baymax] See doc/ for DISCUSSION, BLUEPRINT, FLOWCHART, EXECUTION, and QA_PLAN.")
 
 
 def _run_execution_plan(
@@ -378,7 +378,7 @@ def _run_execution_plan(
     blueprint: list[dict],
 ):
     """Generate EXECUTION.md by calling planner_execution_plan directly."""
-    from aide.nodes.planner import planner_execution_plan
+    from baymax.nodes.planner import planner_execution_plan
 
     state = {
         "objective": goals_md,
@@ -406,7 +406,7 @@ def _run_execution(
     start_task_idx: int,
 ):
     """Run the execution-only graph from a given task index."""
-    from aide.engine import build_execution_graph
+    from baymax.engine import build_execution_graph
 
     graph = build_execution_graph()
     graph.invoke(
@@ -440,16 +440,16 @@ def _fresh_start(store: Store):
     objective = _derive_objective(goals_md)
     issue_id = store.create_issue(objective, goals_md)
 
-    print(f"[AIDE] Issue #{issue_id}: {objective}")
-    print(f"[AIDE] Project: {project_cfg['name']}  |  Root: {project_root}")
+    print(f"[Baymax] Issue #{issue_id}: {objective}")
+    print(f"[Baymax] Project: {project_cfg['name']}  |  Root: {project_root}")
 
     project_context = _scan_project_context(store, issue_id, goals_md)
 
-    from aide.nodes.discussion import run_discussion
+    from baymax.nodes.discussion import run_discussion
 
     discussion_md = run_discussion(goals_md, project_context, store, issue_id)
 
-    from aide.engine import build_graph
+    from baymax.engine import build_graph
 
     graph = build_graph()
     thread = {"configurable": {"thread_id": f"issue-{issue_id}"}}
@@ -479,7 +479,7 @@ def _fresh_start(store: Store):
         sys.exit(1)
 
     _show_blueprint(blueprint)
-    print("[AIDE] Review doc/BLUEPRINT.md, doc/FLOWCHART.md, and doc/QA_PLAN.md")
+    print("[Baymax] Review doc/BLUEPRINT.md, doc/FLOWCHART.md, and doc/QA_PLAN.md")
     print()
 
     if not _approve_blueprint(store, issue_id):
@@ -510,8 +510,8 @@ def _resume(store: Store, issue: dict):
     project_cfg = load_project_config()
     project_root = get_project_root()
 
-    print(f"[AIDE] Resuming issue #{issue_id}: {issue['objective']}")
-    print(f"[AIDE] Project: {project_cfg['name']}  |  Root: {project_root}")
+    print(f"[Baymax] Resuming issue #{issue_id}: {issue['objective']}")
+    print(f"[Baymax] Project: {project_cfg['name']}  |  Root: {project_root}")
 
     project_context = None
 
@@ -523,20 +523,20 @@ def _resume(store: Store, issue: dict):
 
     # Phase 1: Discussion not complete → resume it
     if not store.has_event(issue_id, "discussion_complete"):
-        print("[AIDE] Phase: discussion (incomplete)")
+        print("[Baymax] Phase: discussion (incomplete)")
         ctx = ensure_context()
-        from aide.nodes.discussion import run_discussion
+        from baymax.nodes.discussion import run_discussion
 
         run_discussion(goals_md, ctx, store, issue_id)
 
     # Phase 2: No tasks → need planner_plan to generate blueprint + flowchart + QA plan
     tasks = store.get_tasks(issue_id)
     if not tasks:
-        print("[AIDE] Phase: planning (pending)")
+        print("[Baymax] Phase: planning (pending)")
         ctx = ensure_context()
         discussion_md = store.export_discussion_md(issue_id)
 
-        from aide.engine import build_graph
+        from baymax.engine import build_graph
 
         graph = build_graph()
         thread = {"configurable": {"thread_id": f"issue-{issue_id}"}}
@@ -577,14 +577,14 @@ def _resume(store: Store, issue: dict):
 
     # Phase 3: Blueprint exists but not approved → show and ask
     if not store.has_event(issue_id, "blueprint_approved"):
-        print("[AIDE] Phase: approval (pending)")
+        print("[Baymax] Phase: approval (pending)")
         _show_blueprint(tasks)
         if not _approve_blueprint(store, issue_id):
             sys.exit(0)
 
     # Phase 4: Approved but no execution plan → generate EXECUTION.md
     if not store.has_event(issue_id, "execution_plan_generated"):
-        print("[AIDE] Phase: execution plan (pending)")
+        print("[Baymax] Phase: execution plan (pending)")
         ctx = ensure_context()
         blueprint = _tasks_to_blueprint(tasks)
         _run_execution_plan(store, issue_id, goals_md, ctx, blueprint)
@@ -592,7 +592,7 @@ def _resume(store: Store, issue: dict):
     # Phase 5: Approved + execution plan — find first pending/failed task
     actionable = store.get_first_actionable_task(issue_id)
     if not actionable:
-        print("[AIDE] All tasks already completed.")
+        print("[Baymax] All tasks already completed.")
         store.close_issue(issue_id, "completed")
         store.print_summary(issue_id)
         return
@@ -607,7 +607,7 @@ def _resume(store: Store, issue: dict):
     total = len(tasks)
 
     print(
-        f"[AIDE] Phase: execution ([{actionable['branch_id']}] {completed_count}/{total}, "
+        f"[Baymax] Phase: execution ([{actionable['branch_id']}] {completed_count}/{total}, "
         f"{completed_count} already done)"
     )
     print("-" * 40)
@@ -622,11 +622,11 @@ def _resume(store: Store, issue: dict):
 
 def setup():
     """Interactive setup — writes config/project.yaml and .env."""
-    print("[AIDE] Setup")
+    print("[Baymax] Setup")
     print("=" * 40)
     print()
 
-    project_root = _AIDE_ROOT / ".."
+    project_root = _BAYMAX_ROOT / ".."
     detected_name = project_root.resolve().name
 
     name = input(f"Project name [{detected_name}]: ").strip() or detected_name
@@ -665,13 +665,13 @@ def setup():
     if roles_cfg:
         config["roles"] = roles_cfg
 
-    config_path = _AIDE_ROOT / "config" / "project.yaml"
+    config_path = _BAYMAX_ROOT / "config" / "project.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(config_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
     print(f"  Wrote {config_path}")
 
-    doc_dir = _AIDE_ROOT / "doc"
+    doc_dir = _BAYMAX_ROOT / "doc"
     goals_path = doc_dir / "GOALS.md"
     if not goals_path.exists():
         doc_dir.mkdir(parents=True, exist_ok=True)
@@ -682,7 +682,7 @@ def setup():
         )
         print(f"  Created {goals_path}")
 
-    env_path = _AIDE_ROOT / ".env"
+    env_path = _BAYMAX_ROOT / ".env"
     if env_path.exists():
         print(f"  .env already exists — skipping.")
     else:
@@ -713,7 +713,7 @@ def setup():
     print()
     print("=== MCP Connections (optional) ===")
     print()
-    print("  AIDE can connect to external services via MCP.")
+    print("  Baymax can connect to external services via MCP.")
     print()
     print("  [1] Notion    — read/create pages, search workspace")
     print("  [2] GitHub    — issues, PRs, code search")
@@ -724,7 +724,7 @@ def setup():
 
     if mcp_choice != "s":
         mcp_servers = {}
-        env_path_for_mcp = _AIDE_ROOT / ".env"
+        env_path_for_mcp = _BAYMAX_ROOT / ".env"
         existing_env = env_path_for_mcp.read_text() if env_path_for_mcp.exists() else ""
         new_env_lines = []
 
@@ -767,7 +767,7 @@ def setup():
                     new_env_lines.append(f"SLACK_BOT_TOKEN={token}")
 
         if mcp_servers:
-            mcp_config_path = _AIDE_ROOT / "config" / "mcp.yaml"
+            mcp_config_path = _BAYMAX_ROOT / "config" / "mcp.yaml"
             mcp_data = yaml.safe_load(mcp_config_path.read_text()) if mcp_config_path.exists() else {}
             existing_servers = mcp_data.get("servers") or {}
             existing_servers.update(mcp_servers)
@@ -781,7 +781,7 @@ def setup():
             print(f"  Updated .env with MCP tokens")
 
     print()
-    print("[AIDE] Setup complete.")
+    print("[Baymax] Setup complete.")
     print("  1. Write your goals in doc/GOALS.md")
     print("  2. Run: uv run main.py")
     print()
@@ -797,7 +797,7 @@ def run():
 
         if goals_md != existing["goals_md"]:
             print(
-                f"[AIDE] GOALS.md has changed since issue #{existing['id']} was started."
+                f"[Baymax] GOALS.md has changed since issue #{existing['id']} was started."
             )
             choice = (
                 input("  (c)ontinue old issue / (n)ew issue? ").strip().lower()
@@ -824,7 +824,7 @@ def log_history(issue_id: int | None = None):
             "SELECT * FROM issues ORDER BY id DESC LIMIT 20"
         ).fetchall()
         if not rows:
-            print("[AIDE] No issues found.")
+            print("[Baymax] No issues found.")
             return
         print(f"\n{'=' * 60}")
         print("  Recent Issues")
@@ -850,10 +850,10 @@ def report(issue_id: int):
     store = Store()
     md = store.export_report_md(issue_id)
 
-    report_path = _AIDE_ROOT / "doc" / f"REPORT-{issue_id}.md"
+    report_path = _BAYMAX_ROOT / "doc" / f"REPORT-{issue_id}.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(md)
-    print(f"[AIDE] Report written to {report_path}")
+    print(f"[Baymax] Report written to {report_path}")
     print(f"       Open it in your editor for full details.")
 
 
@@ -885,11 +885,11 @@ def main():
         store = Store()
         _evolve(store, instruction)
     elif cmd == "serve":
-        from aide.mcp.server import run_server
+        from baymax.mcp.server import run_server
         if "--http" in sys.argv:
             idx = sys.argv.index("--http")
             port = int(sys.argv[idx + 1]) if idx + 1 < len(sys.argv) else 8000
-            print(f"[AIDE] Starting MCP server (HTTP on port {port})...")
+            print(f"[Baymax] Starting MCP server (HTTP on port {port})...")
             run_server(transport="http", port=port)
         else:
             run_server(transport="stdio")
@@ -898,12 +898,12 @@ def main():
         store = Store()
         _quick_task(store, instruction)
     else:
-        print("AIDE — AI Direction & Execution")
+        print("Baymax — AI Direction & Execution")
         print()
         print("Usage:")
         print("  uv run main.py                           Full workflow (reads doc/GOALS.md)")
         print('  uv run main.py "update FLOWCHART"        Quick task (Planner only)')
-        print('  uv run main.py evolve "instruction"      Self-evolution (modify AIDE)')
+        print('  uv run main.py evolve "instruction"      Self-evolution (modify Baymax)')
         print("  uv run main.py setup                     Interactive project setup")
         print("  uv run main.py log                       Show recent issues")
         print("  uv run main.py log <id>                  Show issue details + ledger")

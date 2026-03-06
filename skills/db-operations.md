@@ -1,6 +1,6 @@
 # Skill: DB Operations
 
-> Efficient patterns for querying and mutating `aide_history.db` via the `Store` API.
+> Efficient patterns for querying and mutating `baymax_history.db` via the `Store` API.
 
 ---
 

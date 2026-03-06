@@ -1,4 +1,4 @@
-"""MCP Server — exposes AIDE's store and workflow to external MCP hosts.
+"""MCP Server — exposes Baymax's store and workflow to external MCP hosts.
 
 Start with:
     uv run main.py serve              # stdio transport (Claude Desktop, Cursor)
@@ -11,14 +11,14 @@ import json
 
 from mcp.server.fastmcp import FastMCP
 
-from aide.config import _AIDE_ROOT
-from aide.store import Store
+from baymax.config import _BAYMAX_ROOT
+from baymax.store import Store
 
 
 mcp = FastMCP(
-    "aide",
+    "baymax",
     instructions=(
-        "AIDE is a multi-agent software engineering framework. "
+        "Baymax is a multi-agent software engineering framework. "
         "Use these tools to inspect issues, tasks, skills, and workflow state."
     ),
 )
@@ -28,7 +28,7 @@ mcp = FastMCP(
 
 
 @mcp.tool()
-def aide_list_issues(limit: int = 20) -> str:
+def baymax_list_issues(limit: int = 20) -> str:
     """List recent issues with their status.
 
     Args:
@@ -55,7 +55,7 @@ def aide_list_issues(limit: int = 20) -> str:
 
 
 @mcp.tool()
-def aide_get_tasks(issue_id: int) -> str:
+def baymax_get_tasks(issue_id: int) -> str:
     """Get task overview for an issue — lightweight metadata, no full descriptions.
 
     Args:
@@ -69,7 +69,7 @@ def aide_get_tasks(issue_id: int) -> str:
 
 
 @mcp.tool()
-def aide_get_ledger(issue_id: int) -> str:
+def baymax_get_ledger(issue_id: int) -> str:
     """Get ledger summary for an issue — event types and summaries, no JSON blobs.
 
     Args:
@@ -83,7 +83,7 @@ def aide_get_ledger(issue_id: int) -> str:
 
 
 @mcp.tool()
-def aide_get_skills() -> str:
+def baymax_get_skills() -> str:
     """List all active skills with effectiveness scores."""
     store = Store()
     skills = store.get_all_skills()
@@ -91,7 +91,7 @@ def aide_get_skills() -> str:
 
 
 @mcp.tool()
-def aide_query_branch(prefix: str) -> str:
+def baymax_query_branch(prefix: str) -> str:
     """Query all tasks under a branch prefix (e.g. '1' gets '1', '1.1', '1.1.1').
 
     Args:
@@ -105,14 +105,14 @@ def aide_query_branch(prefix: str) -> str:
 
 
 @mcp.tool()
-def aide_quick_task(instruction: str) -> str:
+def baymax_quick_task(instruction: str) -> str:
     """Run a quick task — the Planner handles it directly with no downstream agents.
 
     Args:
         instruction: What to do (e.g. 'update FLOWCHART based on current codebase')
     """
-    from aide.nodes.gatekeeper import gatekeeper as gk_func
-    from aide.nodes.planner import planner_quick_task
+    from baymax.nodes.gatekeeper import gatekeeper as gk_func
+    from baymax.nodes.planner import planner_quick_task
 
     store = Store()
     issue_id = store.create_issue(f"Quick: {instruction[:120]}", "")
@@ -130,7 +130,7 @@ def aide_quick_task(instruction: str) -> str:
 
 
 @mcp.tool()
-def aide_export_report(issue_id: int) -> str:
+def baymax_export_report(issue_id: int) -> str:
     """Export a full human-readable markdown report for an issue.
 
     Args:
@@ -143,13 +143,13 @@ def aide_export_report(issue_id: int) -> str:
 # ── Resources ─────────────────────────────────────────────
 
 
-@mcp.resource("aide://issues")
+@mcp.resource("baymax://issues")
 def resource_issues() -> str:
-    """All issues in the AIDE database."""
-    return aide_list_issues(limit=100)
+    """All issues in the Baymax database."""
+    return baymax_list_issues(limit=100)
 
 
-@mcp.resource("aide://issues/{issue_id}")
+@mcp.resource("baymax://issues/{issue_id}")
 def resource_issue(issue_id: int) -> str:
     """Detailed view of a single issue including tasks and ledger."""
     store = Store()
@@ -165,23 +165,23 @@ def resource_issue(issue_id: int) -> str:
     }, indent=2)
 
 
-@mcp.resource("aide://skills")
+@mcp.resource("baymax://skills")
 def resource_skills() -> str:
     """All active skills with metadata."""
-    return aide_get_skills()
+    return baymax_get_skills()
 
 
-@mcp.resource("aide://blueprint")
+@mcp.resource("baymax://blueprint")
 def resource_blueprint() -> str:
     """Current doc/BLUEPRINT.md content."""
-    path = _AIDE_ROOT / "doc" / "BLUEPRINT.md"
+    path = _BAYMAX_ROOT / "doc" / "BLUEPRINT.md"
     if path.exists():
         return path.read_text()
     return "No blueprint found."
 
 
 def run_server(transport: str = "stdio", port: int = 8000):
-    """Start the AIDE MCP server."""
+    """Start the Baymax MCP server."""
     if transport == "stdio":
         mcp.run(transport="stdio")
     elif transport == "http":

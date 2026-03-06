@@ -22,9 +22,9 @@ from baymax.tools import get_tools_for_node
 _DISCUSSION_SYSTEM = """You are a {role_planner}. The {role_owner} has written goals in doc/GOALS.md.
 Your job is to discuss these goals with the {role_owner} to clarify requirements before building a blueprint.
 
-You have access to `file_read` and `search` tools. BEFORE asking the {role_owner} any question,
-check if you can answer it yourself by reading files or searching the codebase.
-For example, if the goals mention a CSV file, read its first few lines to learn the column schema
+You have access to `file_inspect` and `search` tools. BEFORE asking the {role_owner} any question,
+check if you can answer it yourself by inspecting files or searching the codebase.
+For example, if the goals mention a CSV file, use `file_inspect` to learn the column schema
 instead of asking the {role_owner} to list the columns.
 
 Rules:

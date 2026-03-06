@@ -113,6 +113,18 @@ class Store:
                 created_at      TEXT    NOT NULL,
                 updated_at      TEXT    NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS skill_requests (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                requested_by    TEXT    NOT NULL,
+                need            TEXT    NOT NULL,
+                context         TEXT    NOT NULL DEFAULT '',
+                status          TEXT    NOT NULL DEFAULT 'pending',
+                resolved_skill  TEXT,
+                resolution_note TEXT    NOT NULL DEFAULT '',
+                created_at      TEXT    NOT NULL,
+                resolved_at     TEXT
+            );
         """)
         self._migrate()
 
@@ -549,7 +561,7 @@ class Store:
     def create_skill(self, name: str, description: str, file_path: str,
                      created_by: str = "system", tags: list[str] | None = None,
                      when_to_use: str = "", when_not_to_use: str = "") -> int:
-        is_curated = created_by in ("system", "human", "chief_architect", "owner")
+        is_curated = created_by in ("system", "human", "chief_architect", "owner", "planner")
         trust_tier = "curated" if is_curated else "agent"
         status = "active" if is_curated else "draft"
         now = _now()
@@ -677,6 +689,58 @@ class Store:
             "created_by, created_at FROM skills WHERE status = 'pending_review' ORDER BY created_at"
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def search_skills(self, keywords: str) -> list[dict]:
+        """Search active skills by keyword matching in name, description, tags, when_to_use.
+
+        Returns matching skills sorted by relevance (name match > description > tags).
+        """
+        tokens = [t.strip().lower() for t in keywords.replace(",", " ").split() if t.strip()]
+        if not tokens:
+            return []
+        conditions = []
+        params: list[str] = []
+        for token in tokens:
+            like = f"%{token}%"
+            conditions.append(
+                "(LOWER(name) LIKE ? OR LOWER(description) LIKE ? "
+                "OR LOWER(tags) LIKE ? OR LOWER(when_to_use) LIKE ?)"
+            )
+            params.extend([like, like, like, like])
+
+        where = " AND ".join(conditions)
+        rows = self._conn.execute(
+            f"SELECT * FROM skills WHERE status = 'active' AND ({where}) ORDER BY name",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── Skill Requests ───────────────────────────────────────
+
+    def create_skill_request(self, requested_by: str, need: str,
+                             context: str = "") -> int:
+        cur = self._conn.execute(
+            "INSERT INTO skill_requests (requested_by, need, context, status, created_at) "
+            "VALUES (?, ?, ?, 'pending', ?)",
+            (requested_by, need, context, _now()),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def get_pending_skill_requests(self) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM skill_requests WHERE status = 'pending' ORDER BY created_at"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def resolve_skill_request(self, request_id: int, resolved_skill: str | None,
+                              resolution_note: str = "", status: str = "fulfilled"):
+        self._conn.execute(
+            "UPDATE skill_requests SET status = ?, resolved_skill = ?, "
+            "resolution_note = ?, resolved_at = ? WHERE id = ?",
+            (status, resolved_skill, resolution_note, _now(), request_id),
+        )
+        self._conn.commit()
 
     # ── Summary ─────────────────────────────────────────────
 

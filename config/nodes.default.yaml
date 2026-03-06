@@ -6,6 +6,7 @@ planner:
   tools:
     - file_inspect
     - search
+    - skill_create
 
 executor:
   model:
@@ -17,7 +18,7 @@ executor:
     - file_read
     - file_write
     - search
-    - skill_create
+    - skill_request
 
 validator:
   model:
@@ -26,6 +27,7 @@ validator:
     temperature: 0
   tools:
     - shell
+    - skill_request
 
 evolve:
   model:

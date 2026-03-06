@@ -72,13 +72,14 @@ def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds):
 EXPLORE_INSTRUCTION = (
     "Before creating the blueprint, explore the existing codebase to understand its "
     "architecture, key modules, entry points, dependencies, and patterns.\n\n"
-    "Use `file_read` to read important source files and `search` to find patterns.\n"
+    "Use `file_inspect` to inspect important files and `search` to find patterns.\n"
     "Focus on:\n"
     "- Entry points (main files, app factories, route definitions)\n"
     "- Core business logic modules\n"
     "- Data models / schemas\n"
     "- Configuration and dependency files\n"
-    "- Existing test structure\n\n"
+    "- Existing test structure\n"
+    "- **Data files** — note every file extension you encounter (csv, json, pdf, etc.)\n\n"
     "When you have a solid understanding of the codebase, summarize your findings "
     "and then say: EXPLORATION COMPLETE\n\n"
     "Your summary should cover:\n"
@@ -86,6 +87,38 @@ EXPLORE_INSTRUCTION = (
     "2. Project structure and key modules\n"
     "3. Current architecture patterns\n"
     "4. Areas relevant to the goals\n"
+    "5. **File formats encountered** — list every data/config format the project uses\n"
+)
+
+SKILL_PROVISION_INSTRUCTION = (
+    "You have just explored the codebase. Now **provision skills** that downstream "
+    "agents ({role_executor}, {role_validator}) will need.\n\n"
+    "## What to Provision\n"
+    "Look at the file formats, libraries, and domain patterns you discovered during "
+    "exploration and discussion. For each one that does NOT already have a skill, "
+    "create one using `skill_create`.\n\n"
+    "Common examples:\n"
+    "- `.csv` files → create a skill about reading/writing CSVs with pandas\n"
+    "- `.json` / `.jsonl` → JSON handling patterns, streaming for large files\n"
+    "- `.pdf` → PDF extraction with pymupdf or pdfplumber\n"
+    "- `.xlsx` → Excel handling with openpyxl\n"
+    "- Image files → PIL/Pillow usage, common transforms\n"
+    "- Database files → SQLite patterns, connection handling\n"
+    "- API integrations → request patterns, auth, rate limiting\n"
+    "- Domain-specific patterns (matching algorithms, data pipelines, etc.)\n\n"
+    "## Skill Quality Rules\n"
+    "Each skill must be a **concise, actionable guide** — not a textbook chapter. Include:\n"
+    "- Which library to use and why (prefer stdlib when possible, name the right third-party lib otherwise)\n"
+    "- Installation command (e.g., `uv add pandas`)\n"
+    "- 2-3 code patterns covering the most common operations\n"
+    "- Gotchas and edge cases specific to that format\n"
+    "- Performance tips for large files\n\n"
+    "Use your pretrained knowledge — no internet access is needed for standard formats.\n\n"
+    "## When to Skip\n"
+    "- The format already has an active skill (check the EXISTING SKILLS list)\n"
+    "- The format is trivial (plain .txt, .md) — agents already know these\n"
+    "- The project doesn't actually use that format in any meaningful way\n\n"
+    "Create the skills now, then say: SKILL PROVISIONING COMPLETE"
 )
 
 BLUEPRINT_INSTRUCTION = (
@@ -211,7 +244,100 @@ def planner_plan(state: AgentState) -> dict:
     else:
         print(f"[{planner_display}] Building blueprint from discussion...")
 
-    # ── 0b. Review pending skills ─────────────────────────────
+    # ── 0a. Skill provisioning ────────────────────────────────
+    if tools and not is_replan:
+        available_skills = store.get_all_skills()
+        existing_names = {s["name"] for s in available_skills}
+        skill_section = ""
+        if existing_names:
+            skill_section = (
+                "\n\n## Existing Skills (do NOT recreate these)\n"
+                + "\n".join(f"- {n}" for n in sorted(existing_names))
+            )
+
+        provision_prompt = SKILL_PROVISION_INSTRUCTION.format(
+            role_executor=get_role_name("executor"),
+            role_validator=get_role_name("validator"),
+        )
+        provision_parts = []
+        if exploration_summary:
+            provision_parts.append(f"## Codebase Exploration Summary\n{exploration_summary}")
+        if discussion:
+            provision_parts.append(f"## Discussion with {owner_display}\n{discussion}")
+        provision_parts.append(f"## Goals\n{objective}")
+        if skill_section:
+            provision_parts.append(skill_section)
+        provision_parts.append(provision_prompt)
+
+        provision_messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content="\n\n".join(provision_parts)),
+        ]
+
+        print(f"[{planner_display}] Provisioning skills for downstream agents...")
+        _run_tool_loop(llm_with_tools, provision_messages, tool_map, _MAX_EXPLORE_ROUNDS)
+
+        new_skills = store.get_all_skills()
+        created_count = len(new_skills) - len(available_skills)
+        if created_count > 0:
+            skill_names = [s["name"] for s in new_skills if s["name"] not in existing_names]
+            store.log(issue_id, None, "planner", "skills_provisioned", {
+                "created": skill_names,
+            }, summary=f"Auto-provisioned {created_count} skill(s): {', '.join(skill_names)}")
+            print(f"[{planner_display}] Created {created_count} skill(s): {', '.join(skill_names)}")
+        else:
+            print(f"[{planner_display}] No new skills needed.")
+
+    # ── 0b. Handle pending skill requests ──────────────────────
+    pending_requests = store.get_pending_skill_requests()
+    if pending_requests:
+        print(f"[{planner_display}] Handling {len(pending_requests)} skill request(s)...")
+        for req in pending_requests:
+            matches = store.search_skills(req["need"])
+            if matches:
+                best = matches[0]
+                store.resolve_skill_request(
+                    req["id"], resolved_skill=best["name"],
+                    resolution_note=f"Matched existing skill: {best['name']}",
+                )
+                store.log(issue_id, None, "planner", "skill_request_matched", {
+                    "request_id": req["id"], "need": req["need"][:200],
+                    "matched_skill": best["name"],
+                }, summary=f"Skill request matched → {best['name']}")
+                print(f"  [{planner_display}] Request '{req['need'][:60]}' → existing skill: {best['name']}")
+            elif tools:
+                create_prompt = (
+                    f"An agent ({req['requested_by']}) requested a skill:\n\n"
+                    f"**Need**: {req['need']}\n"
+                    f"**Context**: {req.get('context', '(none)')}\n\n"
+                    "Create this skill using `skill_create`. Write a concise, actionable guide "
+                    "based on your pretrained knowledge. Include:\n"
+                    "- Which library to use and installation command\n"
+                    "- 2-3 code patterns for common operations\n"
+                    "- Gotchas and edge cases\n\n"
+                    "After creating the skill, say: DONE"
+                )
+                create_msgs = [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=create_prompt),
+                ]
+                _run_tool_loop(llm_with_tools, create_msgs, tool_map, 5)
+                new_skill = store.search_skills(req["need"])
+                skill_name = new_skill[0]["name"] if new_skill else None
+                store.resolve_skill_request(
+                    req["id"], resolved_skill=skill_name,
+                    resolution_note="Created by planner",
+                    status="fulfilled" if skill_name else "pending",
+                )
+                if skill_name:
+                    store.log(issue_id, None, "planner", "skill_request_fulfilled", {
+                        "request_id": req["id"], "skill": skill_name,
+                    }, summary=f"Created skill for request: {skill_name}")
+                    print(f"  [{planner_display}] Created skill '{skill_name}' for request")
+            else:
+                print(f"  [{planner_display}] No tools to create skill for: {req['need'][:60]}")
+
+    # ── 0c. Review pending skills ─────────────────────────────
     pending_skills = store.get_skills_pending_review()
     if pending_skills:
         print(f"[{planner_display}] Reviewing {len(pending_skills)} pending skills...")

@@ -1,7 +1,12 @@
-"""File read/write/inspect tools — sandboxed to project root, blacklist + node access enforced."""
+"""File read/write/inspect tools — sandboxed to project root, blacklist + node access enforced.
+
+All inspectors use **stdlib only**. Agents that need richer analysis (pandas, openpyxl,
+pymupdf, etc.) should use the shell tool and create a Skill for reuse.
+"""
 
 from __future__ import annotations
 
+import csv as _csv
 import json as _json
 import struct
 from pathlib import Path
@@ -20,25 +25,43 @@ def _resolve_safe(project_root: str, file_path: str) -> Path:
     return target
 
 
-# ── Format-specific inspectors ────────────────────────────────
+# ── Lightweight stdlib-only inspectors ────────────────────────
 
 def _inspect_csv(path: Path, head: int) -> str:
-    import pandas as pd
-    df_sample = pd.read_csv(path, nrows=head)
-    with open(path) as f:
-        row_count = sum(1 for _ in f) - 1
-    lines = [
+    """Parse header + first N rows using stdlib csv. No pandas."""
+    with open(path, newline="", encoding="utf-8", errors="replace") as f:
+        sample_bytes = f.read(8192)
+        f.seek(0)
+        dialect = _csv.Sniffer().sniff(sample_bytes) if sample_bytes else _csv.excel
+        reader = _csv.reader(f, dialect)
+        header = next(reader, None)
+        if header is None:
+            return f"CSV: {path.name} — empty file"
+        rows: list[list[str]] = []
+        for i, row in enumerate(reader):
+            if i >= head:
+                break
+            rows.append(row)
+        remaining = sum(1 for _ in reader)
+    total = len(rows) + remaining
+    col_widths = [max(len(h), *(len(r[j]) if j < len(r) else 0 for r in rows)) for j, h in enumerate(header)]
+    def _fmt(vals: list[str]) -> str:
+        return " | ".join(v.ljust(min(w, 40))[:40] for v, w in zip(vals, col_widths))
+    table = [_fmt(header), "-+-".join("-" * min(w, 40) for w in col_widths)]
+    for r in rows:
+        padded = r + [""] * (len(header) - len(r))
+        table.append(_fmt(padded))
+    return "\n".join([
         f"CSV: {path.name}",
-        f"Shape: {row_count} rows x {len(df_sample.columns)} columns",
-        f"Columns: {list(df_sample.columns)}",
-        f"Dtypes:\n{df_sample.dtypes.to_string()}",
-        f"\nFirst {head} rows:\n{df_sample.head(head).to_string()}",
-    ]
-    return "\n".join(lines)
+        f"Rows: ~{total}  Columns: {len(header)}",
+        f"Column names: {header}",
+        f"\nFirst {len(rows)} rows:",
+        *table,
+    ])
 
 
 def _inspect_json(path: Path) -> str:
-    raw = path.read_text()
+    raw = path.read_text(encoding="utf-8", errors="replace")
     try:
         data = _json.loads(raw)
     except _json.JSONDecodeError as e:
@@ -94,8 +117,6 @@ def _inspect_image(path: Path) -> str:
             elif ext == ".gif" and header[:6] in (b"GIF87a", b"GIF89a"):
                 w, h = struct.unpack("<HH", header[6:10])
                 dims = f"{w} x {h}"
-            elif ext == ".webp" and header[:4] == b"RIFF" and header[8:12] == b"WEBP":
-                dims = "(webp — dimensions require full parse)"
     except Exception:
         pass
 
@@ -106,82 +127,29 @@ def _inspect_image(path: Path) -> str:
     return f"Image: {path.name}\nFormat: {ext.lstrip('.')}\nDimensions: {dims}\nSize: {size_str}"
 
 
-def _inspect_excel(path: Path) -> str:
-    try:
-        import openpyxl
-        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-        lines = [f"Excel: {path.name}", f"Sheets: {wb.sheetnames}"]
-        for name in wb.sheetnames:
-            ws = wb[name]
-            rows = list(ws.iter_rows(max_row=1, values_only=True))
-            cols = list(rows[0]) if rows else []
-            lines.append(f"  {name}: columns={cols}, rows~={ws.max_row}")
-        wb.close()
-        return "\n".join(lines)
-    except ImportError:
-        return f"Excel: {path.name}\n[Cannot inspect — openpyxl not installed. Use shell: python3 -c \"import openpyxl; ...\"]"
-    except Exception as e:
-        return f"Excel: {path.name}\n[error] {e}"
-
-
-def _inspect_pdf(path: Path) -> str:
-    for reader_fn in [_pdf_via_pymupdf, _pdf_via_pdfplumber]:
-        result = reader_fn(path)
-        if result:
-            return result
+def _inspect_binary(path: Path) -> str:
+    """Fallback for any non-text format the tool doesn't natively handle."""
     size_bytes = path.stat().st_size
-    size_str = f"{size_bytes / 1_048_576:.1f} MB" if size_bytes > 1_048_576 else f"{size_bytes / 1024:.1f} KB"
+    with open(path, "rb") as f:
+        hex_preview = f.read(32).hex(" ")
+    size_str = (
+        f"{size_bytes / 1_048_576:.1f} MB" if size_bytes > 1_048_576
+        else f"{size_bytes / 1024:.1f} KB"
+    )
     return (
-        f"PDF: {path.name}\nSize: {size_str}\n"
-        "[Cannot inspect — no PDF library available. "
-        "Use shell: python3 -c \"import subprocess; subprocess.run(['pdftotext', ...])\"]"
+        f"Binary: {path.name}\n"
+        f"Extension: {path.suffix}\n"
+        f"Size: {size_str}\n"
+        f"First 32 bytes (hex): {hex_preview}\n"
+        "[Use shell to probe further, then create a Skill for this format.]"
     )
 
 
-def _pdf_via_pymupdf(path: Path) -> str | None:
+def _inspect_text(path: Path, max_lines: int = 80) -> str:
     try:
-        import fitz  # pymupdf
-        doc = fitz.open(str(path))
-        pages = doc.page_count
-        text = ""
-        for i in range(min(2, pages)):
-            text += doc[i].get_text()
-        doc.close()
-        if len(text) > 3000:
-            text = text[:3000] + "\n... (truncated)"
-        return f"PDF: {path.name}\nPages: {pages}\n\nText (first 2 pages):\n{text}"
-    except ImportError:
-        return None
-
-
-def _pdf_via_pdfplumber(path: Path) -> str | None:
-    try:
-        import pdfplumber
-        with pdfplumber.open(str(path)) as pdf:
-            pages = len(pdf.pages)
-            text = ""
-            for page in pdf.pages[:2]:
-                text += (page.extract_text() or "") + "\n"
-        if len(text) > 3000:
-            text = text[:3000] + "\n... (truncated)"
-        return f"PDF: {path.name}\nPages: {pages}\n\nText (first 2 pages):\n{text}"
-    except ImportError:
-        return None
-
-
-def _inspect_text(path: Path, max_lines: int = 200) -> str:
-    try:
-        text = path.read_text()
-    except UnicodeDecodeError:
-        size_bytes = path.stat().st_size
-        with open(path, "rb") as f:
-            hex_preview = f.read(32).hex(" ")
-        return (
-            f"Binary file: {path.name}\n"
-            f"Size: {size_bytes} bytes\n"
-            f"First 32 bytes (hex): {hex_preview}\n"
-            "[Cannot read as text. Use shell to probe: file <path>, xxd <path> | head]"
-        )
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return _inspect_binary(path)
 
     lines = text.splitlines()
     total = len(lines)
@@ -193,25 +161,28 @@ def _inspect_text(path: Path, max_lines: int = 200) -> str:
 
 # ── Tool factories ────────────────────────────────────────────
 
-_FORMAT_MAP = {
-    ".csv": "csv", ".tsv": "csv",
-    ".json": "json", ".jsonl": "json",
-    ".pdf": "pdf",
-    ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image", ".webp": "image",
-    ".xlsx": "excel", ".xls": "excel",
+_TEXT_EXTENSIONS = {
+    ".csv", ".tsv", ".json", ".jsonl",
+    ".md", ".txt", ".py", ".js", ".ts", ".yaml", ".yml", ".toml",
+    ".html", ".css", ".xml", ".sql", ".sh", ".bash", ".zsh",
+    ".rs", ".go", ".java", ".c", ".cpp", ".h", ".hpp", ".rb",
+    ".r", ".jl", ".lua", ".swift", ".kt",
 }
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg"}
 
 
 def create_file_inspect_tool(project_root: str, node_name: str = "planner"):
     @tool
     def file_inspect(file_path: str, head: int = 5) -> str:
-        """Inspect a file intelligently. Auto-detects format (CSV, JSON, PDF, image, Excel, text)
-        and returns a useful summary instead of raw content. Use this to understand file structure
-        and schema without dumping the entire file into context.
+        """Inspect a file and return a structured summary. Uses only Python stdlib —
+        no external libraries. For richer analysis, use the shell tool and create a Skill.
+
+        Handles: CSV/TSV (header + sample rows), JSON (structure + keys), images (dimensions),
+        text/code (first lines). Unknown binary formats return metadata + hex preview.
 
         Args:
             file_path: Path relative to the project root.
-            head: Number of sample rows for CSV/TSV (default 5).
+            head: Number of sample rows for tabular files (default 5).
         """
         assert_not_blacklisted(file_path)
         assert_node_access(file_path, node_name)
@@ -220,21 +191,17 @@ def create_file_inspect_tool(project_root: str, node_name: str = "planner"):
             return f"[error] File not found: {file_path}"
 
         ext = target.suffix.lower()
-        fmt = _FORMAT_MAP.get(ext, "text")
 
         try:
-            if fmt == "csv":
+            if ext in (".csv", ".tsv"):
                 return _inspect_csv(target, head)
-            elif fmt == "json":
+            if ext in (".json", ".jsonl"):
                 return _inspect_json(target)
-            elif fmt == "pdf":
-                return _inspect_pdf(target)
-            elif fmt == "image":
+            if ext in _IMAGE_EXTENSIONS:
                 return _inspect_image(target)
-            elif fmt == "excel":
-                return _inspect_excel(target)
-            else:
+            if ext in _TEXT_EXTENSIONS or ext == "":
                 return _inspect_text(target)
+            return _inspect_binary(target)
         except Exception as e:
             return f"[error] Failed to inspect {file_path}: {e}"
 

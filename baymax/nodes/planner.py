@@ -424,7 +424,8 @@ def planner_plan(state: AgentState) -> dict:
         HumanMessage(content="\n\n".join(parts)),
     ]
 
-    response = llm.invoke(messages)
+    print(f"[{planner_display}] Generating blueprint...")
+    response, messages = _run_tool_loop(llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS)
     raw = _normalize_content(response.content)
 
     try:
@@ -470,7 +471,7 @@ def planner_plan(state: AgentState) -> dict:
         SystemMessage(content=system_prompt),
         HumanMessage(content="\n\n".join(fc_parts)),
     ]
-    fc_response = llm.invoke(fc_messages)
+    fc_response, fc_messages = _run_tool_loop(llm_with_tools, fc_messages, tool_map, 5)
     fc_raw = _normalize_content(fc_response.content)
 
     flowchart_md = (
@@ -497,7 +498,7 @@ def planner_plan(state: AgentState) -> dict:
         SystemMessage(content=system_prompt),
         HumanMessage(content="\n\n".join(qa_parts)),
     ]
-    qa_response = llm.invoke(qa_messages)
+    qa_response, qa_messages = _run_tool_loop(llm_with_tools, qa_messages, tool_map, 5)
     qa_raw = _normalize_content(qa_response.content)
 
     qa_plan_md = (

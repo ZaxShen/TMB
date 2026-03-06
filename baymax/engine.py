@@ -42,6 +42,7 @@ def build_graph() -> StateGraph:
 
     graph.add_conditional_edges("planner_plan", _route, {
         "human_review": "planner_execution_plan",
+        "planner": "planner_plan",
     })
 
     graph.add_conditional_edges("planner_execution_plan", _route, {

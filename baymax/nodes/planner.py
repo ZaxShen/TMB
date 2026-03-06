@@ -512,8 +512,12 @@ def planner_plan(state: AgentState) -> dict:
         SystemMessage(content=system_prompt),
         HumanMessage(content="\n\n".join(fc_parts)),
     ]
-    fc_response, fc_messages = _run_tool_loop(llm_with_tools, fc_messages, tool_map, 5, label="flowchart")
+    fc_response = llm.invoke(fc_messages)
     fc_raw = _normalize_content(fc_response.content)
+    if "mermaid" not in fc_raw.lower() and len(fc_raw) < 200:
+        print(f"[{planner_display}] Flowchart too short, retrying...")
+        fc_response = llm.invoke(fc_messages)
+        fc_raw = _normalize_content(fc_response.content)
 
     flowchart_md = (
         f"# Flowchart — Issue #{issue_id}\n\n"
@@ -539,8 +543,12 @@ def planner_plan(state: AgentState) -> dict:
         SystemMessage(content=system_prompt),
         HumanMessage(content="\n\n".join(qa_parts)),
     ]
-    qa_response, qa_messages = _run_tool_loop(llm_with_tools, qa_messages, tool_map, 5, label="qa_plan")
+    qa_response = llm.invoke(qa_messages)
     qa_raw = _normalize_content(qa_response.content)
+    if len(qa_raw) < 200:
+        print(f"[{planner_display}] QA plan too short ({len(qa_raw)} chars), retrying...")
+        qa_response = llm.invoke(qa_messages)
+        qa_raw = _normalize_content(qa_response.content)
 
     qa_plan_md = (
         f"# QA Plan — Issue #{issue_id}\n\n"

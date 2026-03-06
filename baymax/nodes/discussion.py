@@ -11,17 +11,24 @@ The discussion is stored in SQLite (permanent) and doc/DISCUSSION.md (current).
 
 from __future__ import annotations
 
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
-from baymax.config import get_llm, get_role_name, _BAYMAX_ROOT
+from baymax.config import get_llm, get_role_name, get_project_root, load_nodes_config, _BAYMAX_ROOT
 from baymax.permissions import assert_baymax_write
 from baymax.store import Store
+from baymax.tools import get_tools_for_node
 
 
 _DISCUSSION_SYSTEM = """You are a {role_planner}. The {role_owner} has written goals in doc/GOALS.md.
 Your job is to discuss these goals with the {role_owner} to clarify requirements before building a blueprint.
 
+You have access to `file_read` and `search` tools. BEFORE asking the {role_owner} any question,
+check if you can answer it yourself by reading files or searching the codebase.
+For example, if the goals mention a CSV file, read its first few lines to learn the column schema
+instead of asking the {role_owner} to list the columns.
+
 Rules:
+- Explore first, ask second. Only ask the {role_owner} things you genuinely cannot determine from the codebase.
 - Ask focused, specific questions to eliminate ambiguity.
 - Challenge assumptions if you see risks or contradictions.
 - When you fully understand the requirements, say exactly: READY TO BUILD
@@ -93,12 +100,53 @@ def _read_owner_answer(path) -> str:
     return answer
 
 
+_MAX_TOOL_ROUNDS = 10
+
+
+def _run_discussion_tool_loop(llm_with_tools, messages, tool_map):
+    """Let the planner use tools (file_read, search) before responding to the owner."""
+    for _ in range(_MAX_TOOL_ROUNDS):
+        response = llm_with_tools.invoke(messages)
+        messages.append(response)
+
+        if not hasattr(response, "tool_calls") or not response.tool_calls:
+            return response, messages
+
+        for tc in response.tool_calls:
+            tool_fn = tool_map.get(tc["name"])
+            if tool_fn:
+                try:
+                    result = tool_fn.invoke(tc["args"])
+                except Exception as e:
+                    result = f"[error] {e}"
+                result_str = str(result)
+                if len(result_str) > 8000:
+                    result_str = result_str[:8000] + "\n... (truncated)"
+                print(f"  [planner:{tc['name']}] done")
+                messages.append(ToolMessage(content=result_str, tool_call_id=tc["id"]))
+            else:
+                messages.append(ToolMessage(
+                    content=f"[error] Unknown tool: {tc['name']}",
+                    tool_call_id=tc["id"],
+                ))
+
+    return response, messages
+
+
 def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: int) -> str:
     """File-based discussion loop. Returns the full discussion as a string."""
     llm = get_llm("planner")
     discussion_path = _BAYMAX_ROOT / "doc" / "DISCUSSION.md"
     planner_display = get_role_name("planner")
     owner_display = get_role_name("owner")
+
+    node_cfg = load_nodes_config().get("planner", {})
+    project_root = str(get_project_root())
+    read_only_tools = ["file_read", "search"]
+    tool_names = [t for t in node_cfg.get("tools", []) if t in read_only_tools]
+    tools = get_tools_for_node(tool_names, project_root, node_name="planner")
+    tool_map = {t.name: t for t in tools} if tools else {}
+    llm_with_tools = llm.bind_tools(tools) if tools else llm
 
     system_text = _DISCUSSION_SYSTEM
     for var, display in {
@@ -110,8 +158,10 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
     initial_prompt = (
         f"## Project Context\n{project_context}\n\n"
         f"## {owner_display}'s Goals\n{goals_md}\n\n"
-        f"Review these goals. Ask the {owner_display} any clarifying questions, "
-        "or if everything is clear, say READY TO BUILD."
+        f"Review these goals. Use your tools to explore relevant files first "
+        f"(e.g., read CSVs, scripts, configs), then ask the {owner_display} "
+        "only questions you cannot answer yourself. "
+        "If everything is clear, say READY TO BUILD."
     )
 
     messages = [
@@ -146,11 +196,15 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
 
     while True:
         if not needs_owner_input:
-            response = llm.invoke(messages)
+            response, messages = _run_discussion_tool_loop(llm_with_tools, messages, tool_map)
             planner_msg = response.content
+            if isinstance(planner_msg, list):
+                planner_msg = "\n".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block)
+                    for block in planner_msg
+                )
 
             store.add_discussion(issue_id, "planner", planner_msg)
-            messages.append(AIMessage(content=planner_msg))
 
             print(f"\n[{planner_display}]:\n{planner_msg}")
 

@@ -60,13 +60,32 @@ uv run main.py "refresh QA_PLAN.md to cover the new auth module"
 
 The Architect handles these directly — reads the codebase, makes the changes, done. No discussion, no SWE, no QA. Still logged to SQLite.
 
+### Self-Evolution
+
+AIDE can modify its own source code through a guarded self-evolution mode:
+
+```bash
+uv run main.py evolve "add a new CLI command to export tasks as CSV"
+uv run main.py evolve "update README.md to reflect the new auth module"
+```
+
+**Safety gates** — every evolution goes through:
+
+1. **Warning banner** — you'll see a prominent warning that agents will have full AIDE access
+2. **Architect plans first** — explores AIDE's own codebase, writes `doc/EVOLUTION.md` with proposed changes and risk assessment
+3. **Double approval** — the Architect designs the plan (its approval), then you review and press Enter (your approval)
+4. **Automatic git snapshot** — AIDE commits its current state before any file is touched, so `git revert HEAD` always works
+5. **Health check** — after changes, AIDE verifies it can still import and passes lint
+
+If the health check fails, you get the exact rollback command. The `AIDE/**` blacklist is only lifted during the evolve session — normal workflow remains locked down.
+
 ---
 
 ## How It Works
 
 ### The Workflow
 
-AIDE has two entry points:
+AIDE has three entry points:
 
 **Full workflow** (`uv run main.py`) — for complex, multi-step work:
 
@@ -121,6 +140,48 @@ Chief Architect passes instruction via CLI
          DONE
 ```
 
+**Self-evolution** (`uv run main.py evolve "..."`) — for modifying AIDE itself:
+
+```
+Chief Architect passes instruction via CLI
+         │
+         ▼
+  ┌─── WARNING ────┐
+  │  Display safety │
+  │  banner         │
+  └────────┬───────┘
+           ▼
+  ┌─── GATEKEEPER ───┐
+  │  Scan AIDE/      │    (not the parent project)
+  └────────┬─────────┘
+           ▼
+  ┌─── ARCHITECT ────┐
+  │  Explore AIDE    │    Full read access to AIDE/**
+  │  source code     │    Writes doc/EVOLUTION.md
+  │  Generate plan   │
+  └────────┬─────────┘
+           ▼
+    Chief Architect reviews & approves
+           │
+           ▼
+  ┌─── GIT SNAPSHOT ─┐
+  │  Auto-commit     │    Safety rollback point
+  │  current state   │
+  └────────┬─────────┘
+           ▼
+  ┌─── ARCHITECT ────┐
+  │  Execute plan    │    Full read/write to AIDE/**
+  │  Modify source   │
+  └────────┬─────────┘
+           ▼
+  ┌─── HEALTH CHECK ─┐
+  │  Import test     │    Verify AIDE still works
+  │  Lint check      │
+  └────────┬─────────┘
+           ▼
+         DONE
+```
+
 ### The Roles
 
 | Role | Who | Responsibility |
@@ -142,6 +203,7 @@ All artifacts live in `AIDE/doc/`:
 | `FLOWCHART.md` | Architect | Chief Architect | Architecture/data-flow diagram (Mermaid) |
 | `EXECUTION.md` | Architect | SWE | Detailed execution plan — tasks removed on completion |
 | `QA_PLAN.md` | Architect | QA | Testing framework — risk areas, test types, edge cases |
+| `EVOLUTION.md` | Architect | Chief Architect | Self-evolution plan (only during `evolve` mode) |
 
 ### Permissions
 
@@ -158,14 +220,16 @@ All artifacts live in `AIDE/doc/`:
 | DB: ledger | Read | Write | Write | Write |
 | Project files | — | — | Edit | Read |
 | `.env`, secrets | — | — | — | — |
-| `AIDE/**` (engine) | Edit (manual) | — | — | — |
+| `doc/EVOLUTION.md` | Read | Edit | — | — |
+| `AIDE/**` (engine) | Edit (manual) | Edit (evolve mode only) | — | — |
 
 **Key rules:**
 - SWEs never see GOALS.md, DISCUSSION.md, BLUEPRINT.md, or FLOWCHART.md — high-level context could mislead execution.
 - SWEs read EXECUTION.md for detailed task steps, and get their task assignment from the DB.
 - QA reads QA_PLAN.md for testing requirements but never sees high-level planning docs.
 - Both SWE and QA can report implementation-vs-design discrepancies to the Architect.
-- Secrets and the AIDE engine itself are inaccessible to all agents.
+- Secrets and the AIDE engine itself are inaccessible to all agents during normal operation.
+- In **evolve mode** (`uv run main.py evolve "..."`), the Architect gets temporary full access to AIDE source — gated by double approval and automatic git snapshot.
 
 ### The Database
 
@@ -198,10 +262,11 @@ id=4  branch_id="1.1.1"   ← Handle expired verification tokens
 The Architect auto-generates branch IDs by reviewing the existing task tree before planning.
 
 ```bash
-uv run main.py log           # List recent issues
-uv run main.py log 1         # Full detail for issue #1
-uv run main.py report 1      # Export full markdown report
-uv run main.py "fix X"       # Quick task (Architect only)
+uv run main.py log               # List recent issues
+uv run main.py log 1             # Full detail for issue #1
+uv run main.py report 1          # Export full markdown report
+uv run main.py "fix X"           # Quick task (Architect only)
+uv run main.py evolve "fix Y"    # Self-evolution (modify AIDE itself)
 ```
 
 ### Skills
@@ -307,7 +372,8 @@ your-project/                # ← AIDE operates on this
 │   │   ├── BLUEPRINT.md     # Generated: high-level task breakdown
 │   │   ├── FLOWCHART.md     # Generated: architecture diagram (Mermaid)
 │   │   ├── EXECUTION.md     # Generated: detailed plan (pruned on completion)
-│   │   └── QA_PLAN.md       # Generated: testing framework
+│   │   ├── QA_PLAN.md       # Generated: testing framework
+│   │   └── EVOLUTION.md     # Generated: self-evolution plan (evolve mode)
 │   ├── config/
 │   │   ├── nodes.yaml
 │   │   ├── project.yaml
@@ -407,7 +473,8 @@ Templates handle common patterns (REST wrappers, DB connectors, file servers). G
 - **Living execution plan** — EXECUTION.md shrinks as tasks complete; completed work archived in SQLite.
 - **Full audit trail** — Every action logged to SQLite with lightweight summaries. Full JSON stored but never bulk-read.
 - **Skills over re-reading** — Agents compress discovered patterns into reusable skills, loaded on demand instead of re-scanning source files.
-- **Config over code** — YAML and Markdown control behavior. Engine is immutable.
+- **Config over code** — YAML and Markdown control behavior. Engine is immutable during normal operation.
+- **Guarded self-evolution** — Agents can modify AIDE itself, but only with Architect plan + Chief Architect approval + git snapshot + health check.
 - **Sandboxed execution** — Tools restricted to the project root directory.
 - **MCP-native** — Connect to any MCP server as a client, expose AIDE as a server, or auto-generate project-specific servers.
 

@@ -423,6 +423,132 @@ def architect_quick_task(instruction: str, project_context: str, issue_id: int):
     return result
 
 
+EVOLVE_PLAN_INSTRUCTION = (
+    "You are in **self-evolution mode**. You are modifying the AIDE framework itself.\n\n"
+    "The Chief Architect has given you an instruction to improve or change the AIDE engine.\n"
+    "You have full read access to AIDE's own source code.\n\n"
+    "Steps:\n"
+    "1. Use `file_read` and `search` to explore the AIDE codebase.\n"
+    "2. Understand the current architecture — modules, tools, permissions, engine, prompts, config.\n"
+    "3. Produce a structured **Evolution Plan** in Markdown:\n\n"
+    "```\n"
+    "# Evolution Plan\n\n"
+    "## Instruction\n"
+    "{the instruction}\n\n"
+    "## Analysis\n"
+    "{what you found in the codebase}\n\n"
+    "## Proposed Changes\n"
+    "- **file**: path — **change**: description\n"
+    "- ...\n\n"
+    "## Risk Assessment\n"
+    "{what could break, edge cases}\n\n"
+    "## Rollback\n"
+    "git revert HEAD\n"
+    "```\n\n"
+    "Return ONLY the Markdown plan, nothing else."
+)
+
+EVOLVE_EXECUTE_INSTRUCTION = (
+    "You are in **self-evolution mode** — executing an approved evolution plan.\n\n"
+    "The Chief Architect has reviewed and approved your plan. Now execute it.\n\n"
+    "Rules:\n"
+    "- Use `file_read` to read files before modifying them.\n"
+    "- Use `file_write` to make changes.\n"
+    "- Use `shell` only if you need to run commands (e.g. formatting, testing).\n"
+    "- Follow the approved plan precisely. Do not deviate.\n"
+    "- After all changes, provide a summary of what was modified.\n"
+)
+
+
+def architect_evolve(instruction: str, aide_context: str, issue_id: int) -> str:
+    """Exploration + plan phase of self-evolution. Returns the plan markdown.
+
+    Runs inside evolve_context() — AIDE/** blacklist is lifted for reads.
+    """
+    node_cfg = load_nodes_config().get("evolve", load_nodes_config().get("architect", {}))
+    llm = get_llm("architect")
+    system_prompt = load_prompt("architect")
+    store = Store()
+
+    aide_root_str = str(_AIDE_ROOT)
+    tool_names = ["file_read", "search"]
+    tools = get_tools_for_node(tool_names, aide_root_str, node_name="architect")
+    tool_map = {t.name: t for t in tools}
+    llm_with_tools = llm.bind_tools(tools)
+
+    parts = []
+    if aide_context:
+        parts.append(f"## AIDE Codebase Context\n{aide_context}")
+    parts.append(f"## Instruction\n{instruction}")
+    parts.append(EVOLVE_PLAN_INSTRUCTION)
+
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content="\n\n".join(parts)),
+    ]
+
+    print("[ARCHITECT] Exploring AIDE codebase for evolution plan...")
+    response, messages = _run_tool_loop(
+        llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS,
+    )
+    plan = _normalize_content(response.content)
+
+    _write_doc("EVOLUTION.md", plan)
+    store.log(issue_id, None, "architect", "evolve_plan_generated", {
+        "instruction": instruction[:300],
+    }, summary=f"Evolution plan: {instruction[:120]}")
+
+    print("[ARCHITECT] Evolution plan saved to doc/EVOLUTION.md")
+    return plan
+
+
+def architect_evolve_execute(
+    instruction: str, plan: str, aide_context: str, issue_id: int,
+) -> str:
+    """Execution phase of self-evolution. Applies the approved plan.
+
+    Runs inside evolve_context() — full AIDE read/write access.
+    """
+    node_cfg = load_nodes_config().get("evolve", load_nodes_config().get("architect", {}))
+    llm = get_llm("architect")
+    system_prompt = load_prompt("architect")
+    store = Store()
+
+    aide_root_str = str(_AIDE_ROOT)
+    tool_names = list(set(
+        node_cfg.get("tools", ["file_read", "search"]) + ["file_write", "shell"]
+    ))
+    tools = get_tools_for_node(tool_names, aide_root_str, node_name="architect")
+    tool_map = {t.name: t for t in tools}
+    llm_with_tools = llm.bind_tools(tools)
+
+    parts = [
+        f"## AIDE Codebase Context\n{aide_context}" if aide_context else "",
+        f"## Instruction\n{instruction}",
+        f"## Approved Evolution Plan\n{plan}",
+        EVOLVE_EXECUTE_INSTRUCTION,
+    ]
+    parts = [p for p in parts if p]
+
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content="\n\n".join(parts)),
+    ]
+
+    print("[ARCHITECT] Executing evolution plan...")
+    response, messages = _run_tool_loop(
+        llm_with_tools, messages, tool_map, 15,
+    )
+    result = _normalize_content(response.content)
+
+    store.log(issue_id, None, "architect", "evolve_executed", {
+        "instruction": instruction[:300],
+    }, summary=f"Executed evolution: {instruction[:120]}")
+
+    print("[ARCHITECT] Evolution execution complete.")
+    return result
+
+
 def architect_execution_plan(state: AgentState) -> dict:
     """Generate EXECUTION.md — detailed step-by-step plan for SWEs.
 

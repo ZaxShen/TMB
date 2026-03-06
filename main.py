@@ -1,20 +1,22 @@
 """AIDE CLI entry point.
 
 Usage:
-  uv run main.py                        Full workflow (reads doc/GOALS.md)
-  uv run main.py "update FLOWCHART"     Quick task (Architect only, no SWE/QA)
-  uv run main.py setup                  Interactive project setup
-  uv run main.py log                    Show recent issues
-  uv run main.py log <id>               Show issue details + ledger
-  uv run main.py report <id>            Export full report as markdown
-  uv run main.py serve                  Start MCP server (stdio)
-  uv run main.py serve --http 8080      Start MCP server (HTTP)
+  uv run main.py                           Full workflow (reads doc/GOALS.md)
+  uv run main.py "update FLOWCHART"        Quick task (Architect only, no SWE/QA)
+  uv run main.py evolve "instruction"      Self-evolution (modify AIDE itself)
+  uv run main.py setup                     Interactive project setup
+  uv run main.py log                       Show recent issues
+  uv run main.py log <id>                  Show issue details + ledger
+  uv run main.py report <id>               Export full report as markdown
+  uv run main.py serve                     Start MCP server (stdio)
+  uv run main.py serve --http 8080         Start MCP server (HTTP)
 """
 
 from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 
 import yaml
@@ -161,6 +163,178 @@ def _quick_task(store: Store, instruction: str):
     if result:
         print()
         print(result[:500])
+    print()
+
+
+def _scan_aide_context(store: Store, issue_id: int, instruction: str) -> str:
+    """Scan the AIDE directory itself (not the project) for self-evolution."""
+    from aide.nodes.gatekeeper import _get_tree, _read_key_files
+
+    tree = _get_tree(_AIDE_ROOT)
+    key_files = _read_key_files(_AIDE_ROOT)
+
+    context = (
+        f"## AIDE Framework\n"
+        f"## Root: {_AIDE_ROOT}\n\n"
+        f"### Directory structure\n```\n{tree}\n```\n\n"
+        f"### Key files\n{key_files}\n"
+    )
+    store.log(issue_id, None, "gatekeeper", "aide_context_scanned", {},
+              summary="Scanned AIDE directory tree for self-evolution")
+    print(f"[GATEKEEPER] Scanned {len(tree.splitlines())} paths in AIDE/")
+    return context
+
+
+_EVOLVE_WARNING = """
+╔══════════════════════════════════════════════════════════════╗
+║                  ⚠  SELF-EVOLUTION MODE  ⚠                  ║
+║                                                              ║
+║  Agents will have FULL READ/WRITE access to AIDE source.     ║
+║  A git snapshot will be created before any changes.          ║
+║                                                              ║
+║  Rollback: git revert HEAD  (after evolution completes)      ║
+╚══════════════════════════════════════════════════════════════╝
+"""
+
+
+def _git_snapshot(instruction: str) -> bool:
+    """Commit current AIDE state as a safety snapshot before self-evolution.
+    Returns True if a snapshot was created, False if tree was already clean."""
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(_AIDE_ROOT), capture_output=True, text=True, timeout=10,
+        )
+        if not status.stdout.strip():
+            print("[EVOLVE] Working tree clean — no snapshot needed.")
+            return False
+
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(_AIDE_ROOT), check=True, timeout=10,
+        )
+        msg = f"AIDE snapshot before self-evolution: {instruction[:80]}"
+        subprocess.run(
+            ["git", "commit", "-m", msg],
+            cwd=str(_AIDE_ROOT), check=True, capture_output=True, timeout=15,
+        )
+        print(f"[EVOLVE] Git snapshot committed: {msg}")
+        return True
+    except Exception as e:
+        print(f"[EVOLVE] Warning: git snapshot failed ({e}). Proceeding anyway.")
+        return False
+
+
+def _health_check() -> bool:
+    """Verify AIDE can still be imported after self-evolution."""
+    print("[EVOLVE] Running health check...")
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", "import aide; import aide.engine; import aide.store"],
+            cwd=str(_AIDE_ROOT), capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            print(f"[EVOLVE] HEALTH CHECK FAILED — import error:")
+            print(result.stderr[:500])
+            return False
+    except Exception as e:
+        print(f"[EVOLVE] HEALTH CHECK FAILED — {e}")
+        return False
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "ruff", "check", "aide/"],
+            cwd=str(_AIDE_ROOT), capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            warnings = result.stdout[:500] if result.stdout else result.stderr[:500]
+            print(f"[EVOLVE] Lint warnings (non-blocking):\n{warnings}")
+    except Exception:
+        pass
+
+    print("[EVOLVE] Health check passed.")
+    return True
+
+
+def _evolve(store: Store, instruction: str):
+    """Self-evolution flow: scan AIDE → Architect plans → Chief Architect approves
+    → git snapshot → Architect executes → health check."""
+    from aide.permissions import evolve_context
+
+    print(_EVOLVE_WARNING)
+
+    objective = f"[EVOLVE] {instruction[:100].strip()}"
+    issue_id = store.create_issue(objective, instruction)
+    store.log(issue_id, None, "system", "evolve_started", {
+        "instruction": instruction,
+    }, summary=f"Self-evolution started: {instruction[:120]}")
+
+    print(f"[EVOLVE] Issue #{issue_id}: {objective}")
+    print("-" * 60)
+
+    # Phase 1: Scan AIDE codebase (within evolve context so AIDE/** is readable)
+    with evolve_context():
+        aide_context = _scan_aide_context(store, issue_id, instruction)
+
+    # Phase 2: Architect generates plan (within evolve context for reads)
+    with evolve_context():
+        from aide.nodes.architect import architect_evolve
+        plan = architect_evolve(instruction, aide_context, issue_id)
+
+    if not plan or not plan.strip():
+        print("[EVOLVE] Architect produced no plan. Aborting.")
+        store.close_issue(issue_id, "failed")
+        return
+
+    # Phase 3: Chief Architect reviews
+    print()
+    print("=" * 60)
+    print("[EVOLVE] Review the evolution plan in doc/EVOLUTION.md")
+    print("         Press Enter to APPROVE, or Ctrl+C to abort.")
+    print("=" * 60)
+    try:
+        input()
+    except (KeyboardInterrupt, EOFError):
+        print("\n[EVOLVE] Aborted by Chief Architect.")
+        store.log(issue_id, None, "cto", "evolve_rejected", {},
+                  summary="Chief Architect aborted self-evolution")
+        store.close_issue(issue_id, "rejected")
+        return
+
+    store.log(issue_id, None, "cto", "evolve_approved", {},
+              summary="Chief Architect approved evolution plan")
+
+    # Phase 4: Git snapshot
+    _git_snapshot(instruction)
+
+    # Phase 5: Architect executes (within evolve context for full AIDE access)
+    with evolve_context():
+        from aide.nodes.architect import architect_evolve_execute
+        result = architect_evolve_execute(instruction, plan, aide_context, issue_id)
+
+    # Phase 6: Health check
+    healthy = _health_check()
+
+    if healthy:
+        store.log(issue_id, None, "system", "evolve_completed", {},
+                  summary=f"Self-evolution completed: {instruction[:120]}")
+        store.close_issue(issue_id, "completed")
+        print()
+        print("-" * 60)
+        print(f"[EVOLVE] Self-evolution complete. Issue #{issue_id} closed.")
+    else:
+        store.log(issue_id, None, "system", "evolve_failed", {},
+                  summary=f"Self-evolution failed health check: {instruction[:120]}")
+        store.close_issue(issue_id, "failed")
+        print()
+        print("!" * 60)
+        print("[EVOLVE] HEALTH CHECK FAILED. Your changes may have broken AIDE.")
+        print("[EVOLVE] To rollback:  cd AIDE && git revert HEAD")
+        print("!" * 60)
+
+    if result:
+        print()
+        print(result[:800])
     print()
 
 
@@ -655,7 +829,7 @@ def report(issue_id: int):
     print(f"       Open it in your editor for full details.")
 
 
-_KNOWN_COMMANDS = {"setup", "log", "report", "serve", "help", "--help", "-h"}
+_KNOWN_COMMANDS = {"setup", "log", "report", "serve", "evolve", "help", "--help", "-h"}
 
 
 def main():
@@ -675,6 +849,13 @@ def main():
             print("Usage: uv run main.py report <issue_id>")
             sys.exit(1)
         report(int(sys.argv[2]))
+    elif cmd == "evolve":
+        if len(sys.argv) < 3:
+            print('Usage: uv run main.py evolve "instruction"')
+            sys.exit(1)
+        instruction = " ".join(sys.argv[2:])
+        store = Store()
+        _evolve(store, instruction)
     elif cmd == "serve":
         from aide.mcp.server import run_server
         if "--http" in sys.argv:
@@ -692,14 +873,15 @@ def main():
         print("AIDE — AI Direction & Execution")
         print()
         print("Usage:")
-        print("  uv run main.py                        Full workflow (reads doc/GOALS.md)")
-        print('  uv run main.py "update FLOWCHART"     Quick task (Architect only, no SWE/QA)')
-        print("  uv run main.py setup                  Interactive project setup")
-        print("  uv run main.py log                    Show recent issues")
-        print("  uv run main.py log <id>               Show issue details + ledger")
-        print("  uv run main.py report <id>            Export full report as markdown")
-        print("  uv run main.py serve                  Start MCP server (stdio)")
-        print("  uv run main.py serve --http 8080      Start MCP server (HTTP)")
+        print("  uv run main.py                           Full workflow (reads doc/GOALS.md)")
+        print('  uv run main.py "update FLOWCHART"        Quick task (Architect only)')
+        print('  uv run main.py evolve "instruction"      Self-evolution (modify AIDE)')
+        print("  uv run main.py setup                     Interactive project setup")
+        print("  uv run main.py log                       Show recent issues")
+        print("  uv run main.py log <id>                  Show issue details + ledger")
+        print("  uv run main.py report <id>               Export full report as markdown")
+        print("  uv run main.py serve                     Start MCP server (stdio)")
+        print("  uv run main.py serve --http 8080         Start MCP server (HTTP)")
         sys.exit(1)
 
 

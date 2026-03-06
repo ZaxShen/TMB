@@ -26,3 +26,14 @@ validator:
     temperature: 0
   tools:
     - shell
+
+evolve:
+  model:
+    provider: anthropic
+    name: claude-opus-4-6
+    temperature: 0.3
+  tools:
+    - file_read
+    - file_write
+    - search
+    - shell

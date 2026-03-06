@@ -1,24 +1,52 @@
 """Permission enforcement for agent file access.
 
-Three layers:
+Four layers:
 
 1. AIDE write allowlist — agents may only write specific doc files
-   inside the AIDE directory.
+   inside the AIDE directory (bypassed in evolve mode).
 
 2. Project blacklist — agents can NEVER access paths matching patterns
    in config/project.yaml → blacklist[]. Applies to all nodes.
+   In evolve mode, the ``AIDE/**`` pattern is lifted while all other
+   patterns (secrets, .env, *.pem, etc.) remain enforced.
 
 3. Node-level access — certain AIDE docs are restricted to specific nodes.
    High-level docs (GOALS, DISCUSSION, BLUEPRINT, FLOWCHART) are architect-only.
    EXECUTION.md is readable by executor. QA_PLAN.md is readable by validator.
+
+4. Evolve context — a ``contextvars``-based toggle that temporarily lifts
+   the AIDE/** blacklist and write allowlist so the Architect can modify
+   any AIDE source file during a guarded self-evolution flow.
 """
 
 from __future__ import annotations
 
+import contextvars
+from contextlib import contextmanager
 from fnmatch import fnmatch
 from pathlib import Path
 
 from aide.config import _AIDE_ROOT, load_project_config
+
+
+# ── Evolve-mode context ─────────────────────────────────────
+
+_evolve_mode = contextvars.ContextVar("evolve_mode", default=False)
+
+
+@contextmanager
+def evolve_context():
+    """Temporarily lift the AIDE/** blacklist and write allowlist
+    for a guarded self-evolution session."""
+    token = _evolve_mode.set(True)
+    try:
+        yield
+    finally:
+        _evolve_mode.reset(token)
+
+
+def is_evolve_mode() -> bool:
+    return _evolve_mode.get()
 
 
 # ── AIDE internal write allowlist ───────────────────────────
@@ -29,11 +57,15 @@ _AIDE_WRITABLE = {
     _AIDE_ROOT / "doc" / "FLOWCHART.md",
     _AIDE_ROOT / "doc" / "EXECUTION.md",
     _AIDE_ROOT / "doc" / "QA_PLAN.md",
+    _AIDE_ROOT / "doc" / "EVOLUTION.md",
 }
 
 
 def assert_aide_write(path: Path):
-    """Raise if the path is not in the AIDE write allowlist."""
+    """Raise if the path is not in the AIDE write allowlist.
+    Bypassed entirely when evolve mode is active."""
+    if _evolve_mode.get():
+        return
     resolved = path.resolve()
     if resolved not in _AIDE_WRITABLE:
         raise PermissionError(
@@ -51,12 +83,16 @@ _NODE_RESTRICTED: dict[str, set[str]] = {
     "AIDE/doc/FLOWCHART.md": {"architect", "cto"},
     "AIDE/doc/EXECUTION.md": {"architect", "executor"},
     "AIDE/doc/QA_PLAN.md": {"architect", "validator"},
+    "AIDE/doc/EVOLUTION.md": {"architect"},
 }
 
 
 def assert_node_access(file_path: str, node_name: str):
     """Raise if this node is not allowed to access the file.
-    Only checks node-restricted paths — unrestricted paths pass through."""
+    Only checks node-restricted paths — unrestricted paths pass through.
+    Bypassed entirely when evolve mode is active."""
+    if _evolve_mode.get():
+        return
     normalized = file_path.lstrip("./")
     for restricted_path, allowed_nodes in _NODE_RESTRICTED.items():
         if normalized == restricted_path or normalized.endswith(restricted_path):
@@ -70,9 +106,15 @@ def assert_node_access(file_path: str, node_name: str):
 
 # ── Project blacklist ───────────────────────────────────────
 
+_AIDE_BLACKLIST_PATTERN = "AIDE/**"
+
+
 def _load_blacklist() -> list[str]:
     cfg = load_project_config()
-    return cfg.get("blacklist", [])
+    patterns = cfg.get("blacklist", [])
+    if _evolve_mode.get():
+        patterns = [p for p in patterns if p != _AIDE_BLACKLIST_PATTERN]
+    return patterns
 
 
 def is_blacklisted(file_path: str) -> bool:

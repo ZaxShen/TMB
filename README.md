@@ -17,11 +17,11 @@ Most AI coding tools treat every session as a blank slate. They dump your entire
 - A **Project Owner** (you) defines goals in plain language
 - A **Planner** (LLM) discusses requirements, explores the codebase with tools, produces a reviewable plan, and **validates** each task — before and after code is written
 - An **Executor** (LLM) executes atomic, scoped tasks — one module at a time, with detailed instructions
-- Everything is **logged to SQLite** — discussions, decisions, task results, verdicts. Run `uv run main.py report 12` six months later and see exactly what happened
+- Everything is **logged to SQLite** — discussions, decisions, task results, verdicts. Run `baymax report 12` six months later and see exactly what happened
 - The system **resumes from any interrupt** — Ctrl+C, crash, "I'll continue tomorrow." No wasted LLM calls, no repeated work
 - **Information firewalls** keep each agent focused — Executors see only their task and execution plan, not the full strategic context. This isn't security; it's attention management for LLMs
 
-> **Configurable roles** — by default Baymax uses generic names (Project Owner, Planner, Executor). Run `uv run main.py setup` to pick a preset like **IT Company** (Chief Architect → Architect → SWE) or define your own names. Role names flow into CLI output, SQLite logs, and agent prompts.
+> **Configurable roles** — by default Baymax uses generic names (Project Owner, Planner, Executor). Run `baymax setup` to pick a preset like **IT Company** (Chief Architect → Architect → SWE) or define your own names. Role names flow into CLI output, SQLite logs, and agent prompts.
 
 The result: maintainable, auditable software — not disposable demos.
 
@@ -43,25 +43,37 @@ git submodule add https://github.com/ZaxShen/Baymax.git
 # 2. Tell git to ignore Baymax's runtime files (one-time)
 git config submodule.Baymax.ignore dirty
 
-# 3. Setup
-cd Baymax
-uv sync
-uv run main.py setup    # creates your local config (gitignored)
+# 3. Install — creates a shared venv at your project root
+#    (setup will offer to create a pyproject.toml if you don't have one)
+uv run --directory Baymax baymax setup
 
 # 4. Write your goals, then run
-#    Edit doc/GOALS.md with what you want done
-uv run main.py
+#    Edit Baymax/doc/GOALS.md with what you want done
+uv run baymax
 ```
 
-To update Baymax later: `cd Baymax && git pull origin main`
+After setup your project looks like this:
+
+```
+your-project/
+├── .venv/              ← shared venv (Baymax deps + your deps)
+├── pyproject.toml      ← references Baymax as a path dependency
+├── Baymax/             ← submodule
+├── src/
+└── ...
+```
+
+All commands run from your **project root** — no more `cd Baymax`.
+
+To update Baymax later: `cd Baymax && git pull origin dev`
 
 **Cloning a project that already has Baymax as a submodule:**
 
 ```bash
 git clone --recurse-submodules <your-project-url>
-cd your-project/Baymax
+cd your-project
 uv sync
-uv run main.py setup
+uv run baymax setup
 ```
 
 ### Option B: Clone
@@ -71,10 +83,8 @@ If you don't need version tracking:
 ```bash
 cd your-project/
 git clone https://github.com/ZaxShen/Baymax.git
-cd Baymax
-uv sync
-uv run main.py setup
-uv run main.py
+uv run --directory Baymax baymax setup
+uv run baymax
 ```
 
 **How it stays clean** — Baymax ships tracked defaults (`config/*.default.yaml`). Running `setup` creates your local configs (`config/project.yaml`, etc.) which are gitignored. All runtime files (`doc/`, `baymax_history.db`, `.env`) are also gitignored. The submodule never appears dirty in your parent repo.
@@ -83,22 +93,22 @@ That's it. Baymax reads your goals, the Planner discusses them with you, builds 
 
 ### Quick Tasks
 
-For simple changes that don't need the full pipeline:
+For simple changes that don't need the full discussion step:
 
 ```bash
-uv run main.py "update our FLOWCHART based on current codebase"
-uv run main.py "add error handling to the login module"
+uv run baymax "update our FLOWCHART based on current codebase"
+uv run baymax "add error handling to the login module"
 ```
 
-The Planner handles these directly — reads the codebase, makes the changes, done. No discussion, no downstream agents. Still logged to SQLite.
+Same full pipeline (plan → execute → validate), just skips the interactive discussion and manual approval. Still logged to SQLite.
 
 ### Self-Evolution
 
 Baymax can modify its own source code through a guarded self-evolution mode:
 
 ```bash
-uv run main.py evolve "add a new CLI command to export tasks as CSV"
-uv run main.py evolve "update README.md to reflect the new auth module"
+uv run baymax evolve "add a new CLI command to export tasks as CSV"
+uv run baymax evolve "update README.md to reflect the new auth module"
 ```
 
 **Safety gates** — every evolution goes through:
@@ -119,7 +129,7 @@ If the health check fails, you get the exact rollback command. The `Baymax/**` b
 
 Baymax has three entry points:
 
-**Full workflow** (`uv run main.py`) — for complex, multi-step work:
+**Full workflow** (`baymax`) — for complex, multi-step work:
 
 ```
 Project Owner writes doc/GOALS.md
@@ -152,7 +162,7 @@ Project Owner writes doc/GOALS.md
          DONE
 ```
 
-**Quick task** (`uv run main.py "..."`) — for simple, self-contained changes:
+**Quick task** (`baymax "..."`) — same pipeline, no interactive steps:
 
 ```
 Project Owner passes instruction via CLI
@@ -162,16 +172,20 @@ Project Owner passes instruction via CLI
   │  Scan project     │
   └────────┬─────────┘
            ▼
-  ┌─── PLANNER ──────┐
-  │  Read codebase   │    Uses file_read, search, file_write
-  │  Make changes    │    No discussion, no blueprint, no downstream agents
-  │  Log result      │
-  └────────┬─────────┘
+  ┌─── PLANNING ──────┐
+  │  Blueprint (auto-  │    Same planning, auto-approved
+  │  approved)         │
+  └────────┬──────────┘
+           ▼
+  ┌─── EXECUTION ──────┐
+  │  Executor runs     │──→  Planner validates
+  │  task              │←──  PASS → next / FAIL → retry
+  └────────┬──────────┘
            ▼
          DONE
 ```
 
-**Self-evolution** (`uv run main.py evolve "..."`) — for modifying Baymax itself:
+**Self-evolution** (`baymax evolve "..."`) — for modifying Baymax itself:
 
 ```
 Project Owner passes instruction via CLI
@@ -259,7 +273,7 @@ All artifacts live in `Baymax/doc/`:
 - The Planner validates each task directly — it already holds the full project context (data schema, algorithm design, edge cases), so no re-learning is needed.
 - Executors can report implementation-vs-design discrepancies to the Planner.
 - Secrets and the Baymax engine itself are inaccessible to all agents during normal operation.
-- In **evolve mode** (`uv run main.py evolve "..."`), the Planner gets temporary full access to Baymax source — gated by double approval and automatic git snapshot.
+- In **evolve mode** (`baymax evolve "..."`), the Planner gets temporary full access to Baymax source — gated by double approval and automatic git snapshot.
 
 ### The Database
 
@@ -292,11 +306,11 @@ id=4  branch_id="1.1.1"   ← Handle expired verification tokens
 The Planner auto-generates branch IDs by reviewing the existing task tree before planning.
 
 ```bash
-uv run main.py log               # List recent issues
-uv run main.py log 1             # Full detail for issue #1
-uv run main.py report 1          # Export full markdown report
-uv run main.py "fix X"           # Quick task (Planner only)
-uv run main.py evolve "fix Y"    # Self-evolution (modify Baymax itself)
+baymax log               # List recent issues
+baymax log 1             # Full detail for issue #1
+baymax report 1          # Export full markdown report
+baymax "fix X"           # Quick task (full pipeline, no interactive steps)
+baymax evolve "fix Y"    # Self-evolution (modify Baymax itself)
 ```
 
 ### Skills
@@ -344,9 +358,15 @@ Baymax tries `<name>.yaml` first, falls back to `<name>.default.yaml`. You only 
 
 ```yaml
 name: my-project
-root_dir: ..                  # Your project root, relative to Baymax/
 test_command: pytest
 max_retry_per_task: 3
+
+# root_dir — auto-detected by default:
+#   `uv run baymax` from project root → uses CWD
+#   `cd Baymax && uv run main.py`     → uses parent of Baymax/
+# Uncomment to override:
+# root_dir: ..            # relative to Baymax/
+# root_dir: /abs/path     # absolute
 
 # Role display names — shown in CLI, logs, and SQLite.
 # roles:
@@ -378,10 +398,10 @@ executor:
 
 ### API Keys
 
-Set via `.env` (created by `setup`) or environment variables:
+Set via `.env` (created by `setup`) or environment variables. Baymax checks the project root first, then `Baymax/.env` as fallback:
 
 ```bash
-# Baymax/.env
+# your-project/.env  (recommended — shared with your project)
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
@@ -403,8 +423,11 @@ Prompts support template variables: `{role_owner}`, `{role_planner}`, `{role_exe
 ## Project Structure
 
 ```
-your-project/                # ← Baymax operates on this
-├── Baymax/                    # ← Framework lives here
+your-project/                # ← project root (run `uv run baymax` here)
+├── .venv/                   # ← shared venv (Baymax deps + your deps)
+├── pyproject.toml           # ← references Baymax as path dependency
+├── .env                     # ← API keys (gitignored)
+├── Baymax/                  # ← framework (submodule)
 │   ├── doc/
 │   │   ├── GOALS.md         # You write this
 │   │   ├── DISCUSSION.md    # Generated: Planner–Owner Q&A
@@ -425,15 +448,9 @@ your-project/                # ← Baymax operates on this
 │   │   └── samples/
 │   │       └── it-company/    # IT Company preset prompts
 │   ├── skills/              # Reusable knowledge artifacts
-│   │   ├── db-operations.md
-│   │   ├── branch-operations.md
-│   │   ├── file-access.md
-│   │   └── mcp-patterns.md
-│   ├── mcp_servers/         # Generated MCP servers (auto-scaffold)
-│   ├── baymax/                # Engine (don't edit)
-│   ├── main.py
-│   ├── baymax_history.db      # SQLite audit trail
-│   └── .env
+│   ├── baymax/              # Engine (don't edit)
+│   ├── main.py              # Backward-compat shim (prefer `baymax` CLI)
+│   └── baymax_history.db    # SQLite audit trail
 ├── src/
 └── ...
 ```
@@ -465,15 +482,15 @@ servers:
 
 MCP tools are auto-discovered at startup, converted to LangChain tools, and prefixed (`mcp_notion_search_pages`). The `agents` field controls per-node access — same permission model as built-in tools. Tool output goes through the blacklist scrubber.
 
-Run `uv run main.py setup` for an interactive wizard that configures common MCP servers.
+Run `baymax setup` for an interactive wizard that configures common MCP servers.
 
 ### Baymax as MCP Server
 
 Expose Baymax's store and workflow to external hosts (Claude Desktop, Cursor, etc.):
 
 ```bash
-uv run main.py serve              # stdio (for Claude Desktop / Cursor)
-uv run main.py serve --http 8080  # HTTP (for remote access)
+baymax serve              # stdio (for Claude Desktop / Cursor)
+baymax serve --http 8080  # HTTP (for remote access)
 ```
 
 **Exposed tools**: `baymax_list_issues`, `baymax_get_tasks`, `baymax_get_ledger`, `baymax_get_skills`, `baymax_query_branch`, `baymax_quick_task`, `baymax_export_report`
@@ -486,8 +503,8 @@ Add to Claude Desktop config:
   "mcpServers": {
     "baymax": {
       "command": "uv",
-      "args": ["run", "main.py", "serve"],
-      "cwd": "/path/to/project/Baymax"
+      "args": ["run", "baymax", "serve"],
+      "cwd": "/path/to/your-project"
     }
   }
 }

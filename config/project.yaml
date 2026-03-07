@@ -1,5 +1,4 @@
 name: yikyak
-root_dir: ..
 test_command: pytest
 max_retry_per_task: 3
 roles:

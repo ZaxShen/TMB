@@ -13,9 +13,12 @@ from dotenv import load_dotenv
 
 _BAYMAX_ROOT = Path(__file__).resolve().parent.parent
 
-# Load .env from Baymax root, then from parent project root (parent takes precedence)
+# Load .env: Baymax internal, parent dir, and CWD (last wins)
 load_dotenv(_BAYMAX_ROOT / ".env")
 load_dotenv(_BAYMAX_ROOT / ".." / ".env", override=True)
+_cwd_env = Path.cwd() / ".env"
+if _cwd_env.exists() and _cwd_env.resolve() != (_BAYMAX_ROOT / ".env").resolve():
+    load_dotenv(_cwd_env, override=True)
 
 
 _DEFAULT_ROLE_NAMES = {
@@ -101,10 +104,23 @@ def load_project_config() -> dict[str, Any]:
 
 
 def get_project_root() -> Path:
-    """Resolve the target project root relative to Baymax's own directory."""
+    """Resolve the target project root.
+
+    Resolution order:
+      1. ``root_dir`` in project.yaml (resolved relative to _BAYMAX_ROOT)
+      2. Auto-detect from CWD:
+         - If CWD is inside Baymax/, use Baymax's parent
+         - Otherwise use CWD (covers ``uv run baymax`` from project root)
+    """
     cfg = load_project_config()
-    raw = cfg.get("root_dir", "..")
-    return (_BAYMAX_ROOT / raw).resolve()
+    raw = cfg.get("root_dir", "")
+    if raw:
+        return (_BAYMAX_ROOT / raw).resolve()
+    cwd = Path.cwd().resolve()
+    baymax_resolved = _BAYMAX_ROOT.resolve()
+    if cwd == baymax_resolved or str(cwd).startswith(str(baymax_resolved) + os.sep):
+        return baymax_resolved.parent
+    return cwd
 
 
 def _resolve_env_vars(value: str) -> str:

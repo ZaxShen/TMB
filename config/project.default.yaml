@@ -1,7 +1,14 @@
 name: my-project
-root_dir: ..              # relative to Baymax/ directory — '..' means the parent project
 test_command: pytest
 max_retry_per_task: 3
+
+# root_dir — override the auto-detected project root.
+# Leave unset (recommended) for auto-detection:
+#   - `uv run baymax` from project root → uses CWD
+#   - `cd Baymax && uv run main.py`     → uses parent of Baymax/
+# Explicit examples:
+#   root_dir: ..            # relative to Baymax/ directory
+#   root_dir: /abs/path     # absolute path
 
 # Role display names — shown in CLI, logs, and SQLite.
 # Uncomment and customize to match your team's terminology.

@@ -15,6 +15,9 @@ dependencies = [
     "pandas>=3.0.1",
 ]
 
+[project.scripts]
+baymax = "baymax.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

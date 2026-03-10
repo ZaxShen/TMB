@@ -1,12 +1,14 @@
 """SQLite audit store — full workflow history.
 
 Tables:
-  issues       — Project Owner objectives (from doc/GOALS.md)
-  discussions  — Planner–Owner Q&A exchanges (kept permanently, doc/DISCUSSION.md is overwritten)
-  tasks        — Blueprint items assigned to Executor
-  ledger       — Append-only log of every agent action
-
-Write boundary: agents may ONLY write to doc/DISCUSSION.md, doc/BLUEPRINT.md, and this DB.
+  issues          — Project Owner objectives
+  discussions     — Planner–Owner Q&A exchanges (permanent; doc file is overwritten)
+  tasks           — Blueprint items assigned to Executor
+  ledger          — Append-only log of every agent action
+  skills          — Curated + agent-created skill metadata
+  skill_requests  — Unfulfilled skill requests
+  token_usage     — Per-invocation token counts
+  file_registry   — Persistent map of discovered project files (zero-rescan upgrades)
 """
 
 from __future__ import annotations
@@ -16,9 +18,6 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
-
-_DB_NAME = "baymax_history.db"
 
 def _split_task_description(desc: str) -> tuple[str, str]:
     """Split a task description into a short title and the full body."""
@@ -35,8 +34,10 @@ def _now() -> str:
 class Store:
     def __init__(self, db_path: str | Path | None = None):
         if db_path is None:
-            from baymax.config import _BAYMAX_ROOT
-            db_path = _BAYMAX_ROOT / _DB_NAME
+            from baymax.paths import db_path as _default_db_path
+            db_path = _default_db_path()
+        db_path = Path(db_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -134,6 +135,17 @@ class Store:
                 output_tokens   INTEGER NOT NULL DEFAULT 0,
                 created_at      TEXT    NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS file_registry (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                rel_path        TEXT    NOT NULL UNIQUE,
+                file_type       TEXT    NOT NULL DEFAULT 'unknown',
+                size_bytes      INTEGER NOT NULL DEFAULT 0,
+                last_hash       TEXT    NOT NULL DEFAULT '',
+                discovered_at   TEXT    NOT NULL,
+                updated_at      TEXT    NOT NULL,
+                meta            TEXT    NOT NULL DEFAULT '{}'
+            );
         """)
         self._migrate()
 
@@ -218,13 +230,12 @@ class Store:
     }
 
     def _seed_skills(self):
-        """Register built-in skill files if not already in DB."""
-        from baymax.config import _BAYMAX_ROOT
-        skills_dir = _BAYMAX_ROOT / "skills"
-        if not skills_dir.is_dir():
+        """Register built-in skill files from Baymax/skills/ if not already in DB."""
+        from baymax.paths import SEED_SKILLS_DIR, BAYMAX_ROOT
+        if not SEED_SKILLS_DIR.is_dir():
             return
         existing = {r["name"] for r in self.get_all_skills(include_inactive=True)}
-        for md in sorted(skills_dir.glob("*.md")):
+        for md in sorted(SEED_SKILLS_DIR.glob("*.md")):
             name = md.stem
             if name in existing:
                 continue
@@ -238,7 +249,7 @@ class Store:
             self.create_skill(
                 name=name,
                 description=desc or name,
-                file_path=str(md.relative_to(_BAYMAX_ROOT)),
+                file_path=str(md.relative_to(BAYMAX_ROOT)),
                 created_by="system",
                 tags=["built-in"],
                 when_to_use=applicability.get("when_to_use", ""),
@@ -320,7 +331,7 @@ class Store:
         return [dict(r) for r in rows]
 
     def export_discussion_md(self, issue_id: int) -> str:
-        """Export current discussion as Markdown. This overwrites doc/DISCUSSION.md
+        """Export current discussion as Markdown. This overwrites baymax-docs/DISCUSSION.md
         each time — previous discussions are preserved only in the DB."""
         issue = self.get_issue(issue_id)
         discussions = self.get_discussions(issue_id)
@@ -328,7 +339,7 @@ class Store:
             f"# Discussion — Issue #{issue_id}",
             "",
             f"> This file reflects the **current** discussion only.",
-            f"> Previous discussions are preserved in `baymax_history.db`.",
+            f"> Previous discussions are preserved in the database.",
             "",
             f"**Objective**: {issue['objective']}",
             f"**Date**: {issue['created_at']}",
@@ -794,6 +805,50 @@ class Store:
             "UPDATE skill_requests SET status = ?, resolved_skill = ?, "
             "resolution_note = ?, resolved_at = ? WHERE id = ?",
             (status, resolved_skill, resolution_note, _now(), request_id),
+        )
+        self._conn.commit()
+
+    # ── File registry ────────────────────────────────────────
+
+    def upsert_file(self, rel_path: str, file_type: str = "unknown",
+                    size_bytes: int = 0, last_hash: str = "",
+                    meta: dict | None = None):
+        """Insert or update a project file entry (zero-rescan upgrades)."""
+        now = _now()
+        meta_json = json.dumps(meta or {})
+        self._conn.execute(
+            "INSERT INTO file_registry (rel_path, file_type, size_bytes, last_hash, "
+            "discovered_at, updated_at, meta) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(rel_path) DO UPDATE SET "
+            "file_type=excluded.file_type, size_bytes=excluded.size_bytes, "
+            "last_hash=excluded.last_hash, updated_at=excluded.updated_at, "
+            "meta=excluded.meta",
+            (rel_path, file_type, size_bytes, last_hash, now, now, meta_json),
+        )
+        self._conn.commit()
+
+    def get_file(self, rel_path: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM file_registry WHERE rel_path = ?", (rel_path,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_files_by_type(self, file_type: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM file_registry WHERE file_type = ? ORDER BY rel_path",
+            (file_type,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_all_files(self) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM file_registry ORDER BY rel_path"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def remove_file(self, rel_path: str):
+        self._conn.execute(
+            "DELETE FROM file_registry WHERE rel_path = ?", (rel_path,)
         )
         self._conn.commit()
 

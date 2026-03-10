@@ -11,7 +11,7 @@ import json
 
 from mcp.server.fastmcp import FastMCP
 
-from baymax.config import _BAYMAX_ROOT
+from baymax.paths import docs_dir
 from baymax.store import Store
 
 
@@ -173,8 +173,8 @@ def resource_skills() -> str:
 
 @mcp.resource("baymax://blueprint")
 def resource_blueprint() -> str:
-    """Current doc/BLUEPRINT.md content."""
-    path = _BAYMAX_ROOT / "doc" / "BLUEPRINT.md"
+    """Current BLUEPRINT.md content from baymax-docs/."""
+    path = docs_dir() / "BLUEPRINT.md"
     if path.exists():
         return path.read_text()
     return "No blueprint found."

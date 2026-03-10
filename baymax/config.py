@@ -10,14 +10,15 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
+from baymax.paths import BAYMAX_ROOT, DEFAULT_CFG_DIR, PROMPTS_DIR
 
-_BAYMAX_ROOT = Path(__file__).resolve().parent.parent
+_BAYMAX_ROOT = BAYMAX_ROOT  # backward compat alias
 
-# Load .env: Baymax internal, parent dir, and CWD (last wins)
-load_dotenv(_BAYMAX_ROOT / ".env")
-load_dotenv(_BAYMAX_ROOT / ".." / ".env", override=True)
+# Load .env: project root CWD wins over Baymax/
+load_dotenv(BAYMAX_ROOT / ".env")           # legacy fallback
+load_dotenv(BAYMAX_ROOT / ".." / ".env", override=True)
 _cwd_env = Path.cwd() / ".env"
-if _cwd_env.exists() and _cwd_env.resolve() != (_BAYMAX_ROOT / ".env").resolve():
+if _cwd_env.exists() and _cwd_env.resolve() != (BAYMAX_ROOT / ".env").resolve():
     load_dotenv(_cwd_env, override=True)
 
 
@@ -50,18 +51,23 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 
 def _config_path(name: str) -> Path:
-    """Resolve a config file with fallback to .default.yaml.
+    """Resolve a config file with three-layer fallback.
 
-    Tries ``config/<name>.yaml`` first (user-created, gitignored),
-    then ``config/<name>.default.yaml`` (tracked).
+    1. .baymax/config/<name>.yaml   (project-level user overrides)
+    2. Baymax/config/<name>.yaml    (legacy user overrides inside framework)
+    3. Baymax/config/<name>.default.yaml  (tracked defaults)
     """
-    user = _BAYMAX_ROOT / "config" / f"{name}.yaml"
+    from baymax.paths import user_cfg_dir
+    project_override = user_cfg_dir() / f"{name}.yaml"
+    if project_override.exists():
+        return project_override
+    user = DEFAULT_CFG_DIR / f"{name}.yaml"
     if user.exists():
         return user
-    default = _BAYMAX_ROOT / "config" / f"{name}.default.yaml"
+    default = DEFAULT_CFG_DIR / f"{name}.default.yaml"
     if default.exists():
         return default
-    return user  # will raise FileNotFoundError with a clear path
+    return user
 
 
 def load_prompt(name: str) -> str:
@@ -80,12 +86,12 @@ def load_prompt(name: str) -> str:
 
     path = None
     if preset:
-        preset_path = _BAYMAX_ROOT / "prompts" / "samples" / preset / f"{name}.md"
+        preset_path = PROMPTS_DIR / "samples" / preset / f"{name}.md"
         if preset_path.exists():
             path = preset_path
 
     if path is None:
-        path = _BAYMAX_ROOT / "prompts" / f"{name}.md"
+        path = PROMPTS_DIR / f"{name}.md"
 
     text = path.read_text()
 
@@ -107,7 +113,7 @@ def get_project_root() -> Path:
     """Resolve the target project root.
 
     Resolution order:
-      1. ``root_dir`` in project.yaml (resolved relative to _BAYMAX_ROOT)
+      1. ``root_dir`` in project.yaml (resolved relative to BAYMAX_ROOT)
       2. Auto-detect from CWD:
          - If CWD is inside Baymax/, use Baymax's parent
          - Otherwise use CWD (covers ``uv run baymax`` from project root)
@@ -115,9 +121,9 @@ def get_project_root() -> Path:
     cfg = load_project_config()
     raw = cfg.get("root_dir", "")
     if raw:
-        return (_BAYMAX_ROOT / raw).resolve()
+        return (BAYMAX_ROOT / raw).resolve()
     cwd = Path.cwd().resolve()
-    baymax_resolved = _BAYMAX_ROOT.resolve()
+    baymax_resolved = BAYMAX_ROOT.resolve()
     if cwd == baymax_resolved or str(cwd).startswith(str(baymax_resolved) + os.sep):
         return baymax_resolved.parent
     return cwd

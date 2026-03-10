@@ -6,7 +6,8 @@ import json
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from baymax.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, _BAYMAX_ROOT, extract_token_usage
+from baymax.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, extract_token_usage
+from baymax.paths import BAYMAX_ROOT, user_skills_dir
 from baymax.state import AgentState
 from baymax.store import Store
 from baymax.tools import get_tools_for_node
@@ -31,6 +32,17 @@ def _normalize_content(content) -> str:
     return str(content)
 
 
+def _resolve_skill_path(file_path: str):
+    """Resolve a skill file path, checking seed dir then user dir."""
+    p = BAYMAX_ROOT / file_path
+    if p.exists():
+        return p
+    p = user_skills_dir() / file_path.replace("skills/", "", 1)
+    if p.exists():
+        return p
+    return None
+
+
 def _load_skills(store: Store, skill_names: list[str]) -> str:
     """Load skill file contents for the given names, return combined text."""
     if not skill_names:
@@ -38,9 +50,9 @@ def _load_skills(store: Store, skill_names: list[str]) -> str:
     skills = store.get_skills_by_names(skill_names)
     parts = []
     for s in skills:
-        skill_path = _BAYMAX_ROOT / s["file_path"]
-        if skill_path.exists():
-            parts.append(skill_path.read_text().strip())
+        resolved = _resolve_skill_path(s["file_path"])
+        if resolved:
+            parts.append(resolved.read_text().strip())
     return "\n\n---\n\n".join(parts)
 
 

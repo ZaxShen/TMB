@@ -9,23 +9,31 @@
 Baymax enforces three layers of access control:
 
 1. **Global blacklist** — files no agent can ever access (`.env`, secrets, `Baymax/**` internals)
-2. **Baymax write allowlist** — only these Baymax-managed files can be written by any agent:
-   - `doc/DISCUSSION.md`, `doc/BLUEPRINT.md`, `doc/FLOWCHART.md`
-   - `doc/EXECUTION.md`, `doc/QA_PLAN.md`
-   - `baymax_history.db`
+2. **Docs write allowlist** — only these user-facing files in `baymax-docs/` can be written by agents:
+   - `DISCUSSION.md`, `BLUEPRINT.md`, `FLOWCHART.md`
+   - `EXECUTION.md`, `QA_PLAN.md`, `EVOLUTION.md`
 3. **Node-specific restrictions** — certain doc files are restricted to specific agents
 
 ## Who Can Access What
 
 | File | Planner | Executor | Validator |
 |---|---|---|---|
-| `doc/GOALS.md` | read | — | — |
-| `doc/DISCUSSION.md` | read/write | — | — |
-| `doc/BLUEPRINT.md` | read/write | — | — |
-| `doc/FLOWCHART.md` | read/write | — | — |
-| `doc/EXECUTION.md` | read/write | read | read |
-| `doc/QA_PLAN.md` | read/write | — | read |
+| `baymax-docs/GOALS.md` | read | — | — |
+| `baymax-docs/DISCUSSION.md` | read/write | — | — |
+| `baymax-docs/BLUEPRINT.md` | read/write | — | — |
+| `baymax-docs/FLOWCHART.md` | read/write | — | — |
+| `baymax-docs/EXECUTION.md` | read/write | read | read |
+| `baymax-docs/QA_PLAN.md` | read/write | — | read |
+| `.baymax/baymax.db` | read/write | read/write | read/write |
 | Project source files | read | read/write | read |
+
+## Directory Layout
+
+```
+baymax-docs/     ← user-facing docs (GOALS, BLUEPRINT, etc.)
+.baymax/         ← hidden runtime state (DB, config overrides, agent-created skills)
+Baymax/          ← framework submodule (immutable during normal operation)
+```
 
 ## Rules
 

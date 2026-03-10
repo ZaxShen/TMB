@@ -2,15 +2,15 @@
 
 Four layers:
 
-1. Baymax write allowlist — agents may only write specific doc files
-   inside the Baymax directory (bypassed in evolve mode).
+1. Docs write allowlist — agents may only write specific files inside
+   the baymax-docs/ directory (bypassed in evolve mode).
 
 2. Project blacklist — agents can NEVER access paths matching patterns
    in config/project.yaml → blacklist[]. Applies to all nodes.
    In evolve mode, the ``Baymax/**`` pattern is lifted while all other
    patterns (secrets, .env, *.pem, etc.) remain enforced.
 
-3. Node-level access — certain Baymax docs are restricted to specific nodes.
+3. Node-level access — certain docs are restricted to specific nodes.
    High-level docs (GOALS, DISCUSSION, BLUEPRINT, FLOWCHART) are planner-only.
    EXECUTION.md is readable by executor. QA_PLAN.md is readable by validator.
 
@@ -26,7 +26,8 @@ from contextlib import contextmanager
 from fnmatch import fnmatch
 from pathlib import Path
 
-from baymax.config import _BAYMAX_ROOT, load_project_config
+from baymax.config import load_project_config
+from baymax.paths import BAYMAX_ROOT, docs_dir
 
 
 # ── Evolve-mode context ─────────────────────────────────────
@@ -49,59 +50,60 @@ def is_evolve_mode() -> bool:
     return _evolve_mode.get()
 
 
-# ── Baymax internal write allowlist ───────────────────────────
+# ── Docs write allowlist ─────────────────────────────────────
 
-_BAYMAX_WRITABLE = {
-    _BAYMAX_ROOT / "doc" / "DISCUSSION.md",
-    _BAYMAX_ROOT / "doc" / "BLUEPRINT.md",
-    _BAYMAX_ROOT / "doc" / "FLOWCHART.md",
-    _BAYMAX_ROOT / "doc" / "EXECUTION.md",
-    _BAYMAX_ROOT / "doc" / "QA_PLAN.md",
-    _BAYMAX_ROOT / "doc" / "EVOLUTION.md",
+_WRITABLE_DOC_NAMES = {
+    "DISCUSSION.md",
+    "BLUEPRINT.md",
+    "FLOWCHART.md",
+    "EXECUTION.md",
+    "QA_PLAN.md",
+    "EVOLUTION.md",
 }
 
 
 def assert_baymax_write(path: Path):
-    """Raise if the path is not in the Baymax write allowlist.
+    """Raise if the path is not in the docs write allowlist.
     Bypassed entirely when evolve mode is active."""
     if _evolve_mode.get():
         return
     resolved = path.resolve()
-    if resolved not in _BAYMAX_WRITABLE:
-        raise PermissionError(
-            f"Write blocked: {path} is not in the Baymax write allowlist. "
-            f"Allowed: {', '.join(str(p.relative_to(_BAYMAX_ROOT)) for p in _BAYMAX_WRITABLE)}"
-        )
+    dd = docs_dir().resolve()
+    if resolved.parent == dd and resolved.name in _WRITABLE_DOC_NAMES:
+        return
+    raise PermissionError(
+        f"Write blocked: {path} is not in the docs write allowlist. "
+        f"Allowed: {', '.join(_WRITABLE_DOC_NAMES)}"
+    )
 
 
 # ── Node-level access control ──────────────────────────────
 
-_NODE_RESTRICTED: dict[str, set[str]] = {
-    "Baymax/doc/GOALS.md": {"planner", "gatekeeper"},
-    "Baymax/doc/DISCUSSION.md": {"planner"},
-    "Baymax/doc/BLUEPRINT.md": {"planner", "owner"},
-    "Baymax/doc/FLOWCHART.md": {"planner", "owner"},
-    "Baymax/doc/EXECUTION.md": {"planner", "executor"},
-    "Baymax/doc/QA_PLAN.md": {"planner"},
-    "Baymax/doc/EVOLUTION.md": {"planner"},
+_NODE_RESTRICTED_NAMES: dict[str, set[str]] = {
+    "GOALS.md": {"planner", "gatekeeper"},
+    "DISCUSSION.md": {"planner"},
+    "BLUEPRINT.md": {"planner", "owner"},
+    "FLOWCHART.md": {"planner", "owner"},
+    "EXECUTION.md": {"planner", "executor"},
+    "QA_PLAN.md": {"planner"},
+    "EVOLUTION.md": {"planner"},
 }
 
 
 def assert_node_access(file_path: str, node_name: str):
     """Raise if this node is not allowed to access the file.
-    Only checks node-restricted paths — unrestricted paths pass through.
+    Only checks node-restricted doc names — unrestricted paths pass through.
     Bypassed entirely when evolve mode is active."""
     if _evolve_mode.get():
         return
-    normalized = file_path.lstrip("./")
-    for restricted_path, allowed_nodes in _NODE_RESTRICTED.items():
-        if normalized == restricted_path or normalized.endswith(restricted_path):
-            if node_name not in allowed_nodes:
-                raise PermissionError(
-                    f"Access denied: '{file_path}' is restricted to {allowed_nodes}. "
-                    f"Node '{node_name}' cannot access this file."
-                )
-            return
+    fname = Path(file_path).name
+    allowed_nodes = _NODE_RESTRICTED_NAMES.get(fname)
+    if allowed_nodes is not None:
+        if node_name not in allowed_nodes:
+            raise PermissionError(
+                f"Access denied: '{file_path}' is restricted to {allowed_nodes}. "
+                f"Node '{node_name}' cannot access this file."
+            )
 
 
 # ── Project blacklist ───────────────────────────────────────

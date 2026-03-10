@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from langchain_core.tools import tool
 
-from baymax.config import _BAYMAX_ROOT
+from baymax.paths import BAYMAX_ROOT, user_skills_dir
 from baymax.store import Store
 
 
@@ -29,10 +29,11 @@ def create_skill_tool(creator_node: str = "planner"):
             when_not_to_use: When this skill should NOT be used
         """
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
-        file_path = f"skills/{name}.md"
-        full_path = _BAYMAX_ROOT / file_path
-        full_path.parent.mkdir(parents=True, exist_ok=True)
+        skills_dir = user_skills_dir()
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        full_path = skills_dir / f"{name}.md"
         full_path.write_text(content)
+        file_path = f"skills/{name}.md"
 
         store = Store()
         existing = store.get_skill(name)
@@ -76,7 +77,9 @@ def create_skill_request_tool(requester_node: str = "executor"):
         matches = store.search_skills(need)
         if matches:
             best = matches[0]
-            skill_path = _BAYMAX_ROOT / best["file_path"]
+            skill_path = BAYMAX_ROOT / best["file_path"]
+            if not skill_path.exists():
+                skill_path = user_skills_dir() / best["file_path"].replace("skills/", "", 1)
             content_preview = ""
             if skill_path.exists():
                 raw = skill_path.read_text()

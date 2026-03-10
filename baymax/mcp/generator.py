@@ -11,7 +11,7 @@ import textwrap
 import yaml
 from langchain_core.tools import tool
 
-from baymax.config import _BAYMAX_ROOT
+from baymax.paths import BAYMAX_ROOT, runtime_dir, user_cfg_dir
 
 _TEMPLATES = {
     "rest_api": textwrap.dedent('''\
@@ -220,7 +220,7 @@ def generate_mcp_server(
     if template not in _TEMPLATES:
         raise ValueError(f"Unknown template: {template}. Available: {list(_TEMPLATES.keys())}")
 
-    server_dir = _BAYMAX_ROOT / "mcp_servers" / name
+    server_dir = runtime_dir() / "mcp_servers" / name
     server_dir.mkdir(parents=True, exist_ok=True)
 
     content = _TEMPLATES[template].format(name=name, **kwargs)
@@ -234,7 +234,7 @@ def generate_mcp_server(
 
 def _register_in_config(name: str, server_path: str):
     """Add a generated server to config/mcp.yaml."""
-    config_path = _BAYMAX_ROOT / "config" / "mcp.yaml"
+    config_path = user_cfg_dir() / "mcp.yaml"
     if config_path.exists():
         raw = yaml.safe_load(config_path.read_text()) or {}
     else:

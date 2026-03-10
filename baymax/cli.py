@@ -1,7 +1,7 @@
 """Baymax CLI entry point.
 
 Usage:
-  baymax                               Full workflow (reads doc/GOALS.md)
+  baymax                               Full workflow (reads baymax-docs/GOALS.md)
   baymax "update FLOWCHART"            Quick task (full pipeline, no interactive steps)
   baymax evolve "instruction"          Self-evolution (modify Baymax itself)
   baymax setup                         Interactive project setup
@@ -21,7 +21,8 @@ import sys
 
 import yaml
 
-from baymax.config import _BAYMAX_ROOT, load_project_config, get_project_root, get_role_name
+from baymax.config import load_project_config, get_project_root, get_role_name
+from baymax.paths import BAYMAX_ROOT, docs_dir, runtime_dir, user_cfg_dir, ensure_dirs
 from baymax.store import Store
 
 
@@ -29,8 +30,8 @@ from baymax.store import Store
 
 
 def _read_goals_md() -> str:
-    """Read and clean doc/GOALS.md, stripping template boilerplate."""
-    goals_path = _BAYMAX_ROOT / "doc" / "GOALS.md"
+    """Read and clean GOALS.md from baymax-docs/, stripping template boilerplate."""
+    goals_path = docs_dir() / "GOALS.md"
     if not goals_path.exists():
         goals_path.parent.mkdir(parents=True, exist_ok=True)
         goals_path.write_text(
@@ -52,7 +53,7 @@ def _read_goals_md() -> str:
     ).strip()
 
     if not goals_md:
-        print("[Baymax] doc/GOALS.md is empty or still has the template.")
+        print(f"[Baymax] {goals_path} is empty or still has the template.")
         print("       Write your goals there, then run again.")
         sys.exit(1)
 
@@ -68,7 +69,7 @@ def _derive_objective(goals_md: str) -> str:
         and not line.startswith("--")
         and not line.startswith("<!--")
     ]
-    return lines[0][:120] if lines else "Goals from doc/GOALS.md"
+    return lines[0][:120] if lines else "Goals from GOALS.md"
 
 
 def _scan_project_context(store: Store, issue_id: int, goals_md: str) -> str:
@@ -115,7 +116,7 @@ def _tasks_to_blueprint(tasks: list[dict]) -> list[dict]:
 def _show_blueprint(tasks: list[dict]):
     print()
     planner_display = get_role_name("planner").upper()
-    print(f"[{planner_display}] Blueprint ({len(tasks)} tasks) — see doc/BLUEPRINT.md")
+    print(f"[{planner_display}] Blueprint ({len(tasks)} tasks) — see baymax-docs/BLUEPRINT.md")
     for t in tasks:
         bid = t.get("branch_id") or t.get("task_id", "?")
         label = t.get("title") or t["description"][:80]
@@ -202,12 +203,12 @@ def _scan_baymax_context(store: Store, issue_id: int, instruction: str) -> str:
     """Scan the Baymax directory itself (not the project) for self-evolution."""
     from baymax.nodes.gatekeeper import _get_tree, _read_key_files
 
-    tree = _get_tree(_BAYMAX_ROOT)
-    key_files = _read_key_files(_BAYMAX_ROOT)
+    tree = _get_tree(BAYMAX_ROOT)
+    key_files = _read_key_files(BAYMAX_ROOT)
 
     context = (
         f"## Baymax Framework\n"
-        f"## Root: {_BAYMAX_ROOT}\n\n"
+        f"## Root: {BAYMAX_ROOT}\n\n"
         f"### Directory structure\n```\n{tree}\n```\n\n"
         f"### Key files\n{key_files}\n"
     )
@@ -235,7 +236,7 @@ def _git_snapshot(instruction: str) -> bool:
     try:
         status = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=str(_BAYMAX_ROOT), capture_output=True, text=True, timeout=10,
+            cwd=str(BAYMAX_ROOT), capture_output=True, text=True, timeout=10,
         )
         if not status.stdout.strip():
             print("[EVOLVE] Working tree clean — no snapshot needed.")
@@ -243,12 +244,12 @@ def _git_snapshot(instruction: str) -> bool:
 
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(_BAYMAX_ROOT), check=True, timeout=10,
+            cwd=str(BAYMAX_ROOT), check=True, timeout=10,
         )
         msg = f"Baymax snapshot before self-evolution: {instruction[:80]}"
         subprocess.run(
             ["git", "commit", "-m", msg],
-            cwd=str(_BAYMAX_ROOT), check=True, capture_output=True, timeout=15,
+            cwd=str(BAYMAX_ROOT), check=True, capture_output=True, timeout=15,
         )
         print(f"[EVOLVE] Git snapshot committed: {msg}")
         return True
@@ -263,7 +264,7 @@ def _health_check() -> bool:
     try:
         result = subprocess.run(
             [sys.executable, "-c", "import baymax; import baymax.engine; import baymax.store"],
-            cwd=str(_BAYMAX_ROOT), capture_output=True, text=True, timeout=30,
+            cwd=str(BAYMAX_ROOT), capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
             print(f"[EVOLVE] HEALTH CHECK FAILED — import error:")
@@ -276,7 +277,7 @@ def _health_check() -> bool:
     try:
         result = subprocess.run(
             [sys.executable, "-m", "ruff", "check", "baymax/"],
-            cwd=str(_BAYMAX_ROOT), capture_output=True, text=True, timeout=30,
+            cwd=str(BAYMAX_ROOT), capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
             warnings = result.stdout[:500] if result.stdout else result.stderr[:500]
@@ -407,7 +408,7 @@ def _finalize_issue(store: Store, issue_id: int):
     print("-" * 40)
     store.print_summary(issue_id)
     _print_token_summary(store, issue_id)
-    print("[Baymax] See doc/ for DISCUSSION, BLUEPRINT, FLOWCHART, and EXECUTION.")
+    print(f"[Baymax] See {docs_dir().name}/ for DISCUSSION, BLUEPRINT, FLOWCHART, and EXECUTION.")
 
 
 def _run_execution_plan(
@@ -518,7 +519,7 @@ def _fresh_start(store: Store):
         sys.exit(1)
 
     _show_blueprint(blueprint)
-    print("[Baymax] Review doc/BLUEPRINT.md and doc/FLOWCHART.md")
+    print(f"[Baymax] Review {docs_dir().name}/BLUEPRINT.md and {docs_dir().name}/FLOWCHART.md")
     print()
 
     if not _approve_blueprint(store, issue_id):
@@ -643,13 +644,14 @@ def _resume(store: Store, issue: dict):
 
 
 def setup():
-    """Interactive setup — writes config/project.yaml and .env."""
+    """Interactive setup — writes .baymax/config/project.yaml and .env."""
     from pathlib import Path
 
     print("[Baymax] Setup")
     print("=" * 40)
     print()
 
+    ensure_dirs()
     project_root = get_project_root()
     detected_name = project_root.name
 
@@ -685,16 +687,15 @@ def setup():
     if roles_cfg:
         config["roles"] = roles_cfg
 
-    config_path = _BAYMAX_ROOT / "config" / "project.yaml"
+    config_path = user_cfg_dir() / "project.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(config_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
     print(f"  Wrote {config_path}")
 
-    doc_dir = _BAYMAX_ROOT / "doc"
-    goals_path = doc_dir / "GOALS.md"
+    goals_path = docs_dir() / "GOALS.md"
     if not goals_path.exists():
-        doc_dir.mkdir(parents=True, exist_ok=True)
+        goals_path.parent.mkdir(parents=True, exist_ok=True)
         goals_path.write_text(
             "# Goals\n\n"
             "Write your goals below. The Planner will read this file and discuss with you.\n\n"
@@ -786,7 +787,8 @@ def setup():
                     new_env_lines.append(f"SLACK_BOT_TOKEN={token}")
 
         if mcp_servers:
-            mcp_config_path = _BAYMAX_ROOT / "config" / "mcp.yaml"
+            mcp_config_path = user_cfg_dir() / "mcp.yaml"
+            mcp_config_path.parent.mkdir(parents=True, exist_ok=True)
             mcp_data = yaml.safe_load(mcp_config_path.read_text()) if mcp_config_path.exists() else {}
             existing_servers = mcp_data.get("servers") or {}
             existing_servers.update(mcp_servers)
@@ -806,7 +808,7 @@ def setup():
         print("No pyproject.toml found at project root.")
         create = input("  Create one with Baymax as a dependency? (yes/no) [yes]: ").strip().lower()
         if create in ("", "yes", "y"):
-            baymax_rel = _BAYMAX_ROOT.resolve().relative_to(project_root.resolve())
+            baymax_rel = BAYMAX_ROOT.resolve().relative_to(project_root.resolve())
             toml_content = (
                 f'[project]\nname = "{name}"\nversion = "0.1.0"\n'
                 f'requires-python = ">=3.13"\n'
@@ -823,13 +825,15 @@ def setup():
 
     print()
     print("[Baymax] Setup complete.")
-    print("  1. Write your goals in Baymax/doc/GOALS.md")
+    dd = docs_dir().name
+    print(f"  1. Write your goals in {dd}/GOALS.md")
     print("  2. Run: uv run baymax")
     print()
 
 
 def run():
     """Phase-aware entry point: resumes an open issue or starts fresh."""
+    ensure_dirs()
     store = Store()
     existing = store.get_open_issue()
 
@@ -892,7 +896,7 @@ def report(issue_id: int):
     store = Store()
     md = store.export_report_md(issue_id)
 
-    report_path = _BAYMAX_ROOT / "doc" / f"REPORT-{issue_id}.md"
+    report_path = docs_dir() / f"REPORT-{issue_id}.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(md)
     print(f"[Baymax] Report written to {report_path}")
@@ -943,7 +947,7 @@ def main():
         print("Baymax — AI Direction & Execution")
         print()
         print("Usage:")
-        print("  baymax                               Full workflow (reads doc/GOALS.md)")
+        print("  baymax                               Full workflow (reads baymax-docs/GOALS.md)")
         print('  baymax "update FLOWCHART"             Quick task (full pipeline)')
         print('  baymax evolve "instruction"           Self-evolution (modify Baymax)')
         print("  baymax setup                          Interactive project setup")

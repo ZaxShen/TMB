@@ -1,25 +1,25 @@
 """Discussion node — file-based Planner–Owner Q&A before blueprint creation.
 
 Flow:
-  1. Planner writes questions to doc/DISCUSSION.md with an answer section
+  1. Planner writes questions to baymax-docs/DISCUSSION.md with an answer section
   2. Terminal prompts the Project Owner to edit the file, then press Enter
   3. System reads the answer from below a marker in the file
   4. Repeat until Planner says READY TO BUILD
 
-The discussion is stored in SQLite (permanent) and doc/DISCUSSION.md (current).
+The discussion is stored in SQLite (permanent) and baymax-docs/DISCUSSION.md (current).
 """
 
 from __future__ import annotations
 
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
-from baymax.config import get_llm, get_role_name, get_project_root, load_nodes_config, _BAYMAX_ROOT, extract_token_usage
-from baymax.permissions import assert_baymax_write
+from baymax.config import get_llm, get_role_name, get_project_root, load_nodes_config, extract_token_usage
+from baymax.paths import docs_dir
 from baymax.store import Store
 from baymax.tools import get_tools_for_node
 
 
-_DISCUSSION_SYSTEM = """You are a {role_planner}. The {role_owner} has written goals in doc/GOALS.md.
+_DISCUSSION_SYSTEM = """You are a {role_planner}. The {role_owner} has written goals in baymax-docs/GOALS.md.
 Your job is to discuss these goals with the {role_owner} to clarify requirements before building a blueprint.
 
 You have access to `file_inspect` and `search` tools. BEFORE asking the {role_owner} any question,
@@ -44,7 +44,7 @@ _ANSWER_MARKER = "---ANSWER-BELOW---"
 def _write_discussion_file(
     path, store: Store, issue_id: int, *, waiting_for_answer: bool
 ):
-    """Write doc/DISCUSSION.md with conversation history and optional answer section."""
+    """Write baymax-docs/DISCUSSION.md with conversation history and optional answer section."""
     issue = store.get_issue(issue_id)
     discussions = store.get_discussions(issue_id)
     planner_display = get_role_name("planner")
@@ -84,7 +84,6 @@ def _write_discussion_file(
             "",
         ]
 
-    assert_baymax_write(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines))
 
@@ -163,7 +162,7 @@ def _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum: d
 def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: int) -> str:
     """File-based discussion loop. Returns the full discussion as a string."""
     llm = get_llm("planner")
-    discussion_path = _BAYMAX_ROOT / "doc" / "DISCUSSION.md"
+    discussion_path = docs_dir() / "DISCUSSION.md"
     planner_display = get_role_name("planner")
     owner_display = get_role_name("owner")
 
@@ -247,7 +246,8 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
                 print()
                 print("-" * 40)
                 print("[DISCUSSION] Requirements aligned. Proceeding to blueprint.")
-                print(f"[Baymax] Discussion saved to doc/DISCUSSION.md")
+                dd = docs_dir().name
+                print(f"[Baymax] Discussion saved to {dd}/DISCUSSION.md")
                 break
         else:
             needs_owner_input = False
@@ -257,7 +257,7 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
         )
 
         print()
-        print("[DISCUSSION] Edit your answers in doc/DISCUSSION.md")
+        print(f"[DISCUSSION] Edit your answers in {docs_dir().name}/DISCUSSION.md")
         input("[DISCUSSION] Press Enter when done...")
 
         owner_answer = _read_owner_answer(discussion_path)

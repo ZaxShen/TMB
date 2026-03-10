@@ -13,8 +13,8 @@ import re
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from baymax.config import get_llm, load_prompt, load_nodes_config, load_project_config, get_project_root, get_role_name, _BAYMAX_ROOT, extract_token_usage
-from baymax.permissions import assert_baymax_write
+from baymax.config import get_llm, load_prompt, load_nodes_config, load_project_config, get_project_root, get_role_name, extract_token_usage
+from baymax.paths import BAYMAX_ROOT, docs_dir, SEED_SKILLS_DIR, user_skills_dir
 from baymax.state import AgentState
 from baymax.store import Store
 from baymax.tools import get_tools_for_node
@@ -34,10 +34,9 @@ def _normalize_content(content) -> str:
 
 
 def _write_doc(name: str, content: str):
-    doc_dir = _BAYMAX_ROOT / "doc"
-    doc_dir.mkdir(parents=True, exist_ok=True)
-    path = doc_dir / name
-    assert_baymax_write(path)
+    dd = docs_dir()
+    dd.mkdir(parents=True, exist_ok=True)
+    path = dd / name
     path.write_text(content)
 
 
@@ -427,8 +426,8 @@ def planner_plan(state: AgentState) -> dict:
                 f"**Created by**: {ps['created_by']}\n"
                 f"**Tags**: {ps.get('tags', '[]')}\n\n"
             )
-            skill_path = _BAYMAX_ROOT / ps.get("file_path", "")
-            if skill_path.exists():
+            skill_path = _resolve_skill_path(ps.get("file_path", ""))
+            if skill_path:
                 content = skill_path.read_text()
                 if len(content) > 3000:
                     content = content[:3000] + "\n... (truncated)"
@@ -542,7 +541,7 @@ def planner_plan(state: AgentState) -> dict:
 
     blueprint_md = store.export_blueprint_md(issue_id, blueprint)
     _write_doc("BLUEPRINT.md", blueprint_md)
-    print(f"[{planner_display}] Blueprint saved to doc/BLUEPRINT.md ({len(blueprint)} tasks)")
+    print(f"[{planner_display}] Blueprint saved to {docs_dir().name}/BLUEPRINT.md ({len(blueprint)} tasks)")
 
     # ── 2. Generate Flowchart ────────────────────────────────
     if not blueprint:
@@ -588,7 +587,7 @@ def planner_plan(state: AgentState) -> dict:
     _write_doc("FLOWCHART.md", flowchart_md)
     store.log(issue_id, None, "planner", "flowchart_generated", {},
              summary="Generated FLOWCHART.md")
-    print(f"[{planner_display}] Flowchart saved to doc/FLOWCHART.md")
+    print(f"[{planner_display}] Flowchart saved to {docs_dir().name}/FLOWCHART.md")
 
     print(f"[{planner_display}] Planning complete: {len(blueprint)} tasks")
     store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
@@ -709,7 +708,7 @@ def planner_evolve(instruction: str, baymax_context: str, issue_id: int) -> str:
     system_prompt = load_prompt("planner")
     store = Store()
 
-    baymax_root_str = str(_BAYMAX_ROOT)
+    baymax_root_str = str(BAYMAX_ROOT)
     tool_names = ["file_read", "search"]
     tools = get_tools_for_node(tool_names, baymax_root_str, node_name="planner")
     tool_map = {t.name: t for t in tools}
@@ -741,7 +740,7 @@ def planner_evolve(instruction: str, baymax_context: str, issue_id: int) -> str:
         "instruction": instruction[:300],
     }, summary=f"Evolution plan: {instruction[:120]}")
 
-    print(f"[{planner_display}] Evolution plan saved to doc/EVOLUTION.md")
+    print(f"[{planner_display}] Evolution plan saved to {docs_dir().name}/EVOLUTION.md")
     return plan
 
 
@@ -757,7 +756,7 @@ def planner_evolve_execute(
     system_prompt = load_prompt("planner")
     store = Store()
 
-    baymax_root_str = str(_BAYMAX_ROOT)
+    baymax_root_str = str(BAYMAX_ROOT)
     tool_names = list(set(
         node_cfg.get("tools", ["file_read", "search"]) + ["file_write", "shell"]
     ))
@@ -890,7 +889,7 @@ def planner_execution_plan(state: AgentState) -> dict:
     store.log(issue_id, None, "planner", "execution_plan_generated", {
         "task_count": total,
     }, summary=f"Generated per-task execution plans for {total} tasks")
-    print(f"[{planner_display}] Execution plans stored in DB. Summary at doc/EXECUTION.md")
+    print(f"[{planner_display}] Execution plans stored in DB. Summary at {docs_dir().name}/EXECUTION.md")
 
     return {
         "messages": state.get("messages", []) + ([last_response] if last_response else []),
@@ -936,6 +935,17 @@ def _extract_verdict(text: str) -> bool:
     return False
 
 
+def _resolve_skill_path(file_path: str):
+    """Resolve a skill file path, checking seed dir then user dir."""
+    p = BAYMAX_ROOT / file_path
+    if p.exists():
+        return p
+    p = user_skills_dir() / file_path.replace("skills/", "", 1)
+    if p.exists():
+        return p
+    return None
+
+
 def _load_skills(store: Store, skill_names: list[str]) -> str:
     """Load skill file contents for the given names, return combined text."""
     if not skill_names:
@@ -943,9 +953,9 @@ def _load_skills(store: Store, skill_names: list[str]) -> str:
     skills = store.get_skills_by_names(skill_names)
     parts = []
     for s in skills:
-        skill_path = _BAYMAX_ROOT / s["file_path"]
-        if skill_path.exists():
-            parts.append(skill_path.read_text().strip())
+        resolved = _resolve_skill_path(s["file_path"])
+        if resolved:
+            parts.append(resolved.read_text().strip())
     return "\n\n---\n\n".join(parts)
 
 

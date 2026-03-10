@@ -7,7 +7,8 @@ import re
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from baymax.config import get_llm, load_prompt, load_project_config, load_nodes_config, get_project_root, get_role_name, _BAYMAX_ROOT
+from baymax.config import get_llm, load_prompt, load_project_config, load_nodes_config, get_project_root, get_role_name
+from baymax.paths import BAYMAX_ROOT, docs_dir, user_skills_dir
 from baymax.state import AgentState
 from baymax.store import Store
 from baymax.tools import get_tools_for_node
@@ -62,11 +63,22 @@ def _extract_verdict(text: str) -> bool:
 
 
 def _read_qa_plan() -> str:
-    """Read doc/QA_PLAN.md if it exists."""
-    path = _BAYMAX_ROOT / "doc" / "QA_PLAN.md"
+    """Read QA_PLAN.md from baymax-docs/ if it exists."""
+    path = docs_dir() / "QA_PLAN.md"
     if path.exists():
         return path.read_text()
     return ""
+
+
+def _resolve_skill_path(file_path: str):
+    """Resolve a skill file path, checking seed dir then user dir."""
+    p = BAYMAX_ROOT / file_path
+    if p.exists():
+        return p
+    p = user_skills_dir() / file_path.replace("skills/", "", 1)
+    if p.exists():
+        return p
+    return None
 
 
 def _load_skills(store: Store, skill_names: list[str]) -> str:
@@ -76,9 +88,9 @@ def _load_skills(store: Store, skill_names: list[str]) -> str:
     skills = store.get_skills_by_names(skill_names)
     parts = []
     for s in skills:
-        skill_path = _BAYMAX_ROOT / s["file_path"]
-        if skill_path.exists():
-            parts.append(skill_path.read_text().strip())
+        resolved = _resolve_skill_path(s["file_path"])
+        if resolved:
+            parts.append(resolved.read_text().strip())
     return "\n\n---\n\n".join(parts)
 
 

@@ -22,18 +22,21 @@ build/
 *.swo
 *~
 
-# Runtime data
+# Runtime data (now lives in .baymax/ at project root)
 *.db
 *.db-shm
 *.db-wal
 *.db-journal
+
+# Legacy doc/ — docs now live at project root baymax-docs/
 doc/
 
-# User config — created by `setup`, not tracked.
+# User config — now lives in .baymax/config/ at project root.
 # Defaults ship as *.default.yaml (tracked).
 config/project.yaml
 config/nodes.yaml
 config/mcp.yaml
 
-# Generated MCP servers
+# Legacy remnants
 mcp_servers/
+uv.lock

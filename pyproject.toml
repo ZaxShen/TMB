@@ -24,6 +24,10 @@ mistral = ["langchain-mistralai>=1.0"]
 deepseek = ["langchain-deepseek>=0.1"]
 ollama  = ["langchain-ollama>=0.3"]
 all     = ["baymax[google,groq,mistral,deepseek,ollama]"]
+dev     = ["pytest>=8.0", "pytest-cov>=5.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [project.scripts]
 baymax = "baymax.cli:main"

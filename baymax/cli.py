@@ -730,6 +730,24 @@ def setup():
         else:
             print("  Skipped .env — set your API key before running.")
 
+    # ── Web Search ────────────────────────────────────────────
+    print()
+    print("=== Web Search ===")
+    print()
+    print("  Baymax can search the web during planning.")
+    print("  Tavily (tavily.com) gives the best results — free tier: 1000 searches/month.")
+    print("  Without a key, DuckDuckGo is used as a free fallback.")
+    print()
+    tavily_key = input("  TAVILY_API_KEY (Enter to skip): ").strip()
+    if tavily_key:
+        existing_env = env_path.read_text() if env_path.exists() else ""
+        if "TAVILY_API_KEY" not in existing_env:
+            with open(env_path, "a") as f:
+                f.write(f"\nTAVILY_API_KEY={tavily_key}\n")
+            print("  Added Tavily key to .env")
+    else:
+        print("  Skipped — DuckDuckGo fallback will be used for web search.")
+
     # ── MCP Connections ──────────────────────────────────────
     print()
     print("=== MCP Connections (optional) ===")

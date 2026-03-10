@@ -6,6 +6,7 @@ planner:
   tools:
     - file_inspect
     - search
+    - web_search
     - skill_create
 
 executor:

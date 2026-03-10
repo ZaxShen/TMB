@@ -36,7 +36,7 @@ When the Planner has enough clarity, it produces a plan for your review. Approve
 
 Everything else happens automatically:
 - `baymax-docs/BLUEPRINT.md` — the task breakdown (generated for your review)
-- `baymax-docs/FLOWCHART.md` — architecture diagram (generated)
+- `baymax-docs/FLOWCHART.md` — project architecture overview (generated when needed)
 - `baymax-docs/EXECUTION.md` — execution summary (generated)
 
 You can interrupt at any time (Ctrl+C, close your laptop). Run `uv run baymax` again and it picks up exactly where it left off.
@@ -45,7 +45,7 @@ You can interrupt at any time (Ctrl+C, close your laptop). Run `uv run baymax` a
 
 ## Setup
 
-**Prerequisites**: [uv](https://docs.astral.sh/uv/) and an API key (Anthropic or OpenAI).
+**Prerequisites**: [uv](https://docs.astral.sh/uv/) and an LLM API key (Anthropic, OpenAI, Google, Groq, Mistral, DeepSeek — or Ollama for local models).
 
 ```bash
 cd your-project/
@@ -101,7 +101,7 @@ You answer in DISCUSSION.md, press Enter
 (repeat until Planner says "READY TO BUILD")
        |
        v
-Planner produces BLUEPRINT.md + FLOWCHART.md
+Planner produces BLUEPRINT.md (+ FLOWCHART.md if needed)
        |
        v
 You review and approve

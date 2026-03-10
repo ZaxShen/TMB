@@ -40,7 +40,7 @@ Project Owner writes baymax-docs/GOALS.md
            v
   +--- PLANNING ------+
   |  Planner writes:  |    BLUEPRINT.md  -- task breakdown
-  |  2 documents      |    FLOWCHART.md  -- architecture diagram (max 12 nodes)
+  |  1-2 documents    |    FLOWCHART.md  -- project architecture (when needed)
   +--------+----------+
            v
     Project Owner reviews & approves
@@ -100,7 +100,7 @@ All user-facing artifacts live in `baymax-docs/` at the project root:
 | `GOALS.md` | Owner (you) | Planner | What you want done — plain language |
 | `DISCUSSION.md` | System | Owner, Planner | Planner–Owner Q&A transcript |
 | `BLUEPRINT.md` | Planner | Owner | Task breakdown as JSON |
-| `FLOWCHART.md` | Planner | Owner | Architecture diagram (Mermaid, max 12 nodes) |
+| `FLOWCHART.md` | Planner | Owner | Project architecture overview (Mermaid, max 12 nodes, generated when needed) |
 | `EXECUTION.md` | Planner | Owner | Per-task plan summary (full plans in SQLite) |
 | `EVOLUTION.md` | Planner | Owner | Self-evolution plan (evolve mode only) |
 
@@ -316,7 +316,7 @@ your-project/                    # <- project root (run `uv run baymax` here)
 |   |-- GOALS.md                 #    You write this
 |   |-- DISCUSSION.md            #    Generated: Planner-Owner Q&A
 |   |-- BLUEPRINT.md             #    Generated: task breakdown
-|   |-- FLOWCHART.md             #    Generated: architecture diagram (Mermaid)
+|   |-- FLOWCHART.md             #    Generated when needed: project architecture overview
 |   |-- EXECUTION.md             #    Generated: per-task plan summary
 |   +-- EVOLUTION.md             #    Generated: self-evolution plan
 |

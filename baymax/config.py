@@ -26,7 +26,6 @@ _DEFAULT_ROLE_NAMES = {
     "owner": "Project Owner",
     "planner": "Planner",
     "executor": "Executor",
-    "validator": "Validator",
 }
 
 

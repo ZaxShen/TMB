@@ -1,9 +1,9 @@
 """Planner nodes — planning, validation, and execution plan generation.
 
 Graph nodes:
-  planner_plan          — explores codebase, generates BLUEPRINT.md + FLOWCHART.md
+  planner_plan           — explores codebase, generates BLUEPRINT.md (+ optional FLOWCHART.md)
   planner_execution_plan — generates per-task execution plans in SQLite (after approval)
-  planner_validate       — validates executor output against success criteria
+  planner_validate       — validates executor output, may update FLOWCHART.md on architectural changes
 """
 
 from __future__ import annotations
@@ -199,25 +199,134 @@ BLUEPRINT_INSTRUCTION = (
 )
 
 FLOWCHART_INSTRUCTION = (
-    "Based on the blueprint, produce a **whiteboard-level** diagram in Mermaid syntax.\n\n"
+    "Produce a **high-level architecture diagram** of the user's project in Mermaid syntax.\n\n"
+    "## Purpose\n"
+    "This diagram helps the user (and their team) understand the project at a glance.\n"
+    "If they show it to their boss, the boss should get the big picture in 30 seconds.\n\n"
     "## Hard Constraints\n"
     "- **Max 12 nodes.** If you need more, you're too detailed.\n"
     "- Use `flowchart TD`.\n"
-    "- Each node = one **decision, algorithm, or transformation**.\n"
-    "- Edges = data flow or control flow between those steps.\n\n"
-    "## OMIT (these are obvious and waste space)\n"
-    "- File I/O (read CSV, write output, open file)\n"
-    "- Imports, installs, setup, teardown\n"
-    "- Error handling boxes\n"
-    "- Per-field details (don't list every column)\n\n"
-    "## INCLUDE (the things a human cares about)\n"
-    "- Core algorithm steps (matching, filtering, scoring)\n"
-    "- Decision points (if/else logic that matters)\n"
-    "- Data transformations (grouping, aggregation, joins)\n"
-    "- Validation checkpoints\n\n"
-    "Think: 5-minute whiteboard sketch for a colleague.\n\n"
+    "- Each node = a **component, data source, module, or key algorithm** in the project.\n"
+    "- Edges = data flow or dependencies between components.\n\n"
+    "## INCLUDE (what a stakeholder cares about)\n"
+    "- Major modules / services and how they connect\n"
+    "- Data sources (databases, APIs, files) and where data flows\n"
+    "- Core algorithms or processing stages\n"
+    "- Key outputs (reports, APIs, files)\n\n"
+    "## DO NOT INCLUDE\n"
+    "- Baymax's own workflow (planning steps, task sequence, validation)\n"
+    "- Implementation details (file I/O, imports, error handling)\n"
+    "- Per-field or per-column details\n"
+    "- Setup, install, or teardown steps\n\n"
+    "Think: project architecture poster on the team wall.\n\n"
     "Return ONLY the Mermaid code block (```mermaid ... ```), no other text."
 )
+
+
+FLOWCHART_NEEDED_INSTRUCTION = (
+    "Based on the goals and blueprint, does this project have meaningful architecture "
+    "worth diagramming for the user? Answer with ONLY 'yes' or 'no'.\n\n"
+    "Say 'yes' if: multiple components, data pipelines, algorithms, or services.\n"
+    "Say 'no' if: single script, simple task, documentation-only, or no real architecture.\n"
+)
+
+def _maybe_generate_flowchart(
+    llm, system_prompt, objective, blueprint,
+    exploration_summary, issue_id, store, token_accum, planner_display,
+    *, force: bool = False,
+):
+    """Ask the Planner whether a flowchart is warranted, then generate if yes."""
+    if not force:
+        decide_parts = [
+            f"## Goals\n{objective}",
+            f"## Blueprint ({len(blueprint)} tasks)\n```json\n{json.dumps(blueprint[:5], indent=2)}\n```",
+            FLOWCHART_NEEDED_INSTRUCTION,
+        ]
+        decide_resp = llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content="\n\n".join(decide_parts)),
+        ])
+        usage = extract_token_usage(decide_resp)
+        token_accum["input_tokens"] += usage["input_tokens"]
+        token_accum["output_tokens"] += usage["output_tokens"]
+        answer = _normalize_content(decide_resp.content).strip().lower()
+
+        if "no" in answer and "yes" not in answer:
+            store.log(issue_id, None, "planner", "flowchart_skipped", {},
+                      summary="Planner decided flowchart not needed")
+            print(f"[{planner_display}] Flowchart skipped (simple project).")
+            return
+
+    print(f"[{planner_display}] Generating project architecture flowchart...")
+    fc_parts = [
+        f"## Goals\n{objective}",
+        f"## Blueprint\n```json\n{json.dumps(blueprint, indent=2)}\n```",
+    ]
+    if exploration_summary:
+        fc_parts.append(f"## Codebase Understanding\n{exploration_summary}")
+    fc_parts.append(FLOWCHART_INSTRUCTION)
+
+    fc_messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content="\n\n".join(fc_parts)),
+    ]
+    fc_response = llm.invoke(fc_messages)
+    usage = extract_token_usage(fc_response)
+    token_accum["input_tokens"] += usage["input_tokens"]
+    token_accum["output_tokens"] += usage["output_tokens"]
+    fc_raw = _normalize_content(fc_response.content)
+
+    if "mermaid" not in fc_raw.lower() and len(fc_raw) < 200:
+        print(f"[{planner_display}] Flowchart too short, retrying...")
+        fc_response = llm.invoke(fc_messages)
+        usage = extract_token_usage(fc_response)
+        token_accum["input_tokens"] += usage["input_tokens"]
+        token_accum["output_tokens"] += usage["output_tokens"]
+        fc_raw = _normalize_content(fc_response.content)
+
+    flowchart_md = (
+        f"# Project Architecture — Issue #{issue_id}\n\n"
+        f"**Objective**: {objective[:120]}\n\n"
+        f"{fc_raw}\n"
+    )
+    _write_doc("FLOWCHART.md", flowchart_md)
+    store.log(issue_id, None, "planner", "flowchart_generated", {},
+              summary="Generated FLOWCHART.md (project architecture)")
+    print(f"[{planner_display}] Flowchart saved to {docs_dir().name}/FLOWCHART.md")
+
+
+def _maybe_update_flowchart_after_task(
+    llm, system_prompt, state, task, verdict_text,
+    issue_id, store, planner_display,
+):
+    """After a PASS, check if the completed task changed architecture enough to update the flowchart."""
+    check_prompt = (
+        f"Task [{task['branch_id']}] just passed validation.\n"
+        f"Description: {task.get('description', '')[:200]}\n"
+        f"Verdict: {verdict_text[:300]}\n\n"
+        "Did this task introduce a **significant architectural change** to the project "
+        "(new module, changed data flow, restructured pipeline, new service)?\n"
+        "Answer ONLY 'yes' or 'no'."
+    )
+    resp = llm.invoke([
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=check_prompt),
+    ])
+    answer = _normalize_content(resp.content).strip().lower()
+
+    if "yes" in answer and "no" not in answer:
+        print(f"[{planner_display}] Significant change detected — updating flowchart...")
+        token_accum = {"input_tokens": 0, "output_tokens": 0}
+        _maybe_generate_flowchart(
+            llm, system_prompt,
+            state.get("objective", ""),
+            state.get("blueprint", []),
+            state.get("project_context", ""),
+            issue_id, store, token_accum, planner_display,
+            force=True,
+        )
+        store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
+
 
 def _per_task_exec_instruction():
     return (
@@ -543,7 +652,7 @@ def planner_plan(state: AgentState) -> dict:
     _write_doc("BLUEPRINT.md", blueprint_md)
     print(f"[{planner_display}] Blueprint saved to {docs_dir().name}/BLUEPRINT.md ({len(blueprint)} tasks)")
 
-    # ── 2. Generate Flowchart ────────────────────────────────
+    # ── 2. Conditionally Generate Flowchart ─────────────────
     if not blueprint:
         print(f"[{planner_display}] No blueprint was generated.")
         store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
@@ -553,41 +662,10 @@ def planner_plan(state: AgentState) -> dict:
             "review_feedback": "Blueprint was empty — planner should retry.",
         }
 
-    print(f"[{planner_display}] Generating flowchart...")
-    fc_parts = [
-        f"## Blueprint\n```json\n{json.dumps(blueprint, indent=2)}\n```",
-        f"## Goals\n{objective}",
-    ]
-    if exploration_summary:
-        fc_parts.append(f"## Codebase Understanding\n{exploration_summary}")
-    fc_parts.append(FLOWCHART_INSTRUCTION)
-
-    fc_messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content="\n\n".join(fc_parts)),
-    ]
-    fc_response = llm.invoke(fc_messages)
-    usage = extract_token_usage(fc_response)
-    token_accum["input_tokens"] += usage["input_tokens"]
-    token_accum["output_tokens"] += usage["output_tokens"]
-    fc_raw = _normalize_content(fc_response.content)
-    if "mermaid" not in fc_raw.lower() and len(fc_raw) < 200:
-        print(f"[{planner_display}] Flowchart too short, retrying...")
-        fc_response = llm.invoke(fc_messages)
-        usage = extract_token_usage(fc_response)
-        token_accum["input_tokens"] += usage["input_tokens"]
-        token_accum["output_tokens"] += usage["output_tokens"]
-        fc_raw = _normalize_content(fc_response.content)
-
-    flowchart_md = (
-        f"# Flowchart — Issue #{issue_id}\n\n"
-        f"**Objective**: {objective[:120]}\n\n"
-        f"{fc_raw}\n"
+    _maybe_generate_flowchart(
+        llm, system_prompt, objective, blueprint,
+        exploration_summary, issue_id, store, token_accum, planner_display,
     )
-    _write_doc("FLOWCHART.md", flowchart_md)
-    store.log(issue_id, None, "planner", "flowchart_generated", {},
-             summary="Generated FLOWCHART.md")
-    print(f"[{planner_display}] Flowchart saved to {docs_dir().name}/FLOWCHART.md")
 
     print(f"[{planner_display}] Planning complete: {len(blueprint)} tasks")
     store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
@@ -617,7 +695,7 @@ def _quick_task_instruction():
 
 
 def planner_quick_task(instruction: str, project_context: str, issue_id: int):
-    """Planner handles a simple task directly — no graph, no executor, no validator."""
+    """Planner handles a simple task directly — no graph, no executor."""
     node_cfg = load_nodes_config().get("planner", {})
     project_root = str(get_project_root())
     llm = get_llm("planner")
@@ -897,11 +975,11 @@ def planner_execution_plan(state: AgentState) -> dict:
     }
 
 
-# ── Validation helpers (migrated from validator.py) ───────────
+# ── Validation helpers ────────────────────────────────────────
 
 
 def _extract_verdict(text: str) -> bool:
-    """Determine PASS/FAIL from validator output.
+    """Determine PASS/FAIL from validation output.
 
     Strategy (in priority order):
       1. Parse JSON block and read the "verdict" field
@@ -1062,6 +1140,12 @@ def planner_validate(state: AgentState) -> dict:
         }, summary=f"PASS: [{branch_id}]")
 
         print(f"[{planner_display}] [{branch_id}] — PASS")
+
+        if store.has_event(issue_id, "flowchart_generated"):
+            _maybe_update_flowchart_after_task(
+                llm, system_prompt, state, task, verdict_text,
+                issue_id, store, planner_display,
+            )
 
         if is_done:
             print(f"\n[{planner_display}] All {total} tasks passed.")

@@ -12,7 +12,7 @@ Four layers:
 
 3. Node-level access — certain docs are restricted to specific nodes.
    High-level docs (GOALS, DISCUSSION, BLUEPRINT, FLOWCHART) are planner-only.
-   EXECUTION.md is readable by executor. QA_PLAN.md is readable by validator.
+   EXECUTION.md is readable by executor.
 
 4. Evolve context — a ``contextvars``-based toggle that temporarily lifts
    the Baymax/** blacklist and write allowlist so the Planner can modify
@@ -57,7 +57,6 @@ _WRITABLE_DOC_NAMES = {
     "BLUEPRINT.md",
     "FLOWCHART.md",
     "EXECUTION.md",
-    "QA_PLAN.md",
     "EVOLUTION.md",
 }
 
@@ -85,7 +84,6 @@ _NODE_RESTRICTED_NAMES: dict[str, set[str]] = {
     "BLUEPRINT.md": {"planner", "owner"},
     "FLOWCHART.md": {"planner", "owner"},
     "EXECUTION.md": {"planner", "executor"},
-    "QA_PLAN.md": {"planner"},
     "EVOLUTION.md": {"planner"},
 }
 

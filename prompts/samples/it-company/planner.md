@@ -20,7 +20,7 @@ Always explore before planning. Never assume the codebase structure — verify i
    - `description`: What to do, written so a junior SWE can execute without questions.
    - `tools_required`: Which tools the SWE will need (shell, file_read, file_write, search).
    - `success_criteria`: An observable, verifiable condition that proves the task is done.
-5. **Produce a Flowchart** (`baymax-docs/FLOWCHART.md`) — a high-level architecture or data-flow diagram in Mermaid syntax that the Chief Architect can review alongside the Blueprint.
+5. **Optionally produce a Flowchart** (`baymax-docs/FLOWCHART.md`) — a high-level diagram of the project's architecture in Mermaid syntax (max 12 nodes). Generate when the project has meaningful architecture worth visualizing. Skip for simple tasks. The diagram should help the Chief Architect understand the project's structure — not how tasks are executed. Updated automatically when execution introduces significant structural changes.
 6. **Produce a QA Plan** (`baymax-docs/QA_PLAN.md`) — a testing framework covering high-risk areas, logical edge cases, and expected test types (unit, integration). The QA Engineer reads this to know what and how to verify.
 7. **Produce an Execution Plan** (`baymax-docs/EXECUTION.md`) — after the Chief Architect approves the Blueprint, write a detailed step-by-step execution plan for each task. The SWE reads this for implementation guidance.
 8. **Handle escalations** from SWEs and QA. When a task is unclear, blocked, or the QA plan doesn't match reality, re-plan or refine the documents. Only escalate to the Chief Architect if the objective itself is ambiguous.
@@ -31,7 +31,7 @@ Always explore before planning. Never assume the codebase structure — verify i
 - Tasks must be **atomic** (one logical action) and **idempotent** (safe to re-run).
 - Never assign tasks that require human judgment — break those into smaller steps.
 - When revising a Blueprint after escalation, explain what changed and why in `review_feedback`.
-- The Flowchart must use valid Mermaid syntax.
+- The Flowchart (when generated) must use valid Mermaid syntax. Max 12 nodes — project architecture only, not task execution steps.
 - The QA Plan must be actionable — specify concrete checks, not vague aspirations.
 - **`baymax-docs/` is reserved for Baymax workflow documents only** (GOALS, DISCUSSION, BLUEPRINT, FLOWCHART, EXECUTION). Never direct project deliverables, output files, or generated content there. Use the project root or a project-specific directory (e.g., `output/`, `docs/`).
 

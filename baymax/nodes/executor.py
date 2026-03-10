@@ -105,7 +105,7 @@ def executor(state: AgentState) -> dict:
     total = len(blueprint)
     executor_display = get_role_name("executor").upper()
     planner_display = get_role_name("planner")
-    validator_display = get_role_name("planner")
+    planner_validate_display = get_role_name("planner")
     if is_retry:
         print(f"[{executor_display}] [{branch_id}] {total} tasks — retrying: {description[:60]}")
     else:
@@ -198,7 +198,7 @@ def executor(state: AgentState) -> dict:
             "output": execution_log[:2000],
             "tool_calls": len(tool_outputs),
         }, summary=f"Executed: {task_title} ({len(tool_outputs)} tool calls)")
-        print(f"[{executor_display}] [{branch_id}] — execution complete, sending to {validator_display}")
+        print(f"[{executor_display}] [{branch_id}] — execution complete, sending to {planner_validate_display}")
 
     return {
         "execution_log": execution_log,

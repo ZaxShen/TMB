@@ -53,12 +53,14 @@ def load_yaml(path: Path) -> dict[str, Any]:
 def _config_path(name: str) -> Path:
     """Resolve a config file with three-layer fallback.
 
-    1. .baymax/config/<name>.yaml   (project-level user overrides)
-    2. Baymax/config/<name>.yaml    (legacy user overrides inside framework)
-    3. Baymax/config/<name>.default.yaml  (tracked defaults)
+    1. <project>/.baymax/config/<name>.yaml   (project-level user overrides)
+    2. Baymax/config/<name>.yaml              (legacy overrides inside framework)
+    3. Baymax/config/<name>.default.yaml      (tracked defaults)
+
+    Uses _detect_project_root() instead of paths.user_cfg_dir() to avoid
+    circular dependency (paths.py → config.py → paths.py).
     """
-    from baymax.paths import user_cfg_dir
-    project_override = user_cfg_dir() / f"{name}.yaml"
+    project_override = _detect_project_root() / ".baymax" / "config" / f"{name}.yaml"
     if project_override.exists():
         return project_override
     user = DEFAULT_CFG_DIR / f"{name}.yaml"
@@ -109,24 +111,27 @@ def load_project_config() -> dict[str, Any]:
     return load_yaml(_config_path("project"))
 
 
-def get_project_root() -> Path:
-    """Resolve the target project root.
-
-    Resolution order:
-      1. ``root_dir`` in project.yaml (resolved relative to BAYMAX_ROOT)
-      2. Auto-detect from CWD:
-         - If CWD is inside Baymax/, use Baymax's parent
-         - Otherwise use CWD (covers ``uv run baymax`` from project root)
-    """
-    cfg = load_project_config()
-    raw = cfg.get("root_dir", "")
-    if raw:
-        return (BAYMAX_ROOT / raw).resolve()
+def _detect_project_root() -> Path:
+    """CWD-based project root detection — no config dependency, no recursion."""
     cwd = Path.cwd().resolve()
     baymax_resolved = BAYMAX_ROOT.resolve()
     if cwd == baymax_resolved or str(cwd).startswith(str(baymax_resolved) + os.sep):
         return baymax_resolved.parent
     return cwd
+
+
+def get_project_root() -> Path:
+    """Resolve the target project root.
+
+    Resolution order:
+      1. ``root_dir`` in project.yaml (resolved relative to BAYMAX_ROOT)
+      2. Auto-detect from CWD via _detect_project_root()
+    """
+    cfg = load_project_config()
+    raw = cfg.get("root_dir", "")
+    if raw:
+        return (BAYMAX_ROOT / raw).resolve()
+    return _detect_project_root()
 
 
 def _resolve_env_vars(value: str) -> str:

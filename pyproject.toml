@@ -1,6 +1,6 @@
 [project]
 name = "baymax"
-version = "0.1.0"
+version = "0.0.1"
 description = "Multi-agent workflow engine for industrial-grade software projects: Project Owner → Planner → Executor → Validator."
 readme = "README.md"
 requires-python = ">=3.13"

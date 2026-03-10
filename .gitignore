@@ -24,6 +24,9 @@ build/
 
 # Runtime data
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 doc/
 
 # User config — created by `setup`, not tracked.

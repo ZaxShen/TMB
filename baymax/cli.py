@@ -640,6 +640,23 @@ def _resume(store: Store, issue: dict):
     _run_execution(store, issue_id, goals_md, ctx, discussion_md, blueprint, start_idx)
 
 
+def _write_nodes_base_url(project_root, provider_name: str, base_url: str):
+    """Write a user-level nodes.yaml with base_url set on all nodes."""
+    import yaml
+    from baymax.config import load_nodes_config
+
+    nodes_cfg = load_nodes_config()
+    for node_name, node in nodes_cfg.items():
+        if isinstance(node, dict) and "model" in node:
+            node["model"]["base_url"] = base_url
+
+    out_dir = project_root / ".baymax" / "config"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "nodes.yaml"
+    out_path.write_text(yaml.dump(nodes_cfg, default_flow_style=False, sort_keys=False))
+    print(f"  Wrote base_url to {out_path.relative_to(project_root)}")
+
+
 # ── CLI Commands ─────────────────────────────────────────────
 
 
@@ -726,14 +743,22 @@ def setup():
 
         selected = next((m for m in _PROVIDER_MENU if m[0] == choice), None)
         env_lines = []
+        chosen_provider = None
         if selected and selected[0] != "s":
             _, label, env_var, provider_name, extra_pkg = selected
+            chosen_provider = provider_name
             if env_var:
                 api_key = input(f"  {env_var}: ").strip()
                 if api_key:
                     env_lines.append(f"{env_var}={api_key}")
             if extra_pkg:
                 print(f"  Note: install the provider package with:  uv add {extra_pkg}")
+
+            print()
+            print("  Using a gateway (Vercel AI, Azure, custom proxy)?")
+            base_url = input("  base_url (Enter to skip): ").strip()
+            if base_url:
+                _write_nodes_base_url(project_root, provider_name, base_url)
 
         if env_lines:
             env_path.write_text("\n".join(env_lines) + "\n")

@@ -50,11 +50,12 @@ You can interrupt at any time (Ctrl+C, close your laptop). Run `uv run baymax` a
 ```bash
 cd your-project/
 git submodule add https://github.com/ZaxShen/Baymax.git
-git config submodule.Baymax.ignore dirty
-uv run --directory Baymax baymax setup
+./Baymax/install
 ```
 
-Setup walks you through naming your project, choosing an LLM provider, and setting your API key. After setup:
+That's it. The install script creates your `pyproject.toml` and installs dependencies. The first time you run `uv run baymax`, Baymax walks you through naming your project, choosing an LLM provider, and setting your API key — then continues straight into the workflow.
+
+After setup your project looks like this:
 
 ```
 your-project/
@@ -78,7 +79,7 @@ To update Baymax later: `cd Baymax && git pull origin dev`
 | `uv run baymax log` | Show recent issues |
 | `uv run baymax log 3` | Show details for issue #3 |
 | `uv run baymax report 3` | Export a full markdown report for issue #3 |
-| `uv run baymax setup` | Re-run setup (change LLM, role names, etc.) |
+| `uv run baymax setup` | Re-run setup (change LLM provider, role names, etc.) |
 
 ---
 

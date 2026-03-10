@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+BAYMAX_REL="$(basename "$SCRIPT_DIR")"
+
+cd "$PROJECT_ROOT"
+
+echo "[Baymax] Installing into $(basename "$PROJECT_ROOT")/"
+echo
+
+if [ ! -f pyproject.toml ]; then
+    PROJECT_NAME="$(basename "$PROJECT_ROOT")"
+    cat > pyproject.toml <<TOML
+[project]
+name = "$PROJECT_NAME"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "baymax",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+baymax = { path = "./$BAYMAX_REL", editable = true }
+TOML
+    echo "  Created pyproject.toml"
+fi
+
+if [ ! -f .python-version ]; then
+    uv python pin 3.13 > /dev/null 2>&1 || true
+fi
+
+uv sync 2>&1 | tail -1
+echo
+
+echo "[Baymax] Ready. Next steps:"
+echo "  uv run baymax          # first run will walk you through setup"
+echo

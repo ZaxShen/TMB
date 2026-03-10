@@ -815,9 +815,8 @@ def setup():
                 f'dependencies = [\n'
                 f'    "baymax",\n'
                 f']\n\n'
-                f'[tool.uv.sources]\nbaymax = {{ path = "./{baymax_rel}", editable = true }}\n\n'
-                f'[build-system]\nrequires = ["hatchling"]\n'
-                f'build-backend = "hatchling.build"\n'
+                f'[tool.uv]\npackage = false\n\n'
+                f'[tool.uv.sources]\nbaymax = {{ path = "./{baymax_rel}", editable = true }}\n'
             )
             project_toml.write_text(toml_content)
             print(f"  Wrote {project_toml}")
@@ -831,8 +830,17 @@ def setup():
     print()
 
 
+def _is_first_run() -> bool:
+    """Detect whether setup has ever been run for this project."""
+    return not (user_cfg_dir() / "project.yaml").exists()
+
+
 def run():
     """Phase-aware entry point: resumes an open issue or starts fresh."""
+    if _is_first_run():
+        print("[Baymax] First run detected — running setup.\n")
+        setup()
+
     ensure_dirs()
     store = Store()
     existing = store.get_open_issue()

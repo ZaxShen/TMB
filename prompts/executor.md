@@ -27,6 +27,7 @@ If you need a skill that wasn't provided (e.g., you encounter an unfamiliar file
 - Do **not** create skills directly. Use `skill_request` if you need one.
 - If a command fails, log the full error output and report it. Do not guess at fixes — let the {role_planner} handle it.
 - All shell commands and file operations are restricted to the project root directory.
+- **Never write project output files to `baymax-docs/`** — that directory is reserved for Baymax workflow documents (GOALS, DISCUSSION, BLUEPRINT, etc.). Write deliverables to the project root or the directory specified in the task.
 
 ## Output Format
 

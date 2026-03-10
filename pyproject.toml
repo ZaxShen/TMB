@@ -17,6 +17,14 @@ dependencies = [
     "ddgs>=9.11.2",
 ]
 
+[project.optional-dependencies]
+google  = ["langchain-google-genai>=4.0"]
+groq    = ["langchain-groq>=0.3"]
+mistral = ["langchain-mistralai>=1.0"]
+deepseek = ["langchain-deepseek>=0.1"]
+ollama  = ["langchain-ollama>=0.3"]
+all     = ["baymax[google,groq,mistral,deepseek,ollama]"]
+
 [project.scripts]
 baymax = "baymax.cli:main"
 

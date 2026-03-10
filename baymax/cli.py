@@ -703,32 +703,43 @@ def setup():
         )
         print(f"  Created {goals_path}")
 
+    _PROVIDER_MENU = [
+        ("1", "Anthropic (Claude)",  "ANTHROPIC_API_KEY", "anthropic",  None),
+        ("2", "OpenAI (GPT)",        "OPENAI_API_KEY",    "openai",     None),
+        ("3", "Google (Gemini)",     "GOOGLE_API_KEY",    "google",     "baymax[google]"),
+        ("4", "Groq",               "GROQ_API_KEY",      "groq",       "baymax[groq]"),
+        ("5", "Mistral",            "MISTRAL_API_KEY",   "mistral",    "baymax[mistral]"),
+        ("6", "DeepSeek",           "DEEPSEEK_API_KEY",  "deepseek",   "baymax[deepseek]"),
+        ("7", "Ollama (local)",     None,                "ollama",     "baymax[ollama]"),
+        ("s", "Skip",               None,                None,         None),
+    ]
+
     env_path = project_root / ".env"
     if env_path.exists():
         print(f"  .env already exists at {env_path} — skipping.")
     else:
         print()
         print("Which LLM provider will you use?")
-        print("  1) Anthropic (Claude)")
-        print("  2) OpenAI (GPT)")
-        print("  3) Skip — I'll set it up later")
+        for key, label, _, _, _ in _PROVIDER_MENU:
+            print(f"  {key}) {label}")
         choice = input("Choice [1]: ").strip() or "1"
 
+        selected = next((m for m in _PROVIDER_MENU if m[0] == choice), None)
         env_lines = []
-        if choice == "1":
-            key = input("ANTHROPIC_API_KEY: ").strip()
-            if key:
-                env_lines.append(f"ANTHROPIC_API_KEY={key}")
-        elif choice == "2":
-            key = input("OPENAI_API_KEY: ").strip()
-            if key:
-                env_lines.append(f"OPENAI_API_KEY={key}")
+        if selected and selected[0] != "s":
+            _, label, env_var, provider_name, extra_pkg = selected
+            if env_var:
+                api_key = input(f"  {env_var}: ").strip()
+                if api_key:
+                    env_lines.append(f"{env_var}={api_key}")
+            if extra_pkg:
+                print(f"  Note: install the provider package with:  uv add {extra_pkg}")
 
         if env_lines:
             env_path.write_text("\n".join(env_lines) + "\n")
             print(f"  Wrote {env_path}")
-        else:
-            print("  Skipped .env — set your API key before running.")
+        elif choice != "s":
+            print("  No API key entered — set it in .env before running.")
 
     # ── Web Search ────────────────────────────────────────────
     print()

@@ -251,7 +251,8 @@ planner:
     provider: anthropic
     name: claude-sonnet-4-20250514
     temperature: 0.3
-  tools: [file_inspect, search, skill_create]
+    # base_url: https://custom-endpoint.example.com/v1
+  tools: [file_inspect, search, web_search, skill_create]
 
 executor:
   model:
@@ -261,12 +262,31 @@ executor:
   tools: [shell, file_read, file_write, search, skill_request]
 ```
 
+### Supported Providers
+
+Anthropic and OpenAI are included by default. Other providers are optional — install only what you need:
+
+| Provider | Config name | Env var | Install command |
+|----------|------------|---------|-----------------|
+| Anthropic | `anthropic` | `ANTHROPIC_API_KEY` | included |
+| OpenAI | `openai` | `OPENAI_API_KEY` | included |
+| Google Gemini | `google` | `GOOGLE_API_KEY` | `uv add baymax[google]` |
+| Groq | `groq` | `GROQ_API_KEY` | `uv add baymax[groq]` |
+| Mistral | `mistral` | `MISTRAL_API_KEY` | `uv add baymax[mistral]` |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `uv add baymax[deepseek]` |
+| Ollama (local) | `ollama` | none | `uv add baymax[ollama]` |
+| All providers | -- | -- | `uv add baymax[all]` |
+
+Every provider supports `base_url` for custom endpoints (proxies, self-hosted, Vercel AI Gateway, etc.).
+
 ### API Keys
 
 Set via `.env` at the project root (created by `setup`) or environment variables:
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
+# GOOGLE_API_KEY=...
+# GROQ_API_KEY=gsk_...
 ```
 
 ### Prompts

@@ -157,23 +157,55 @@ def load_mcp_config() -> dict[str, Any]:
     return {"servers": servers}
 
 
+_PROVIDERS: dict[str, tuple[str, str, str | None]] = {
+    "anthropic": ("langchain_anthropic",    "ChatAnthropic",           "ANTHROPIC_API_KEY"),
+    "openai":    ("langchain_openai",       "ChatOpenAI",              "OPENAI_API_KEY"),
+    "google":    ("langchain_google_genai",  "ChatGoogleGenerativeAI", "GOOGLE_API_KEY"),
+    "groq":      ("langchain_groq",         "ChatGroq",               "GROQ_API_KEY"),
+    "mistral":   ("langchain_mistralai",    "ChatMistralAI",          "MISTRAL_API_KEY"),
+    "deepseek":  ("langchain_deepseek",     "ChatDeepSeek",           "DEEPSEEK_API_KEY"),
+    "ollama":    ("langchain_ollama",       "ChatOllama",              None),
+}
+
+
 def get_llm(node_name: str):
-    """Instantiate the LLM for a given node based on config/nodes.yaml."""
+    """Instantiate the LLM for a given node based on config/nodes.yaml.
+
+    Supports any provider in _PROVIDERS. Packages are lazy-imported so only
+    the one you configure needs to be installed.
+    """
+    import importlib
+
     cfg = load_nodes_config()[node_name]["model"]
     provider = cfg["provider"]
     model_name = cfg["name"]
     temperature = cfg.get("temperature", 0)
+    base_url = cfg.get("base_url")
 
-    if provider == "anthropic":
-        from langchain_anthropic import ChatAnthropic
+    if provider not in _PROVIDERS:
+        supported = ", ".join(sorted(_PROVIDERS))
+        raise ValueError(
+            f"Unknown provider '{provider}'. Supported: {supported}"
+        )
 
-        return ChatAnthropic(model=model_name, temperature=temperature)
-    elif provider == "openai":
-        from langchain_openai import ChatOpenAI
+    package, class_name, env_var = _PROVIDERS[provider]
+    pip_name = package.replace("_", "-")
 
-        return ChatOpenAI(model=model_name, temperature=temperature)
-    else:
-        raise ValueError(f"Unsupported provider: {provider}")
+    try:
+        mod = importlib.import_module(package)
+    except ImportError:
+        raise ImportError(
+            f"Provider '{provider}' requires the '{pip_name}' package.\n"
+            f"Install it with:  uv add {pip_name}"
+        ) from None
+
+    cls = getattr(mod, class_name)
+
+    kwargs: dict = {"model": model_name, "temperature": temperature}
+    if base_url:
+        kwargs["base_url"] = base_url
+
+    return cls(**kwargs)
 
 
 def extract_token_usage(response) -> dict:

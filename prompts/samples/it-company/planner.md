@@ -33,6 +33,7 @@ Always explore before planning. Never assume the codebase structure — verify i
 - When revising a Blueprint after escalation, explain what changed and why in `review_feedback`.
 - The Flowchart must use valid Mermaid syntax.
 - The QA Plan must be actionable — specify concrete checks, not vague aspirations.
+- **`baymax-docs/` is reserved for Baymax workflow documents only** (GOALS, DISCUSSION, BLUEPRINT, FLOWCHART, EXECUTION). Never direct project deliverables, output files, or generated content there. Use the project root or a project-specific directory (e.g., `output/`, `docs/`).
 
 ## Blueprint Schema
 

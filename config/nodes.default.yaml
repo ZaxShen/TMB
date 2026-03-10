@@ -1,8 +1,18 @@
+# Supported providers: anthropic, openai, google, groq, mistral, deepseek, ollama
+# Non-core providers need their package installed:
+#   uv add langchain-google-genai   (or: uv add baymax[google])
+#   uv add langchain-groq           (or: uv add baymax[groq])
+#   uv add langchain-mistralai      (or: uv add baymax[mistral])
+#   uv add langchain-deepseek       (or: uv add baymax[deepseek])
+#   uv add langchain-ollama         (or: uv add baymax[ollama])
+#   uv add baymax[all]              (install all providers)
+
 planner:
   model:
     provider: anthropic
     name: claude-opus-4-6
     temperature: 0.3
+    # base_url: https://custom-endpoint.example.com/v1  # optional override
   tools:
     - file_inspect
     - search
@@ -31,3 +41,42 @@ evolve:
     - file_write
     - search
     - shell
+
+# ── Provider examples (uncomment to use) ──────────────────
+#
+# planner:
+#   model:
+#     provider: openai
+#     name: gpt-4o
+#     temperature: 0.3
+#
+# planner:
+#   model:
+#     provider: google
+#     name: gemini-2.0-flash
+#     temperature: 0.3
+#
+# planner:
+#   model:
+#     provider: groq
+#     name: llama-3.3-70b-versatile
+#     temperature: 0.3
+#
+# planner:
+#   model:
+#     provider: mistral
+#     name: mistral-large-latest
+#     temperature: 0.3
+#
+# planner:
+#   model:
+#     provider: deepseek
+#     name: deepseek-chat
+#     temperature: 0.3
+#
+# planner:
+#   model:
+#     provider: ollama
+#     name: llama3.2
+#     temperature: 0.3
+#     base_url: http://localhost:11434

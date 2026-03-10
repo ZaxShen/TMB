@@ -47,13 +47,24 @@ You can interrupt at any time (Ctrl+C, close your laptop). Run `uv run baymax` a
 
 **Prerequisites**: [uv](https://docs.astral.sh/uv/) and an LLM API key (Anthropic, OpenAI, Google, Groq, Mistral, DeepSeek — or Ollama for local models).
 
+**New project:**
+
 ```bash
 cd your-project/
-git submodule add https://github.com/ZaxShen/Baymax.git
+git clone https://github.com/ZaxShen/Baymax.git
 ./Baymax/install
+uv run baymax
 ```
 
-That's it. The install script creates your `pyproject.toml` and installs dependencies. The first time you run `uv run baymax`, Baymax walks you through naming your project, choosing an LLM provider, and setting your API key — then continues straight into the workflow.
+**Joining an existing project** (someone already set up Baymax):
+
+```bash
+cd your-project/
+./Baymax/install
+uv run baymax
+```
+
+The install script creates `pyproject.toml` (if needed) and installs dependencies. The first time you run `uv run baymax`, Baymax walks you through naming your project, choosing an LLM provider, and setting your API key — then continues straight into the workflow.
 
 After setup your project looks like this:
 
@@ -66,7 +77,9 @@ your-project/
 └── ...
 ```
 
-To update Baymax later: `cd Baymax && git pull origin dev`
+> **Important**: Always run commands from your **project root** (the parent of `Baymax/`), not from inside `Baymax/`.
+
+To update Baymax later: `cd Baymax && git pull origin dev && cd .. && ./Baymax/install`
 
 ---
 
@@ -79,6 +92,8 @@ To update Baymax later: `cd Baymax && git pull origin dev`
 | `uv run baymax log` | Show recent issues |
 | `uv run baymax log 3` | Show details for issue #3 |
 | `uv run baymax report 3` | Export a full markdown report for issue #3 |
+| `uv run baymax tokens` | Show token usage across all issues |
+| `uv run baymax tokens 3` | Show token usage for issue #3 |
 | `uv run baymax setup` | Re-run setup (change LLM provider, role names, etc.) |
 
 ---

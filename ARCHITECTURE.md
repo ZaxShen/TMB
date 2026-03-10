@@ -328,7 +328,7 @@ your-project/                    # <- project root (run `uv run baymax` here)
 |   |   +-- mcp.yaml
 |   +-- skills/                  #    Agent-created skills
 |
-|-- Baymax/                      # <- framework submodule (immutable)
+|-- Baymax/                      # <- framework (don't touch)
 |   |-- baymax/                  #    Engine code
 |   |-- config/                  #    *.default.yaml only (tracked defaults)
 |   |-- prompts/                 #    Agent prompts (Markdown)

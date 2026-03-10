@@ -640,23 +640,6 @@ def _resume(store: Store, issue: dict):
     _run_execution(store, issue_id, goals_md, ctx, discussion_md, blueprint, start_idx)
 
 
-def _write_nodes_base_url(project_root, provider_name: str, base_url: str):
-    """Write a user-level nodes.yaml with base_url set on all nodes."""
-    import yaml
-    from baymax.config import load_nodes_config
-
-    nodes_cfg = load_nodes_config()
-    for node_name, node in nodes_cfg.items():
-        if isinstance(node, dict) and "model" in node:
-            node["model"]["base_url"] = base_url
-
-    out_dir = project_root / ".baymax" / "config"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "nodes.yaml"
-    out_path.write_text(yaml.dump(nodes_cfg, default_flow_style=False, sort_keys=False))
-    print(f"  Wrote base_url to {out_path.relative_to(project_root)}")
-
-
 # ── CLI Commands ─────────────────────────────────────────────
 
 
@@ -743,22 +726,14 @@ def setup():
 
         selected = next((m for m in _PROVIDER_MENU if m[0] == choice), None)
         env_lines = []
-        chosen_provider = None
         if selected and selected[0] != "s":
             _, label, env_var, provider_name, extra_pkg = selected
-            chosen_provider = provider_name
             if env_var:
                 api_key = input(f"  {env_var}: ").strip()
                 if api_key:
                     env_lines.append(f"{env_var}={api_key}")
             if extra_pkg:
                 print(f"  Note: install the provider package with:  uv add {extra_pkg}")
-
-            print()
-            print("  Using a gateway (Vercel AI, Azure, custom proxy)?")
-            base_url = input("  base_url (Enter to skip): ").strip()
-            if base_url:
-                _write_nodes_base_url(project_root, provider_name, base_url)
 
         if env_lines:
             env_path.write_text("\n".join(env_lines) + "\n")
@@ -965,7 +940,46 @@ def report(issue_id: int):
     print(f"       Open it in your editor for full details.")
 
 
-_KNOWN_COMMANDS = {"setup", "log", "report", "serve", "evolve", "help", "--help", "-h"}
+def tokens(issue_id: int | None = None):
+    """Show token usage — for a specific issue or all issues."""
+    store = Store()
+
+    if issue_id:
+        _print_token_summary(store, issue_id)
+        return
+
+    rows = store._conn.execute(
+        "SELECT issue_id, node, SUM(input_tokens) as inp, SUM(output_tokens) as outp "
+        "FROM token_usage GROUP BY issue_id, node ORDER BY issue_id, node"
+    ).fetchall()
+    if not rows:
+        print("[Baymax] No token usage recorded yet.")
+        return
+
+    from collections import defaultdict
+    by_issue: dict[int, dict] = defaultdict(lambda: {"nodes": {}, "total_in": 0, "total_out": 0})
+    grand_in = grand_out = 0
+    for r in rows:
+        entry = by_issue[r["issue_id"]]
+        entry["nodes"][r["node"]] = {"in": r["inp"], "out": r["outp"]}
+        entry["total_in"] += r["inp"]
+        entry["total_out"] += r["outp"]
+        grand_in += r["inp"]
+        grand_out += r["outp"]
+
+    print()
+    print(f"{'Issue':>7}  {'Node':20s}  {'Input':>12}  {'Output':>12}")
+    print(f"{'-' * 7}  {'-' * 20}  {'-' * 12}  {'-' * 12}")
+    for iid, data in sorted(by_issue.items()):
+        for node, counts in sorted(data["nodes"].items()):
+            print(f"{'#' + str(iid):>7}  {node:20s}  {counts['in']:>12,}  {counts['out']:>12,}")
+        print(f"{'':>7}  {'subtotal':20s}  {data['total_in']:>12,}  {data['total_out']:>12,}")
+        print()
+    print(f"{'TOTAL':>7}  {'':20s}  {grand_in:>12,}  {grand_out:>12,}")
+    print()
+
+
+_KNOWN_COMMANDS = {"setup", "log", "report", "tokens", "serve", "evolve", "help", "--help", "-h"}
 
 
 def main():
@@ -985,6 +999,9 @@ def main():
             print("Usage: baymax report <issue_id>")
             sys.exit(1)
         report(int(sys.argv[2]))
+    elif cmd == "tokens":
+        issue_id = int(sys.argv[2]) if len(sys.argv) > 2 else None
+        tokens(issue_id)
     elif cmd == "evolve":
         if len(sys.argv) < 3:
             print('Usage: baymax evolve "instruction"')
@@ -1016,6 +1033,8 @@ def main():
         print("  baymax log                            Show recent issues")
         print("  baymax log <id>                       Show issue details + ledger")
         print("  baymax report <id>                    Export full report as markdown")
+        print("  baymax tokens                         Show token usage across all issues")
+        print("  baymax tokens <id>                    Show token usage for one issue")
         print("  baymax serve                          Start MCP server (stdio)")
         print("  baymax serve --http 8080              Start MCP server (HTTP)")
         sys.exit(1)

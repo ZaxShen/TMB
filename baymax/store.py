@@ -990,4 +990,17 @@ class Store:
                 lines.append(f"| {e['created_at']} | {e['from_node']} | {e['event_type']} | {summary} |")
             lines.append("")
 
+        token_summary = self.get_token_summary(issue_id)
+        if token_summary and token_summary.get("total", {}).get("in", 0) > 0:
+            lines += ["---", "", "## Token Usage", ""]
+            lines.append("| Node | Input | Output |")
+            lines.append("|---|---:|---:|")
+            for node, counts in sorted(token_summary.items()):
+                if node == "total":
+                    continue
+                lines.append(f"| {node} | {counts['in']:,} | {counts['out']:,} |")
+            t = token_summary["total"]
+            lines.append(f"| **Total** | **{t['in']:,}** | **{t['out']:,}** |")
+            lines.append("")
+
         return "\n".join(lines)

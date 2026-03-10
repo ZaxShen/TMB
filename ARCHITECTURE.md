@@ -1,0 +1,422 @@
+# Baymax — Architecture & Configuration
+
+> Technical reference for contributors, integrators, and power users.
+> For basic usage, see [README.md](README.md).
+
+---
+
+## Table of Contents
+
+- [Workflow](#workflow)
+- [Roles](#roles)
+- [Documents](#documents)
+- [Permissions](#permissions)
+- [Database](#database)
+- [Skills](#skills)
+- [Configuration](#configuration)
+- [Project Structure](#project-structure)
+- [MCP Integration](#mcp-integration)
+- [Self-Evolution](#self-evolution)
+- [Design Principles](#design-principles)
+
+---
+
+## Workflow
+
+Baymax has three entry points, each following the same plan-execute-validate pipeline.
+
+### Full workflow (`baymax`)
+
+For complex, multi-step work with interactive discussion:
+
+```
+Project Owner writes baymax-docs/GOALS.md
+         |
+         v
+  +--- DISCUSSION ---+
+  |  Planner <->      |    Interactive Q&A via baymax-docs/DISCUSSION.md
+  |  Project Owner    |    -> saved to SQLite (.baymax/baymax.db)
+  +--------+----------+
+           v
+  +--- PLANNING ------+
+  |  Planner writes:  |    BLUEPRINT.md  -- task breakdown
+  |  2 documents      |    FLOWCHART.md  -- architecture diagram (max 12 nodes)
+  +--------+----------+
+           v
+    Project Owner reviews & approves
+           |
+           v
+  +--- EXECUTION PLAN +
+  |  Planner generates |    Per-task plans stored in SQLite
+  |  per-task plans    |    EXECUTION.md -- lightweight summary for humans
+  +--------+----------+
+           v
+  +--- EXECUTION ------+
+  |  Executor runs     |--->  Planner validates (same agent, full context)
+  |  task (shell,      |<---  PASS -> next task
+  |  files)            |<---  FAIL -> retry (max 3)
+  +--------+----------+<---  MAX FAIL -> escalate to human
+           v
+         DONE
+```
+
+### Quick task (`baymax "..."`)
+
+Same pipeline, no interactive steps. Auto-approved blueprint.
+
+### Self-evolution (`baymax evolve "..."`)
+
+Modifies Baymax's own source code through a guarded flow:
+
+1. Warning banner displayed
+2. Planner explores Baymax codebase, writes `baymax-docs/EVOLUTION.md`
+3. Owner reviews and approves (press Enter)
+4. Git snapshot auto-committed (rollback: `git revert HEAD`)
+5. Planner executes the approved plan
+6. Health check verifies Baymax still imports and passes lint
+
+The `Baymax/**` blacklist is only lifted during the evolve session.
+
+---
+
+## Roles
+
+Role names are configurable via `.baymax/config/project.yaml`. Defaults shown, with IT Company preset in parentheses:
+
+| Role | Default | IT Company | Responsibility |
+|------|---------|------------|----------------|
+| **owner** | Project Owner | Chief Architect | Writes goals. Discusses with Planner. Reviews blueprints. |
+| **planner** | Planner | Architect | Discusses requirements. Designs blueprint and flowchart. Writes per-task execution plans. **Validates** each task (has full context). Handles escalations. |
+| **executor** | Executor | SWE | Executes tasks using shell, filesystem, and search tools. Reports issues to Planner. |
+
+---
+
+## Documents
+
+All user-facing artifacts live in `baymax-docs/` at the project root:
+
+| File | Written By | Read By | Purpose |
+|------|-----------|---------|---------|
+| `GOALS.md` | Owner (you) | Planner | What you want done — plain language |
+| `DISCUSSION.md` | System | Owner, Planner | Planner–Owner Q&A transcript |
+| `BLUEPRINT.md` | Planner | Owner | Task breakdown as JSON |
+| `FLOWCHART.md` | Planner | Owner | Architecture diagram (Mermaid, max 12 nodes) |
+| `EXECUTION.md` | Planner | Owner | Per-task plan summary (full plans in SQLite) |
+| `EVOLUTION.md` | Planner | Owner | Self-evolution plan (evolve mode only) |
+
+---
+
+## Permissions
+
+| Resource | Owner | Planner | Executor |
+|----------|-------|---------|----------|
+| `baymax-docs/GOALS.md` | Edit | Read | — |
+| `baymax-docs/DISCUSSION.md` | Read | Edit | — |
+| `baymax-docs/BLUEPRINT.md` | Read | Edit | — |
+| `baymax-docs/FLOWCHART.md` | Read | Edit | — |
+| `baymax-docs/EXECUTION.md` | Read | Edit | — |
+| `.baymax/baymax.db` | Read | Read / Write | Read / Write |
+| DB: tasks | — | Write (create) | Read (own task) |
+| DB: ledger | Read | Write | Write |
+| Project files | — | — | Edit |
+| `.env`, secrets | — | — | — |
+| `baymax-docs/EVOLUTION.md` | Read | Edit | — |
+| `Baymax/**` (engine) | Edit (manual) | Edit (evolve only) | — |
+
+**Key rules:**
+- Executors never see GOALS, DISCUSSION, BLUEPRINT, or FLOWCHART — high-level context could mislead execution.
+- Executors get their task's plan from SQLite (not a shared file), keeping their context window focused.
+- The Planner validates each task directly — it already holds full project context, so no re-learning is needed.
+- Secrets and the Baymax engine are inaccessible to all agents during normal operation.
+
+---
+
+## Database
+
+Everything is persisted in `.baymax/baymax.db` (SQLite + JSON):
+
+| Table | Contents |
+|-------|----------|
+| `issues` | Each run's objective, status, `parent_issue_id` for cross-issue links |
+| `discussions` | Full Planner–Owner Q&A exchange |
+| `tasks` | Blueprint items with hierarchical `branch_id`, `parent_branch_id`, `title`, `skills_required` |
+| `ledger` | Every agent action with a `summary` one-liner — full JSON detail stored but never bulk-read |
+| `skills` | Registered skill files — name, description, tags, file path |
+| `token_usage` | Per-invocation token counts by node |
+| `file_registry` | Persistent map of discovered project files — enables zero-rescan upgrades |
+
+### Branch IDs
+
+Every task has two identifiers:
+
+- `id` — autoincrement primary key (stable, used for internal DB references)
+- `branch_id` — hierarchical string encoding semantic relationships
+
+```
+id=1  branch_id="1"       <- Email login feature
+id=2  branch_id="1.1"     <- Add email verification (extends login)
+id=3  branch_id="2"       <- Dashboard redesign (unrelated to login)
+id=4  branch_id="1.1.1"   <- Handle expired verification tokens
+```
+
+Branch operations: `branch_id LIKE '1.%'` finds every related task across all issues. The Planner auto-generates branch IDs by reviewing the existing task tree before planning.
+
+---
+
+## Skills
+
+Skills are **reusable knowledge artifacts** — concise markdown guides that agents load on demand instead of re-deriving patterns every time.
+
+### Two skill locations
+
+```
+Baymax/skills/              <- curated seed skills (shipped with framework)
+  db-operations.md
+  branch-operations.md
+  file-access.md
+  mcp-patterns.md
+
+.baymax/skills/             <- agent-created skills (project-specific, persisted)
+  csv-handling.md
+```
+
+### How it works
+
+1. **Planner assigns skills per task** — sees available skills with effectiveness scores and applicability conditions
+2. **Executor loads only assigned skills** — injected into context alongside the task prompt
+3. **Agents can request new skills** — Executor has a `skill_request` tool; Planner creates and reviews
+4. **Built-in skills auto-seed** — on first run, `Baymax/skills/*.md` are registered as curated skills
+5. **Agent-created skills go to `.baymax/skills/`** — survives Baymax upgrades
+
+### Trust and validation
+
+| Aspect | Mechanism |
+|---|---|
+| **Trust tiers** | `curated` (system/human — always trusted) vs. `agent` (requires review) |
+| **Status lifecycle** | `draft` -> `pending_review` -> `active` -> `deprecated` |
+| **Quality gate** | Agent-created skills auto-submitted for Planner review |
+| **Effectiveness tracking** | Every PASS/FAIL verdict updates counters. Effectiveness = successes / uses |
+| **Auto-deprecation** | Agent-tier skills with 5+ uses and < 30% effectiveness are deprecated |
+| **Applicability** | Each skill has `when_to_use` and `when_not_to_use` metadata |
+
+Design follows the agentic skills lifecycle from research (Voyager 2023, SoK 2026): curated skills improve agent success rates by +16pp, while unvalidated self-generated skills can degrade them — hence the mandatory review gate.
+
+---
+
+## Configuration
+
+Config files use a **three-layer resolution** for seamless upgrades:
+
+1. `.baymax/config/<name>.yaml` — project-level user overrides (created by `setup`)
+2. `Baymax/config/<name>.yaml` — legacy overrides inside framework (backward compat)
+3. `Baymax/config/<name>.default.yaml` — tracked defaults
+
+Baymax tries each in order. You only create overrides for what you want to change.
+
+### `.baymax/config/project.yaml`
+
+```yaml
+name: my-project
+test_command: pytest
+max_retry_per_task: 3
+
+# root_dir — auto-detected by default:
+#   `uv run baymax` from project root -> uses CWD
+#   `cd Baymax && uv run main.py`     -> uses parent of Baymax/
+# Uncomment to override:
+# root_dir: ..            # relative to Baymax/
+# root_dir: /abs/path     # absolute
+
+# Path overrides (defaults shown):
+# paths:
+#   docs_dir: baymax-docs
+#   runtime_dir: .baymax
+#   db_name: baymax.db
+
+# Role display names:
+# roles:
+#   preset: it-company
+#   owner: Chief Architect
+#   planner: Architect
+#   executor: SWE
+```
+
+### `.baymax/config/nodes.yaml`
+
+Each agent gets its own LLM — mix providers freely:
+
+```yaml
+planner:
+  model:
+    provider: anthropic
+    name: claude-sonnet-4-20250514
+    temperature: 0.3
+  tools: [file_inspect, search, skill_create]
+
+executor:
+  model:
+    provider: anthropic
+    name: claude-sonnet-4-20250514
+    temperature: 0
+  tools: [shell, file_read, file_write, search, skill_request]
+```
+
+### API Keys
+
+Set via `.env` at the project root (created by `setup`) or environment variables:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### Prompts
+
+Agent prompts are Markdown files in `Baymax/prompts/`. Edit to change behavior without touching Python:
+
+```
+prompts/planner.md      # How the Planner plans, validates, and manages skills
+prompts/executor.md     # How the Executor executes and reports
+```
+
+Prompts support template variables: `{role_owner}`, `{role_planner}`, `{role_executor}` — replaced with display names from config at load time.
+
+**Presets** — set `roles.preset: it-company` in `project.yaml` to load domain-specific prompts from `prompts/samples/it-company/`.
+
+---
+
+## Project Structure
+
+```
+your-project/                    # <- project root (run `uv run baymax` here)
+|-- .venv/                       # <- shared venv (Baymax deps + your deps)
+|-- pyproject.toml               # <- references Baymax as path dependency
+|-- .env                         # <- API keys (gitignored)
+|
+|-- baymax-docs/                 # <- user interaction zone
+|   |-- GOALS.md                 #    You write this
+|   |-- DISCUSSION.md            #    Generated: Planner-Owner Q&A
+|   |-- BLUEPRINT.md             #    Generated: task breakdown
+|   |-- FLOWCHART.md             #    Generated: architecture diagram (Mermaid)
+|   |-- EXECUTION.md             #    Generated: per-task plan summary
+|   +-- EVOLUTION.md             #    Generated: self-evolution plan
+|
+|-- .baymax/                     # <- hidden runtime state (gitignored)
+|   |-- baymax.db                #    SQLite audit trail
+|   |-- config/                  #    User config overrides
+|   |   |-- project.yaml
+|   |   |-- nodes.yaml
+|   |   +-- mcp.yaml
+|   +-- skills/                  #    Agent-created skills
+|
+|-- Baymax/                      # <- framework submodule (immutable)
+|   |-- baymax/                  #    Engine code
+|   |-- config/                  #    *.default.yaml only (tracked defaults)
+|   |-- prompts/                 #    Agent prompts (Markdown)
+|   |-- skills/                  #    Curated seed skills only
+|   +-- main.py                  #    Backward-compat shim
+|
+|-- src/
++-- ...
+```
+
+### Path Registry
+
+All paths are centralized in `baymax/paths.py`:
+- **Framework paths** — immutable, resolved from `__file__`
+- **Project defaults** — directory names (`baymax-docs`, `.baymax`, `baymax.db`)
+- **Config overrides** — users customize via `.baymax/config/project.yaml` -> `paths:`
+
+No hardcoded paths in the engine. Changing a directory name is a one-line config change.
+
+---
+
+## MCP Integration
+
+Baymax supports the [Model Context Protocol](https://modelcontextprotocol.io/) as both a **client** and a **server**, plus the ability to **generate** new MCP servers.
+
+### Baymax as MCP Client
+
+Connect agents to external services (Notion, GitHub, Slack, etc.) via `.baymax/config/mcp.yaml`:
+
+```yaml
+servers:
+  notion:
+    command: npx
+    args: ["-y", "@notionhq/notion-mcp-server"]
+    env:
+      NOTION_TOKEN: ${NOTION_TOKEN}
+    agents: [planner]
+
+  github:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+    agents: [planner, executor]
+```
+
+MCP tools are auto-discovered at startup, converted to LangChain tools, and prefixed (`mcp_notion_search_pages`). The `agents` field controls per-node access. Tool output goes through the blacklist scrubber.
+
+### Baymax as MCP Server
+
+Expose Baymax's store and workflow to external hosts (Claude Desktop, Cursor):
+
+```bash
+baymax serve              # stdio (for Claude Desktop / Cursor)
+baymax serve --http 8080  # HTTP (for remote access)
+```
+
+**Exposed tools**: `baymax_list_issues`, `baymax_get_tasks`, `baymax_get_ledger`, `baymax_get_skills`, `baymax_query_branch`, `baymax_quick_task`, `baymax_export_report`
+
+**Exposed resources**: `baymax://issues`, `baymax://issues/{id}`, `baymax://skills`, `baymax://blueprint`
+
+Claude Desktop config:
+```json
+{
+  "mcpServers": {
+    "baymax": {
+      "command": "uv",
+      "args": ["run", "baymax", "serve"],
+      "cwd": "/path/to/your-project"
+    }
+  }
+}
+```
+
+### MCP Server Generator
+
+The Planner can scaffold project-specific MCP servers using the `mcp_generate` tool. Templates: `rest_api`, `database`, `file_based`. Generated servers go to `.baymax/mcp_servers/<name>/server.py` and are auto-registered.
+
+---
+
+## Self-Evolution
+
+Baymax can modify its own source code through a guarded flow:
+
+```bash
+uv run baymax evolve "add a new CLI command to export tasks as CSV"
+```
+
+Safety gates:
+
+1. **Warning banner** — prominent warning about full Baymax access
+2. **Plan first** — Planner explores Baymax codebase, writes `baymax-docs/EVOLUTION.md`
+3. **Double approval** — Planner designs + Owner reviews
+4. **Git snapshot** — auto-commit before changes (`git revert HEAD` to rollback)
+5. **Health check** — import test + lint after changes
+
+---
+
+## Design Principles
+
+- **File-driven** — Write goals in Markdown, not CLI arguments.
+- **Discussion first** — Planner clarifies before planning. No blind execution.
+- **Layered documents** — Strategic docs for Owner review; per-task plans in SQLite for agents.
+- **Full audit trail** — Every action logged with lightweight summaries.
+- **Skills over re-reading** — Agents compress patterns into reusable skills, loaded on demand.
+- **Config over code** — YAML and Markdown control behavior. Engine is immutable.
+- **Guarded self-evolution** — Double approval + git snapshot + health check.
+- **Configurable roles** — Generic by default, customizable via config.
+- **Sandboxed execution** — Tools restricted to the project root directory.
+- **MCP-native** — Client, server, and auto-generated MCP servers.
+- **Zero-rescan upgrades** — `file_registry` table persists project file knowledge across Baymax versions.

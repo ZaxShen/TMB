@@ -3,11 +3,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-BAYMAX_REL="$(basename "$SCRIPT_DIR")"
+TMB_REL="$(basename "$SCRIPT_DIR")"
 
 cd "$PROJECT_ROOT"
 
-echo "[Baymax] Installing into $(basename "$PROJECT_ROOT")/"
+echo "[TMB] Installing into $(basename "$PROJECT_ROOT")/"
 echo
 
 if [ ! -f pyproject.toml ]; then
@@ -18,14 +18,14 @@ name = "$PROJECT_NAME"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
-    "baymax",
+    "tmb",
 ]
 
 [tool.uv]
 package = false
 
 [tool.uv.sources]
-baymax = { path = "./$BAYMAX_REL", editable = true }
+tmb = { path = "./$TMB_REL", editable = true }
 TOML
     echo "  Created pyproject.toml"
 fi
@@ -37,6 +37,6 @@ fi
 uv sync 2>&1 | tail -1
 echo
 
-echo "[Baymax] Ready. Next steps:"
-echo "  uv run baymax          # first run will walk you through setup"
+echo "[TMB] Ready. Next steps:"
+echo "  uv run tmb              # first run will walk you through setup"
 echo

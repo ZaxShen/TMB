@@ -1,4 +1,4 @@
-"""Baymax engine — builds and compiles the LangGraph workflow.
+"""TMB engine — builds and compiles the LangGraph workflow.
 
 Two graph variants:
   build_graph()           — full workflow: planner_plan → [owner interrupt] →
@@ -15,9 +15,9 @@ from __future__ import annotations
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
-from baymax.state import AgentState
-from baymax.nodes.planner import planner_plan, planner_execution_plan, planner_validate
-from baymax.nodes.executor import executor
+from tmb.state import AgentState
+from tmb.nodes.planner import planner_plan, planner_execution_plan, planner_validate
+from tmb.nodes.executor import executor
 
 
 def _route(state: AgentState) -> str:

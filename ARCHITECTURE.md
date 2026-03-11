@@ -1,4 +1,4 @@
-# Baymax — Architecture & Configuration
+# TMB — Architecture & Configuration
 
 > Technical reference for contributors, integrators, and power users.
 > For basic usage, see [README.md](README.md).
@@ -23,19 +23,19 @@
 
 ## Workflow
 
-Baymax has three entry points, each following the same plan-execute-validate pipeline.
+TMB has three entry points, each following the same plan-execute-validate pipeline.
 
-### Full workflow (`baymax`)
+### Full workflow (`tmb`)
 
 For complex, multi-step work with interactive discussion:
 
 ```
-Project Owner writes baymax-docs/GOALS.md
+Project Owner writes bro/GOALS.md
          |
          v
   +--- DISCUSSION ---+
-  |  Planner <->      |    Interactive Q&A via baymax-docs/DISCUSSION.md
-  |  Project Owner    |    -> saved to SQLite (.baymax/baymax.db)
+  |  Planner <->      |    Interactive Q&A via bro/DISCUSSION.md
+  |  Project Owner    |    -> saved to SQLite (.tmb/tmb.db)
   +--------+----------+
            v
   +--- PLANNING ------+
@@ -60,28 +60,28 @@ Project Owner writes baymax-docs/GOALS.md
          DONE
 ```
 
-### Quick task (`baymax "..."`)
+### Quick task (`tmb "..."`)
 
 Same pipeline, no interactive steps. Auto-approved blueprint.
 
-### Self-evolution (`baymax evolve "..."`)
+### Self-evolution (`tmb evolve "..."`)
 
-Modifies Baymax's own source code through a guarded flow:
+Modifies TMB's own source code through a guarded flow:
 
 1. Warning banner displayed
-2. Planner explores Baymax codebase, writes `baymax-docs/EVOLUTION.md`
+2. Planner explores TMB codebase, writes `bro/EVOLUTION.md`
 3. Owner reviews and approves (press Enter)
 4. Git snapshot auto-committed (rollback: `git revert HEAD`)
 5. Planner executes the approved plan
-6. Health check verifies Baymax still imports and passes lint
+6. Health check verifies TMB still imports and passes lint
 
-The `Baymax/**` blacklist is only lifted during the evolve session.
+The `TMB/**` blacklist is only lifted during the evolve session.
 
 ---
 
 ## Roles
 
-Role names are configurable via `.baymax/config/project.yaml`. Defaults shown, with IT Company preset in parentheses:
+Role names are configurable via `.tmb/config/project.yaml`. Defaults shown, with IT Company preset in parentheses:
 
 | Role | Default | IT Company | Responsibility |
 |------|---------|------------|----------------|
@@ -93,7 +93,7 @@ Role names are configurable via `.baymax/config/project.yaml`. Defaults shown, w
 
 ## Documents
 
-All user-facing artifacts live in `baymax-docs/` at the project root:
+All user-facing artifacts live in `bro/` at the project root:
 
 | File | Written By | Read By | Purpose |
 |------|-----------|---------|---------|
@@ -110,30 +110,30 @@ All user-facing artifacts live in `baymax-docs/` at the project root:
 
 | Resource | Owner | Planner | Executor |
 |----------|-------|---------|----------|
-| `baymax-docs/GOALS.md` | Edit | Read | — |
-| `baymax-docs/DISCUSSION.md` | Read | Edit | — |
-| `baymax-docs/BLUEPRINT.md` | Read | Edit | — |
-| `baymax-docs/FLOWCHART.md` | Read | Edit | — |
-| `baymax-docs/EXECUTION.md` | Read | Edit | — |
-| `.baymax/baymax.db` | Read | Read / Write | Read / Write |
+| `bro/GOALS.md` | Edit | Read | — |
+| `bro/DISCUSSION.md` | Read | Edit | — |
+| `bro/BLUEPRINT.md` | Read | Edit | — |
+| `bro/FLOWCHART.md` | Read | Edit | — |
+| `bro/EXECUTION.md` | Read | Edit | — |
+| `.tmb/tmb.db` | Read | Read / Write | Read / Write |
 | DB: tasks | — | Write (create) | Read (own task) |
 | DB: ledger | Read | Write | Write |
 | Project files | — | — | Edit |
 | `.env`, secrets | — | — | — |
-| `baymax-docs/EVOLUTION.md` | Read | Edit | — |
-| `Baymax/**` (engine) | Edit (manual) | Edit (evolve only) | — |
+| `bro/EVOLUTION.md` | Read | Edit | — |
+| `TMB/**` (engine) | Edit (manual) | Edit (evolve only) | — |
 
 **Key rules:**
 - Executors never see GOALS, DISCUSSION, BLUEPRINT, or FLOWCHART — high-level context could mislead execution.
 - Executors get their task's plan from SQLite (not a shared file), keeping their context window focused.
 - The Planner validates each task directly — it already holds full project context, so no re-learning is needed.
-- Secrets and the Baymax engine are inaccessible to all agents during normal operation.
+- Secrets and the TMB engine are inaccessible to all agents during normal operation.
 
 ---
 
 ## Database
 
-Everything is persisted in `.baymax/baymax.db` (SQLite + JSON):
+Everything is persisted in `.tmb/tmb.db` (SQLite + JSON):
 
 | Table | Contents |
 |-------|----------|
@@ -170,13 +170,13 @@ Skills are **reusable knowledge artifacts** — concise markdown guides that age
 ### Two skill locations
 
 ```
-Baymax/skills/              <- curated seed skills (shipped with framework)
+TMB/skills/              <- curated seed skills (shipped with framework)
   db-operations.md
   branch-operations.md
   file-access.md
   mcp-patterns.md
 
-.baymax/skills/             <- agent-created skills (project-specific, persisted)
+.tmb/skills/             <- agent-created skills (project-specific, persisted)
   csv-handling.md
 ```
 
@@ -185,8 +185,8 @@ Baymax/skills/              <- curated seed skills (shipped with framework)
 1. **Planner assigns skills per task** — sees available skills with effectiveness scores and applicability conditions
 2. **Executor loads only assigned skills** — injected into context alongside the task prompt
 3. **Agents can request new skills** — Executor has a `skill_request` tool; Planner creates and reviews
-4. **Built-in skills auto-seed** — on first run, `Baymax/skills/*.md` are registered as curated skills
-5. **Agent-created skills go to `.baymax/skills/`** — survives Baymax upgrades
+4. **Built-in skills auto-seed** — on first run, `TMB/skills/*.md` are registered as curated skills
+5. **Agent-created skills go to `.tmb/skills/`** — survives TMB upgrades
 
 ### Trust and validation
 
@@ -207,13 +207,13 @@ Design follows the agentic skills lifecycle from research (Voyager 2023, SoK 202
 
 Config files use a **three-layer resolution** for seamless upgrades:
 
-1. `.baymax/config/<name>.yaml` — project-level user overrides (created by `setup`)
-2. `Baymax/config/<name>.yaml` — legacy overrides inside framework (backward compat)
-3. `Baymax/config/<name>.default.yaml` — tracked defaults
+1. `.tmb/config/<name>.yaml` — project-level user overrides (created by `setup`)
+2. `TMB/config/<name>.yaml` — legacy overrides inside framework (backward compat)
+3. `TMB/config/<name>.default.yaml` — tracked defaults
 
-Baymax tries each in order. You only create overrides for what you want to change.
+TMB tries each in order. You only create overrides for what you want to change.
 
-### `.baymax/config/project.yaml`
+### `.tmb/config/project.yaml`
 
 ```yaml
 name: my-project
@@ -221,17 +221,17 @@ test_command: pytest
 max_retry_per_task: 3
 
 # root_dir — auto-detected by default:
-#   `uv run baymax` from project root -> uses CWD
-#   `cd Baymax && uv run main.py`     -> uses parent of Baymax/
+#   `uv run tmb` from project root -> uses CWD
+#   `cd TMB && uv run main.py`     -> uses parent of TMB/
 # Uncomment to override:
-# root_dir: ..            # relative to Baymax/
+# root_dir: ..            # relative to TMB/
 # root_dir: /abs/path     # absolute
 
 # Path overrides (defaults shown):
 # paths:
-#   docs_dir: baymax-docs
-#   runtime_dir: .baymax
-#   db_name: baymax.db
+#   docs_dir: bro
+#   runtime_dir: .tmb
+#   db_name: tmb.db
 
 # Role display names:
 # roles:
@@ -241,7 +241,7 @@ max_retry_per_task: 3
 #   executor: SWE
 ```
 
-### `.baymax/config/nodes.yaml`
+### `.tmb/config/nodes.yaml`
 
 Each agent gets its own LLM — mix providers freely:
 
@@ -270,12 +270,12 @@ Anthropic and OpenAI are included by default. Other providers are optional — i
 |----------|------------|---------|-----------------|
 | Anthropic | `anthropic` | `ANTHROPIC_API_KEY` | included |
 | OpenAI | `openai` | `OPENAI_API_KEY` | included |
-| Google Gemini | `google` | `GOOGLE_API_KEY` | `uv add baymax[google]` |
-| Groq | `groq` | `GROQ_API_KEY` | `uv add baymax[groq]` |
-| Mistral | `mistral` | `MISTRAL_API_KEY` | `uv add baymax[mistral]` |
-| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `uv add baymax[deepseek]` |
-| Ollama (local) | `ollama` | none | `uv add baymax[ollama]` |
-| All providers | -- | -- | `uv add baymax[all]` |
+| Google Gemini | `google` | `GOOGLE_API_KEY` | `uv add tmb[google]` |
+| Groq | `groq` | `GROQ_API_KEY` | `uv add tmb[groq]` |
+| Mistral | `mistral` | `MISTRAL_API_KEY` | `uv add tmb[mistral]` |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `uv add tmb[deepseek]` |
+| Ollama (local) | `ollama` | none | `uv add tmb[ollama]` |
+| All providers | -- | -- | `uv add tmb[all]` |
 
 Every provider supports `base_url` for custom endpoints (proxies, self-hosted, Vercel AI Gateway, etc.).
 
@@ -291,7 +291,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ### Prompts
 
-Agent prompts are Markdown files in `Baymax/prompts/`. Edit to change behavior without touching Python:
+Agent prompts are Markdown files in `TMB/prompts/`. Edit to change behavior without touching Python:
 
 ```
 prompts/planner.md      # How the Planner plans, validates, and manages skills
@@ -307,12 +307,12 @@ Prompts support template variables: `{role_owner}`, `{role_planner}`, `{role_exe
 ## Project Structure
 
 ```
-your-project/                    # <- project root (run `uv run baymax` here)
-|-- .venv/                       # <- shared venv (Baymax deps + your deps)
-|-- pyproject.toml               # <- references Baymax as path dependency
+your-project/                    # <- project root (run `uv run tmb` here)
+|-- .venv/                       # <- shared venv (TMB deps + your deps)
+|-- pyproject.toml               # <- references TMB as path dependency
 |-- .env                         # <- API keys (gitignored)
 |
-|-- baymax-docs/                 # <- user interaction zone
+|-- bro/                 # <- user interaction zone
 |   |-- GOALS.md                 #    You write this
 |   |-- DISCUSSION.md            #    Generated: Planner-Owner Q&A
 |   |-- BLUEPRINT.md             #    Generated: task breakdown
@@ -320,16 +320,16 @@ your-project/                    # <- project root (run `uv run baymax` here)
 |   |-- EXECUTION.md             #    Generated: per-task plan summary
 |   +-- EVOLUTION.md             #    Generated: self-evolution plan
 |
-|-- .baymax/                     # <- hidden runtime state (gitignored)
-|   |-- baymax.db                #    SQLite audit trail
+|-- .tmb/                     # <- hidden runtime state (gitignored)
+|   |-- tmb.db                #    SQLite audit trail
 |   |-- config/                  #    User config overrides
 |   |   |-- project.yaml
 |   |   |-- nodes.yaml
 |   |   +-- mcp.yaml
 |   +-- skills/                  #    Agent-created skills
 |
-|-- Baymax/                      # <- framework (don't touch)
-|   |-- baymax/                  #    Engine code
+|-- TMB/                      # <- framework (don't touch)
+|   |-- tmb/                  #    Engine code
 |   |-- config/                  #    *.default.yaml only (tracked defaults)
 |   |-- prompts/                 #    Agent prompts (Markdown)
 |   |-- skills/                  #    Curated seed skills only
@@ -341,10 +341,10 @@ your-project/                    # <- project root (run `uv run baymax` here)
 
 ### Path Registry
 
-All paths are centralized in `baymax/paths.py`:
+All paths are centralized in `tmb/paths.py`:
 - **Framework paths** — immutable, resolved from `__file__`
-- **Project defaults** — directory names (`baymax-docs`, `.baymax`, `baymax.db`)
-- **Config overrides** — users customize via `.baymax/config/project.yaml` -> `paths:`
+- **Project defaults** — directory names (`bro`, `.tmb`, `tmb.db`)
+- **Config overrides** — users customize via `.tmb/config/project.yaml` -> `paths:`
 
 No hardcoded paths in the engine. Changing a directory name is a one-line config change.
 
@@ -352,11 +352,11 @@ No hardcoded paths in the engine. Changing a directory name is a one-line config
 
 ## MCP Integration
 
-Baymax supports the [Model Context Protocol](https://modelcontextprotocol.io/) as both a **client** and a **server**, plus the ability to **generate** new MCP servers.
+TMB supports the [Model Context Protocol](https://modelcontextprotocol.io/) as both a **client** and a **server**, plus the ability to **generate** new MCP servers.
 
-### Baymax as MCP Client
+### TMB as MCP Client
 
-Connect agents to external services (Notion, GitHub, Slack, etc.) via `.baymax/config/mcp.yaml`:
+Connect agents to external services (Notion, GitHub, Slack, etc.) via `.tmb/config/mcp.yaml`:
 
 ```yaml
 servers:
@@ -377,26 +377,26 @@ servers:
 
 MCP tools are auto-discovered at startup, converted to LangChain tools, and prefixed (`mcp_notion_search_pages`). The `agents` field controls per-node access. Tool output goes through the blacklist scrubber.
 
-### Baymax as MCP Server
+### TMB as MCP Server
 
-Expose Baymax's store and workflow to external hosts (Claude Desktop, Cursor):
+Expose TMB's store and workflow to external hosts (Claude Desktop, Cursor):
 
 ```bash
-baymax serve              # stdio (for Claude Desktop / Cursor)
-baymax serve --http 8080  # HTTP (for remote access)
+tmb serve              # stdio (for Claude Desktop / Cursor)
+tmb serve --http 8080  # HTTP (for remote access)
 ```
 
-**Exposed tools**: `baymax_list_issues`, `baymax_get_tasks`, `baymax_get_ledger`, `baymax_get_skills`, `baymax_query_branch`, `baymax_quick_task`, `baymax_export_report`
+**Exposed tools**: `tmb_list_issues`, `tmb_get_tasks`, `tmb_get_ledger`, `tmb_get_skills`, `tmb_query_branch`, `tmb_quick_task`, `tmb_export_report`
 
-**Exposed resources**: `baymax://issues`, `baymax://issues/{id}`, `baymax://skills`, `baymax://blueprint`
+**Exposed resources**: `tmb://issues`, `tmb://issues/{id}`, `tmb://skills`, `tmb://blueprint`
 
 Claude Desktop config:
 ```json
 {
   "mcpServers": {
-    "baymax": {
+    "tmb": {
       "command": "uv",
-      "args": ["run", "baymax", "serve"],
+      "args": ["run", "tmb", "serve"],
       "cwd": "/path/to/your-project"
     }
   }
@@ -405,22 +405,22 @@ Claude Desktop config:
 
 ### MCP Server Generator
 
-The Planner can scaffold project-specific MCP servers using the `mcp_generate` tool. Templates: `rest_api`, `database`, `file_based`. Generated servers go to `.baymax/mcp_servers/<name>/server.py` and are auto-registered.
+The Planner can scaffold project-specific MCP servers using the `mcp_generate` tool. Templates: `rest_api`, `database`, `file_based`. Generated servers go to `.tmb/mcp_servers/<name>/server.py` and are auto-registered.
 
 ---
 
 ## Self-Evolution
 
-Baymax can modify its own source code through a guarded flow:
+TMB can modify its own source code through a guarded flow:
 
 ```bash
-uv run baymax evolve "add a new CLI command to export tasks as CSV"
+uv run tmb evolve "add a new CLI command to export tasks as CSV"
 ```
 
 Safety gates:
 
-1. **Warning banner** — prominent warning about full Baymax access
-2. **Plan first** — Planner explores Baymax codebase, writes `baymax-docs/EVOLUTION.md`
+1. **Warning banner** — prominent warning about full TMB access
+2. **Plan first** — Planner explores TMB codebase, writes `bro/EVOLUTION.md`
 3. **Double approval** — Planner designs + Owner reviews
 4. **Git snapshot** — auto-commit before changes (`git revert HEAD` to rollback)
 5. **Health check** — import test + lint after changes
@@ -439,4 +439,4 @@ Safety gates:
 - **Configurable roles** — Generic by default, customizable via config.
 - **Sandboxed execution** — Tools restricted to the project root directory.
 - **MCP-native** — Client, server, and auto-generated MCP servers.
-- **Zero-rescan upgrades** — `file_registry` table persists project file knowledge across Baymax versions.
+- **Zero-rescan upgrades** — `file_registry` table persists project file knowledge across TMB versions.

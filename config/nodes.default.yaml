@@ -1,11 +1,11 @@
 # Supported providers: anthropic, openai, google, groq, mistral, deepseek, ollama
 # Non-core providers need their package installed:
-#   uv add langchain-google-genai   (or: uv add baymax[google])
-#   uv add langchain-groq           (or: uv add baymax[groq])
-#   uv add langchain-mistralai      (or: uv add baymax[mistral])
-#   uv add langchain-deepseek       (or: uv add baymax[deepseek])
-#   uv add langchain-ollama         (or: uv add baymax[ollama])
-#   uv add baymax[all]              (install all providers)
+#   uv add langchain-google-genai   (or: uv add tmb[google])
+#   uv add langchain-groq           (or: uv add tmb[groq])
+#   uv add langchain-mistralai      (or: uv add tmb[mistral])
+#   uv add langchain-deepseek       (or: uv add tmb[deepseek])
+#   uv add langchain-ollama         (or: uv add tmb[ollama])
+#   uv add tmb[all]                 (install all providers)
 
 planner:
   model:

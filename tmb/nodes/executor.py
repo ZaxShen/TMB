@@ -6,11 +6,11 @@ import json
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from baymax.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, extract_token_usage
-from baymax.paths import BAYMAX_ROOT, user_skills_dir
-from baymax.state import AgentState
-from baymax.store import Store
-from baymax.tools import get_tools_for_node
+from tmb.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, extract_token_usage
+from tmb.paths import TMB_ROOT, user_skills_dir
+from tmb.state import AgentState
+from tmb.store import Store
+from tmb.tools import get_tools_for_node
 
 _MAX_TOOL_ROUNDS = 15
 _MAX_TOOL_OUTPUT_CHARS = 20_000
@@ -48,7 +48,7 @@ def _normalize_content(content) -> str:
 
 def _resolve_skill_path(file_path: str):
     """Resolve a skill file path, checking seed dir then user dir."""
-    p = BAYMAX_ROOT / file_path
+    p = TMB_ROOT / file_path
     if p.exists():
         return p
     p = user_skills_dir() / file_path.replace("skills/", "", 1)

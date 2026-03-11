@@ -1,9 +1,9 @@
 """Centralized path registry — single source of truth for all file locations.
 
 Three layers:
-  1. Framework paths  — inside Baymax/, resolved from __file__ (immutable)
+  1. Framework paths  — inside TMB/, resolved from __file__ (immutable)
   2. Project defaults — directory names for user-facing / runtime locations
-  3. Config overrides — users customize via .baymax/config/project.yaml → paths:
+  3. Config overrides — users customize via .tmb/config/project.yaml → paths:
 """
 
 from __future__ import annotations
@@ -12,32 +12,32 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-BAYMAX_ROOT = Path(__file__).resolve().parent.parent
+TMB_ROOT = Path(__file__).resolve().parent.parent
 
-# ── Layer 1: Framework paths (immutable, inside Baymax/) ─────
+# ── Layer 1: Framework paths (immutable, inside TMB/) ─────
 
-PROMPTS_DIR     = BAYMAX_ROOT / "prompts"
-DEFAULT_CFG_DIR = BAYMAX_ROOT / "config"
-SEED_SKILLS_DIR = BAYMAX_ROOT / "skills"
+PROMPTS_DIR     = TMB_ROOT / "prompts"
+DEFAULT_CFG_DIR = TMB_ROOT / "config"
+SEED_SKILLS_DIR = TMB_ROOT / "skills"
 
 # ── Layer 2: Defaults for project-level directory names ──────
 
 _DEFAULTS = {
-    "docs_dir":    "baymax-docs",
-    "runtime_dir": ".baymax",
-    "db_name":     "baymax.db",
+    "docs_dir":    "bro",
+    "runtime_dir": ".tmb",
+    "db_name":     "tmb.db",
 }
 
 
 # ── Layer 3: Runtime resolution (lazy — config must load first) ──
 
 def _project_root() -> Path:
-    from baymax.config import get_project_root
+    from tmb.config import get_project_root
     return get_project_root()
 
 
 def _get_path_setting(key: str) -> str:
-    from baymax.config import load_project_config
+    from tmb.config import load_project_config
     cfg = load_project_config()
     return (cfg.get("paths") or {}).get(key, _DEFAULTS[key])
 

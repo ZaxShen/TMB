@@ -4,10 +4,10 @@ max_retry_per_task: 3
 
 # root_dir — override the auto-detected project root.
 # Leave unset (recommended) for auto-detection:
-#   - `uv run baymax` from project root → uses CWD
-#   - `cd Baymax && uv run main.py`     → uses parent of Baymax/
+#   - `uv run tmb` from project root → uses CWD
+#   - `cd TMB && uv run main.py`     → uses parent of TMB/
 # Explicit examples:
-#   root_dir: ..            # relative to Baymax/ directory
+#   root_dir: ..            # relative to TMB/ directory
 #   root_dir: /abs/path     # absolute path
 
 # Role display names — shown in CLI, logs, and SQLite.
@@ -30,4 +30,4 @@ blacklist:
   - "**/*.pem"
   - "**/*.key"
   - "**/*secret*"
-  - "Baymax/**"             # agents cannot touch the Baymax framework itself
+  - "TMB/**"                # agents cannot touch the TMB framework itself

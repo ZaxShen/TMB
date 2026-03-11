@@ -1,10 +1,10 @@
-"""Shared fixtures for Baymax unit tests."""
+"""Shared fixtures for TMB unit tests."""
 
 from __future__ import annotations
 
 import pytest
 
-from baymax.store import Store
+from tmb.store import Store
 
 
 @pytest.fixture
@@ -17,10 +17,10 @@ def store(tmp_path):
 @pytest.fixture
 def tmp_project(tmp_path):
     """Minimal fake project directory with required config files."""
-    cfg_dir = tmp_path / ".baymax" / "config"
+    cfg_dir = tmp_path / ".tmb" / "config"
     cfg_dir.mkdir(parents=True)
 
-    docs_dir = tmp_path / "baymax-docs"
+    docs_dir = tmp_path / "bro"
     docs_dir.mkdir()
 
     (cfg_dir / "project.yaml").write_text(

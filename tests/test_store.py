@@ -1,4 +1,4 @@
-"""Tests for baymax.store — SQLite audit store."""
+"""Tests for tmb.store — SQLite audit store."""
 
 from __future__ import annotations
 

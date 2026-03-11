@@ -9,8 +9,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from baymax.config import load_project_config, get_project_root
-from baymax.state import AgentState
+from tmb.config import load_project_config, get_project_root
+from tmb.state import AgentState
 
 _KEY_FILES = [
     "README.md",

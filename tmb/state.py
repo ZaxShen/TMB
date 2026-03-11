@@ -1,4 +1,4 @@
-"""Shared state schema for the Baymax graph."""
+"""Shared state schema for the TMB graph."""
 
 from __future__ import annotations
 

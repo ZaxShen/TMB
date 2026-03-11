@@ -1,6 +1,6 @@
 # MCP Server Configuration
 #
-# Define external MCP servers that Baymax agents can use.
+# Define external MCP servers that TMB agents can use.
 # Env vars support ${VAR} syntax — resolved from .env or environment.
 #
 # Transport options:

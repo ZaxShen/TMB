@@ -7,8 +7,8 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
-from baymax.permissions import filter_blacklisted_output
-from baymax.config import load_project_config
+from tmb.permissions import filter_blacklisted_output
+from tmb.config import load_project_config
 
 
 def create_search_tool(project_root: str):

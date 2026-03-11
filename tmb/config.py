@@ -10,15 +10,15 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
-from baymax.paths import BAYMAX_ROOT, DEFAULT_CFG_DIR, PROMPTS_DIR
+from tmb.paths import TMB_ROOT, DEFAULT_CFG_DIR, PROMPTS_DIR
 
-_BAYMAX_ROOT = BAYMAX_ROOT  # backward compat alias
+_TMB_ROOT = TMB_ROOT  # backward compat alias
 
-# Load .env: project root CWD wins over Baymax/
-load_dotenv(BAYMAX_ROOT / ".env")           # legacy fallback
-load_dotenv(BAYMAX_ROOT / ".." / ".env", override=True)
+# Load .env: project root CWD wins over TMB/
+load_dotenv(TMB_ROOT / ".env")           # legacy fallback
+load_dotenv(TMB_ROOT / ".." / ".env", override=True)
 _cwd_env = Path.cwd() / ".env"
-if _cwd_env.exists() and _cwd_env.resolve() != (BAYMAX_ROOT / ".env").resolve():
+if _cwd_env.exists() and _cwd_env.resolve() != (TMB_ROOT / ".env").resolve():
     load_dotenv(_cwd_env, override=True)
 
 
@@ -52,14 +52,14 @@ def load_yaml(path: Path) -> dict[str, Any]:
 def _config_path(name: str) -> Path:
     """Resolve a config file with three-layer fallback.
 
-    1. <project>/.baymax/config/<name>.yaml   (project-level user overrides)
-    2. Baymax/config/<name>.yaml              (legacy overrides inside framework)
-    3. Baymax/config/<name>.default.yaml      (tracked defaults)
+    1. <project>/.tmb/config/<name>.yaml   (project-level user overrides)
+    2. TMB/config/<name>.yaml              (legacy overrides inside framework)
+    3. TMB/config/<name>.default.yaml      (tracked defaults)
 
     Uses _detect_project_root() instead of paths.user_cfg_dir() to avoid
     circular dependency (paths.py → config.py → paths.py).
     """
-    project_override = _detect_project_root() / ".baymax" / "config" / f"{name}.yaml"
+    project_override = _detect_project_root() / ".tmb" / "config" / f"{name}.yaml"
     if project_override.exists():
         return project_override
     user = DEFAULT_CFG_DIR / f"{name}.yaml"
@@ -113,9 +113,9 @@ def load_project_config() -> dict[str, Any]:
 def _detect_project_root() -> Path:
     """CWD-based project root detection — no config dependency, no recursion."""
     cwd = Path.cwd().resolve()
-    baymax_resolved = BAYMAX_ROOT.resolve()
-    if cwd == baymax_resolved or str(cwd).startswith(str(baymax_resolved) + os.sep):
-        return baymax_resolved.parent
+    tmb_resolved = TMB_ROOT.resolve()
+    if cwd == tmb_resolved or str(cwd).startswith(str(tmb_resolved) + os.sep):
+        return tmb_resolved.parent
     return cwd
 
 
@@ -123,13 +123,13 @@ def get_project_root() -> Path:
     """Resolve the target project root.
 
     Resolution order:
-      1. ``root_dir`` in project.yaml (resolved relative to BAYMAX_ROOT)
+      1. ``root_dir`` in project.yaml (resolved relative to TMB_ROOT)
       2. Auto-detect from CWD via _detect_project_root()
     """
     cfg = load_project_config()
     raw = cfg.get("root_dir", "")
     if raw:
-        return (BAYMAX_ROOT / raw).resolve()
+        return (TMB_ROOT / raw).resolve()
     return _detect_project_root()
 
 

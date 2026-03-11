@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from baymax.nodes.planner import _extract_json_array, _extract_verdict
+from tmb.nodes.planner import _extract_json_array, _extract_verdict
 
 
 class TestExtractJsonArray:

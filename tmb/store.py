@@ -35,7 +35,7 @@ def _now() -> str:
 class Store:
     def __init__(self, db_path: str | Path | None = None):
         if db_path is None:
-            from baymax.paths import db_path as _default_db_path
+            from tmb.paths import db_path as _default_db_path
             db_path = _default_db_path()
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -244,8 +244,8 @@ class Store:
     }
 
     def _seed_skills(self):
-        """Register built-in skill files from Baymax/skills/ if not already in DB."""
-        from baymax.paths import SEED_SKILLS_DIR, BAYMAX_ROOT
+        """Register built-in skill files from TMB/skills/ if not already in DB."""
+        from tmb.paths import SEED_SKILLS_DIR, TMB_ROOT
         if not SEED_SKILLS_DIR.is_dir():
             return
         existing = {r["name"] for r in self.get_all_skills(include_inactive=True)}
@@ -263,7 +263,7 @@ class Store:
             self.create_skill(
                 name=name,
                 description=desc or name,
-                file_path=str(md.relative_to(BAYMAX_ROOT)),
+                file_path=str(md.relative_to(TMB_ROOT)),
                 created_by="system",
                 tags=["built-in"],
                 when_to_use=applicability.get("when_to_use", ""),
@@ -345,7 +345,7 @@ class Store:
         return [dict(r) for r in rows]
 
     def export_discussion_md(self, issue_id: int) -> str:
-        """Export current discussion as Markdown. This overwrites baymax-docs/DISCUSSION.md
+        """Export current discussion as Markdown. This overwrites bro/DISCUSSION.md
         each time — previous discussions are preserved only in the DB."""
         issue = self.get_issue(issue_id)
         discussions = self.get_discussions(issue_id)
@@ -362,7 +362,7 @@ class Store:
             "",
         ]
         for d in discussions:
-            from baymax.config import get_role_name
+            from tmb.config import get_role_name
             label = f"**{get_role_name('owner')}**" if d["role"] in ("cto", "owner") else f"**{get_role_name('planner')}**"
             lines.append(f"### {label}")
             lines.append(f"*{d['created_at']}*")
@@ -926,7 +926,7 @@ class Store:
         if discussions:
             print(f"\n  Discussion ({len(discussions)} messages):")
             for d in discussions:
-                from baymax.config import get_role_name
+                from tmb.config import get_role_name
                 label = get_role_name("owner") if d["role"] in ("cto", "owner") else get_role_name("planner")
                 preview = d["content"][:80].replace("\n", " ")
                 print(f"    {d['created_at']}  [{label}] {preview}...")
@@ -978,7 +978,7 @@ class Store:
         if discussions:
             lines += ["---", "", "## Discussion", ""]
             for d in discussions:
-                from baymax.config import get_role_name
+                from tmb.config import get_role_name
                 label = get_role_name("owner") if d["role"] in ("cto", "owner") else get_role_name("planner")
                 lines += [
                     f"### {label}",

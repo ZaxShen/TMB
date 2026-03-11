@@ -3,11 +3,11 @@
 Four layers:
 
 1. Docs write allowlist — agents may only write specific files inside
-   the baymax-docs/ directory (bypassed in evolve mode).
+   the bro/ directory (bypassed in evolve mode).
 
 2. Project blacklist — agents can NEVER access paths matching patterns
    in config/project.yaml → blacklist[]. Applies to all nodes.
-   In evolve mode, the ``Baymax/**`` pattern is lifted while all other
+   In evolve mode, the ``TMB/**`` pattern is lifted while all other
    patterns (secrets, .env, *.pem, etc.) remain enforced.
 
 3. Node-level access — certain docs are restricted to specific nodes.
@@ -15,8 +15,8 @@ Four layers:
    EXECUTION.md is readable by executor.
 
 4. Evolve context — a ``contextvars``-based toggle that temporarily lifts
-   the Baymax/** blacklist and write allowlist so the Planner can modify
-   any Baymax source file during a guarded self-evolution flow.
+   the TMB/** blacklist and write allowlist so the Planner can modify
+   any TMB source file during a guarded self-evolution flow.
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ from contextlib import contextmanager
 from fnmatch import fnmatch
 from pathlib import Path
 
-from baymax.config import load_project_config
-from baymax.paths import BAYMAX_ROOT, docs_dir
+from tmb.config import load_project_config
+from tmb.paths import TMB_ROOT, docs_dir
 
 
 # ── Evolve-mode context ─────────────────────────────────────
@@ -37,7 +37,7 @@ _evolve_mode = contextvars.ContextVar("evolve_mode", default=False)
 
 @contextmanager
 def evolve_context():
-    """Temporarily lift the Baymax/** blacklist and write allowlist
+    """Temporarily lift the TMB/** blacklist and write allowlist
     for a guarded self-evolution session."""
     token = _evolve_mode.set(True)
     try:
@@ -61,7 +61,7 @@ _WRITABLE_DOC_NAMES = {
 }
 
 
-def assert_baymax_write(path: Path):
+def assert_tmb_write(path: Path):
     """Raise if the path is not in the docs write allowlist.
     Bypassed entirely when evolve mode is active."""
     if _evolve_mode.get():
@@ -106,14 +106,14 @@ def assert_node_access(file_path: str, node_name: str):
 
 # ── Project blacklist ───────────────────────────────────────
 
-_BAYMAX_BLACKLIST_PATTERN = "Baymax/**"
+_TMB_BLACKLIST_PATTERN = "TMB/**"
 
 
 def _load_blacklist() -> list[str]:
     cfg = load_project_config()
     patterns = cfg.get("blacklist", [])
     if _evolve_mode.get():
-        patterns = [p for p in patterns if p != _BAYMAX_BLACKLIST_PATTERN]
+        patterns = [p for p in patterns if p != _TMB_BLACKLIST_PATTERN]
     return patterns
 
 

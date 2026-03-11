@@ -1,15 +1,15 @@
 # Skill: File Access & Permissions
 
-> Rules for reading and writing files within Baymax's permission model.
+> Rules for reading and writing files within TMB's permission model.
 
 ---
 
 ## Permission Layers
 
-Baymax enforces three layers of access control:
+TMB enforces three layers of access control:
 
-1. **Global blacklist** — files no agent can ever access (`.env`, secrets, `Baymax/**` internals)
-2. **Docs write allowlist** — only these user-facing files in `baymax-docs/` can be written by agents:
+1. **Global blacklist** — files no agent can ever access (`.env`, secrets, `TMB/**` internals)
+2. **Docs write allowlist** — only these user-facing files in `bro/` can be written by agents:
    - `DISCUSSION.md`, `BLUEPRINT.md`, `FLOWCHART.md`
    - `EXECUTION.md`, `QA_PLAN.md`, `EVOLUTION.md`
 3. **Node-specific restrictions** — certain doc files are restricted to specific agents
@@ -18,21 +18,21 @@ Baymax enforces three layers of access control:
 
 | File | Planner | Executor | Validator |
 |---|---|---|---|
-| `baymax-docs/GOALS.md` | read | — | — |
-| `baymax-docs/DISCUSSION.md` | read/write | — | — |
-| `baymax-docs/BLUEPRINT.md` | read/write | — | — |
-| `baymax-docs/FLOWCHART.md` | read/write | — | — |
-| `baymax-docs/EXECUTION.md` | read/write | read | read |
-| `baymax-docs/QA_PLAN.md` | read/write | — | read |
-| `.baymax/baymax.db` | read/write | read/write | read/write |
+| `bro/GOALS.md` | read | — | — |
+| `bro/DISCUSSION.md` | read/write | — | — |
+| `bro/BLUEPRINT.md` | read/write | — | — |
+| `bro/FLOWCHART.md` | read/write | — | — |
+| `bro/EXECUTION.md` | read/write | read | read |
+| `bro/QA_PLAN.md` | read/write | — | read |
+| `.tmb/tmb.db` | read/write | read/write | read/write |
 | Project source files | read | read/write | read |
 
 ## Directory Layout
 
 ```
-baymax-docs/     ← user-facing docs (GOALS, BLUEPRINT, etc.)
-.baymax/         ← hidden runtime state (DB, config overrides, agent-created skills)
-Baymax/          ← framework submodule (immutable during normal operation)
+bro/     ← user-facing docs (GOALS, BLUEPRINT, etc.)
+.tmb/         ← hidden runtime state (DB, config overrides, agent-created skills)
+TMB/          ← framework submodule (immutable during normal operation)
 ```
 
 ## Rules

@@ -1,4 +1,4 @@
-"""Tests for baymax.config — YAML loading, token extraction, role names."""
+"""Tests for tmb.config — YAML loading, token extraction, role names."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 
 def test_load_yaml(tmp_path):
-    from baymax.config import load_yaml
+    from tmb.config import load_yaml
 
     yaml_file = tmp_path / "test.yaml"
     yaml_file.write_text("name: hello\nitems:\n  - a\n  - b\n")
@@ -17,7 +17,7 @@ def test_load_yaml(tmp_path):
 
 
 def test_load_yaml_missing_file(tmp_path):
-    from baymax.config import load_yaml
+    from tmb.config import load_yaml
     import pytest
 
     with pytest.raises(FileNotFoundError):
@@ -25,7 +25,7 @@ def test_load_yaml_missing_file(tmp_path):
 
 
 def test_extract_token_usage_anthropic():
-    from baymax.config import extract_token_usage
+    from tmb.config import extract_token_usage
 
     class FakeResponse:
         response_metadata = {"usage": {"input_tokens": 1234, "output_tokens": 567}}
@@ -35,7 +35,7 @@ def test_extract_token_usage_anthropic():
 
 
 def test_extract_token_usage_openai():
-    from baymax.config import extract_token_usage
+    from tmb.config import extract_token_usage
 
     class FakeResponse:
         response_metadata = {"token_usage": {"prompt_tokens": 100, "completion_tokens": 50}}
@@ -45,7 +45,7 @@ def test_extract_token_usage_openai():
 
 
 def test_extract_token_usage_empty():
-    from baymax.config import extract_token_usage
+    from tmb.config import extract_token_usage
 
     class FakeResponse:
         response_metadata = {}
@@ -55,19 +55,19 @@ def test_extract_token_usage_empty():
 
 
 def test_get_role_name_defaults():
-    from baymax.config import get_role_name
+    from tmb.config import get_role_name
 
-    with patch("baymax.config.load_project_config", return_value={}):
+    with patch("tmb.config.load_project_config", return_value={}):
         assert get_role_name("planner") == "Planner"
         assert get_role_name("executor") == "Executor"
         assert get_role_name("owner") == "Project Owner"
 
 
 def test_get_role_name_custom():
-    from baymax.config import get_role_name
+    from tmb.config import get_role_name
 
     cfg = {"roles": {"planner": "Architect", "executor": "SWE"}}
-    with patch("baymax.config.load_project_config", return_value=cfg):
+    with patch("tmb.config.load_project_config", return_value=cfg):
         assert get_role_name("planner") == "Architect"
         assert get_role_name("executor") == "SWE"
         assert get_role_name("owner") == "Project Owner"

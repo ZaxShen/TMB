@@ -1,4 +1,4 @@
-"""MCP Server — exposes Baymax's store and workflow to external MCP hosts.
+"""MCP Server — exposes TMB's store and workflow to external MCP hosts.
 
 Start with:
     uv run main.py serve              # stdio transport (Claude Desktop, Cursor)
@@ -11,14 +11,14 @@ import json
 
 from mcp.server.fastmcp import FastMCP
 
-from baymax.paths import docs_dir
-from baymax.store import Store
+from tmb.paths import docs_dir
+from tmb.store import Store
 
 
 mcp = FastMCP(
-    "baymax",
+    "tmb",
     instructions=(
-        "Baymax is a multi-agent software engineering framework. "
+        "TMB is a multi-agent software engineering framework. "
         "Use these tools to inspect issues, tasks, skills, and workflow state."
     ),
 )
@@ -28,7 +28,7 @@ mcp = FastMCP(
 
 
 @mcp.tool()
-def baymax_list_issues(limit: int = 20) -> str:
+def tmb_list_issues(limit: int = 20) -> str:
     """List recent issues with their status.
 
     Args:
@@ -55,7 +55,7 @@ def baymax_list_issues(limit: int = 20) -> str:
 
 
 @mcp.tool()
-def baymax_get_tasks(issue_id: int) -> str:
+def tmb_get_tasks(issue_id: int) -> str:
     """Get task overview for an issue — lightweight metadata, no full descriptions.
 
     Args:
@@ -69,7 +69,7 @@ def baymax_get_tasks(issue_id: int) -> str:
 
 
 @mcp.tool()
-def baymax_get_ledger(issue_id: int) -> str:
+def tmb_get_ledger(issue_id: int) -> str:
     """Get ledger summary for an issue — event types and summaries, no JSON blobs.
 
     Args:
@@ -83,7 +83,7 @@ def baymax_get_ledger(issue_id: int) -> str:
 
 
 @mcp.tool()
-def baymax_get_skills() -> str:
+def tmb_get_skills() -> str:
     """List all active skills with effectiveness scores."""
     store = Store()
     skills = store.get_all_skills()
@@ -91,7 +91,7 @@ def baymax_get_skills() -> str:
 
 
 @mcp.tool()
-def baymax_query_branch(prefix: str) -> str:
+def tmb_query_branch(prefix: str) -> str:
     """Query all tasks under a branch prefix (e.g. '1' gets '1', '1.1', '1.1.1').
 
     Args:
@@ -105,14 +105,14 @@ def baymax_query_branch(prefix: str) -> str:
 
 
 @mcp.tool()
-def baymax_quick_task(instruction: str) -> str:
+def tmb_quick_task(instruction: str) -> str:
     """Run a quick task — the Planner handles it directly with no downstream agents.
 
     Args:
         instruction: What to do (e.g. 'update FLOWCHART based on current codebase')
     """
-    from baymax.nodes.gatekeeper import gatekeeper as gk_func
-    from baymax.nodes.planner import planner_quick_task
+    from tmb.nodes.gatekeeper import gatekeeper as gk_func
+    from tmb.nodes.planner import planner_quick_task
 
     store = Store()
     issue_id = store.create_issue(f"Quick: {instruction[:120]}", "")
@@ -130,7 +130,7 @@ def baymax_quick_task(instruction: str) -> str:
 
 
 @mcp.tool()
-def baymax_export_report(issue_id: int) -> str:
+def tmb_export_report(issue_id: int) -> str:
     """Export a full human-readable markdown report for an issue.
 
     Args:
@@ -143,13 +143,13 @@ def baymax_export_report(issue_id: int) -> str:
 # ── Resources ─────────────────────────────────────────────
 
 
-@mcp.resource("baymax://issues")
+@mcp.resource("tmb://issues")
 def resource_issues() -> str:
-    """All issues in the Baymax database."""
-    return baymax_list_issues(limit=100)
+    """All issues in the TMB database."""
+    return tmb_list_issues(limit=100)
 
 
-@mcp.resource("baymax://issues/{issue_id}")
+@mcp.resource("tmb://issues/{issue_id}")
 def resource_issue(issue_id: int) -> str:
     """Detailed view of a single issue including tasks and ledger."""
     store = Store()
@@ -165,15 +165,15 @@ def resource_issue(issue_id: int) -> str:
     }, indent=2)
 
 
-@mcp.resource("baymax://skills")
+@mcp.resource("tmb://skills")
 def resource_skills() -> str:
     """All active skills with metadata."""
-    return baymax_get_skills()
+    return tmb_get_skills()
 
 
-@mcp.resource("baymax://blueprint")
+@mcp.resource("tmb://blueprint")
 def resource_blueprint() -> str:
-    """Current BLUEPRINT.md content from baymax-docs/."""
+    """Current BLUEPRINT.md content from bro/."""
     path = docs_dir() / "BLUEPRINT.md"
     if path.exists():
         return path.read_text()
@@ -181,7 +181,7 @@ def resource_blueprint() -> str:
 
 
 def run_server(transport: str = "stdio", port: int = 8000):
-    """Start the Baymax MCP server."""
+    """Start the TMB MCP server."""
     if transport == "stdio":
         mcp.run(transport="stdio")
     elif transport == "http":

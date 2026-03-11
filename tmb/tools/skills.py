@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from langchain_core.tools import tool
 
-from baymax.paths import BAYMAX_ROOT, user_skills_dir
-from baymax.store import Store
+from tmb.paths import TMB_ROOT, user_skills_dir
+from tmb.store import Store
 
 
 def create_skill_tool(creator_node: str = "planner"):
@@ -77,7 +77,7 @@ def create_skill_request_tool(requester_node: str = "executor"):
         matches = store.search_skills(need)
         if matches:
             best = matches[0]
-            skill_path = BAYMAX_ROOT / best["file_path"]
+            skill_path = TMB_ROOT / best["file_path"]
             if not skill_path.exists():
                 skill_path = user_skills_dir() / best["file_path"].replace("skills/", "", 1)
             content_preview = ""

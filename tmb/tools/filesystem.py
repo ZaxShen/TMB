@@ -13,7 +13,7 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
-from baymax.permissions import assert_not_blacklisted, assert_node_access
+from tmb.permissions import assert_not_blacklisted, assert_node_access
 
 
 def _resolve_safe(project_root: str, file_path: str) -> Path:

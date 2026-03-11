@@ -1,4 +1,4 @@
-# Baymax
+# TMB
 
 > Your reliable agents framework — maintainable, token-efficient, and built to production standards.
 
@@ -6,11 +6,11 @@
 
 ## What You Need to Know
 
-Baymax works through two files in the `baymax-docs/` folder. That's your only interaction point.
+TMB works through two files in the `bro/` folder. That's your only interaction point.
 
 ### 1. Write your goals
 
-Open `baymax-docs/GOALS.md` and describe what you want done in plain language:
+Open `bro/GOALS.md` and describe what you want done in plain language:
 
 ```markdown
 # Goals
@@ -22,24 +22,24 @@ Output results to output/matchings.csv.
 
 No special syntax required. Write like you're explaining to a colleague.
 
-### 2. Run Baymax
+### 2. Run TMB
 
 ```bash
-uv run baymax
+uv run tmb
 ```
 
-Baymax reads your goals, then the Planner will ask you clarifying questions in `baymax-docs/DISCUSSION.md`. Open that file, write your answers below the marker, save, and press Enter in the terminal.
+TMB reads your goals, then the Planner will ask you clarifying questions in `bro/DISCUSSION.md`. Open that file, write your answers below the marker, save, and press Enter in the terminal.
 
-When the Planner has enough clarity, it produces a plan for your review. Approve it, and Baymax executes — task by task, with automatic validation.
+When the Planner has enough clarity, it produces a plan for your review. Approve it, and TMB executes — task by task, with automatic validation.
 
 ### 3. That's it
 
 Everything else happens automatically:
-- `baymax-docs/BLUEPRINT.md` — the task breakdown (generated for your review)
-- `baymax-docs/FLOWCHART.md` — project architecture overview (generated when needed)
-- `baymax-docs/EXECUTION.md` — execution summary (generated)
+- `bro/BLUEPRINT.md` — the task breakdown (generated for your review)
+- `bro/FLOWCHART.md` — project architecture overview (generated when needed)
+- `bro/EXECUTION.md` — execution summary (generated)
 
-You can interrupt at any time (Ctrl+C, close your laptop). Run `uv run baymax` again and it picks up exactly where it left off.
+You can interrupt at any time (Ctrl+C, close your laptop). Run `uv run tmb` again and it picks up exactly where it left off.
 
 ---
 
@@ -51,35 +51,35 @@ You can interrupt at any time (Ctrl+C, close your laptop). Run `uv run baymax` a
 
 ```bash
 cd your-project/
-git clone https://github.com/ZaxShen/Baymax.git
-./Baymax/install
-uv run baymax
+git clone https://github.com/ZaxShen/TMB.git
+./TMB/install
+uv run tmb
 ```
 
-**Joining an existing project** (someone already set up Baymax):
+**Joining an existing project** (someone already set up TMB):
 
 ```bash
 cd your-project/
-./Baymax/install
-uv run baymax
+./TMB/install
+uv run tmb
 ```
 
-The install script creates `pyproject.toml` (if needed) and installs dependencies. The first time you run `uv run baymax`, Baymax walks you through naming your project, choosing an LLM provider, and setting your API key — then continues straight into the workflow.
+The install script creates `pyproject.toml` (if needed) and installs dependencies. The first time you run `uv run tmb`, TMB walks you through naming your project, choosing an LLM provider, and setting your API key — then continues straight into the workflow.
 
 After setup your project looks like this:
 
 ```
 your-project/
-├── baymax-docs/         ← you interact here (GOALS.md, DISCUSSION.md)
-├── .baymax/             ← runtime state (automatic, hidden)
-├── Baymax/              ← framework (don't touch)
+├── bro/         ← you interact here (GOALS.md, DISCUSSION.md)
+├── .tmb/             ← runtime state (automatic, hidden)
+├── TMB/              ← framework (don't touch)
 ├── .env                 ← your API key
 └── ...
 ```
 
-> **Important**: Always run commands from your **project root** (the parent of `Baymax/`), not from inside `Baymax/`.
+> **Important**: Always run commands from your **project root** (the parent of `TMB/`), not from inside `TMB/`.
 
-To update Baymax later: `cd Baymax && git pull origin dev && cd .. && ./Baymax/install`
+To update TMB later: `cd TMB && git pull origin dev && cd .. && ./TMB/install`
 
 ---
 
@@ -87,14 +87,14 @@ To update Baymax later: `cd Baymax && git pull origin dev && cd .. && ./Baymax/i
 
 | Command | What it does |
 |---|---|
-| `uv run baymax` | Full workflow — reads your goals, discusses, plans, executes |
-| `uv run baymax "fix the login bug"` | Quick task — skips discussion, auto-approves the plan |
-| `uv run baymax log` | Show recent issues |
-| `uv run baymax log 3` | Show details for issue #3 |
-| `uv run baymax report 3` | Export a full markdown report for issue #3 |
-| `uv run baymax tokens` | Show token usage across all issues |
-| `uv run baymax tokens 3` | Show token usage for issue #3 |
-| `uv run baymax setup` | Re-run setup (change LLM provider, role names, etc.) |
+| `uv run tmb` | Full workflow — reads your goals, discusses, plans, executes |
+| `uv run tmb "fix the login bug"` | Quick task — skips discussion, auto-approves the plan |
+| `uv run tmb log` | Show recent issues |
+| `uv run tmb log 3` | Show details for issue #3 |
+| `uv run tmb report 3` | Export a full markdown report for issue #3 |
+| `uv run tmb tokens` | Show token usage across all issues |
+| `uv run tmb tokens 3` | Show token usage for issue #3 |
+| `uv run tmb setup` | Re-run setup (change LLM provider, role names, etc.) |
 
 ---
 
@@ -122,10 +122,10 @@ Planner produces BLUEPRINT.md (+ FLOWCHART.md if needed)
 You review and approve
        |
        v
-Baymax executes, validates each task, reports results
+TMB executes, validates each task, reports results
 ```
 
-Every discussion, decision, and result is saved. Run `uv run baymax report 3` six months later and see exactly what happened.
+Every discussion, decision, and result is saved. Run `uv run tmb report 3` six months later and see exactly what happened.
 
 ---
 

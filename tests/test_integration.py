@@ -12,7 +12,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from langchain_core.messages import AIMessage
-from baymax.store import Store
+from tmb.store import Store
 
 
 def _fake_ai_message(content: str) -> AIMessage:
@@ -47,11 +47,11 @@ class FakeLLM:
 @pytest.fixture
 def project_dir(tmp_path):
     """Set up a minimal project directory with required config and docs."""
-    cfg_dir = tmp_path / ".baymax" / "config"
+    cfg_dir = tmp_path / ".tmb" / "config"
     cfg_dir.mkdir(parents=True)
-    docs_dir = tmp_path / "baymax-docs"
+    docs_dir = tmp_path / "bro"
     docs_dir.mkdir()
-    skills_dir = tmp_path / ".baymax" / "skills"
+    skills_dir = tmp_path / ".tmb" / "skills"
     skills_dir.mkdir(parents=True)
 
     (cfg_dir / "project.yaml").write_text(
@@ -66,7 +66,7 @@ def project_dir(tmp_path):
 @pytest.fixture
 def db_store(project_dir):
     """Store backed by a temp DB inside the fake project."""
-    db = project_dir / ".baymax" / "baymax.db"
+    db = project_dir / ".tmb" / "tmb.db"
     return Store(db_path=db)
 
 
@@ -112,26 +112,26 @@ def test_executor_validate_pipeline(project_dir, db_store):
         "executor": {"model": {"provider": "anthropic", "name": "test"}, "tools": []},
     }
 
-    db_path = project_dir / ".baymax" / "baymax.db"
+    db_path = project_dir / ".tmb" / "tmb.db"
 
     with (
-        patch("baymax.nodes.executor.get_llm", side_effect=fake_get_llm),
-        patch("baymax.nodes.executor.load_prompt", return_value="You are an executor."),
-        patch("baymax.nodes.executor.load_nodes_config", return_value=nodes_config),
-        patch("baymax.nodes.executor.get_project_root", return_value=project_dir),
-        patch("baymax.nodes.executor.get_tools_for_node", return_value=[]),
-        patch("baymax.nodes.executor.Store", return_value=db_store),
+        patch("tmb.nodes.executor.get_llm", side_effect=fake_get_llm),
+        patch("tmb.nodes.executor.load_prompt", return_value="You are an executor."),
+        patch("tmb.nodes.executor.load_nodes_config", return_value=nodes_config),
+        patch("tmb.nodes.executor.get_project_root", return_value=project_dir),
+        patch("tmb.nodes.executor.get_tools_for_node", return_value=[]),
+        patch("tmb.nodes.executor.Store", return_value=db_store),
 
-        patch("baymax.nodes.planner.get_llm", side_effect=fake_get_llm),
-        patch("baymax.nodes.planner.load_prompt", return_value="You are a planner."),
-        patch("baymax.nodes.planner.load_nodes_config", return_value=nodes_config),
-        patch("baymax.nodes.planner.get_project_root", return_value=project_dir),
-        patch("baymax.nodes.planner.load_project_config", return_value={"max_retry_per_task": 3}),
-        patch("baymax.nodes.planner.get_tools_for_node", return_value=[]),
-        patch("baymax.nodes.planner.Store", return_value=db_store),
-        patch("baymax.nodes.planner.docs_dir", return_value=project_dir / "baymax-docs"),
+        patch("tmb.nodes.planner.get_llm", side_effect=fake_get_llm),
+        patch("tmb.nodes.planner.load_prompt", return_value="You are a planner."),
+        patch("tmb.nodes.planner.load_nodes_config", return_value=nodes_config),
+        patch("tmb.nodes.planner.get_project_root", return_value=project_dir),
+        patch("tmb.nodes.planner.load_project_config", return_value={"max_retry_per_task": 3}),
+        patch("tmb.nodes.planner.get_tools_for_node", return_value=[]),
+        patch("tmb.nodes.planner.Store", return_value=db_store),
+        patch("tmb.nodes.planner.docs_dir", return_value=project_dir / "bro"),
     ):
-        from baymax.engine import build_execution_graph
+        from tmb.engine import build_execution_graph
 
         graph = build_execution_graph()
 

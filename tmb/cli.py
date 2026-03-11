@@ -1,15 +1,15 @@
-"""Baymax CLI entry point.
+"""TMB CLI entry point.
 
 Usage:
-  baymax                               Full workflow (reads baymax-docs/GOALS.md)
-  baymax "update FLOWCHART"            Quick task (full pipeline, no interactive steps)
-  baymax evolve "instruction"          Self-evolution (modify Baymax itself)
-  baymax setup                         Interactive project setup
-  baymax log                           Show recent issues
-  baymax log <id>                      Show issue details + ledger
-  baymax report <id>                   Export full report as markdown
-  baymax serve                         Start MCP server (stdio)
-  baymax serve --http 8080             Start MCP server (HTTP)
+  tmb                               Full workflow (reads bro/GOALS.md)
+  tmb "update FLOWCHART"            Quick task (full pipeline, no interactive steps)
+  tmb evolve "instruction"          Self-evolution (modify TMB itself)
+  tmb setup                         Interactive project setup
+  tmb log                           Show recent issues
+  tmb log <id>                      Show issue details + ledger
+  tmb report <id>                   Export full report as markdown
+  tmb serve                         Start MCP server (stdio)
+  tmb serve --http 8080             Start MCP server (HTTP)
 """
 
 from __future__ import annotations
@@ -21,16 +21,16 @@ import sys
 
 import yaml
 
-from baymax.config import load_project_config, get_project_root, get_role_name
-from baymax.paths import BAYMAX_ROOT, docs_dir, runtime_dir, user_cfg_dir, ensure_dirs
-from baymax.store import Store
+from tmb.config import load_project_config, get_project_root, get_role_name
+from tmb.paths import TMB_ROOT, docs_dir, runtime_dir, user_cfg_dir, ensure_dirs
+from tmb.store import Store
 
 
 # ── Helpers ──────────────────────────────────────────────────
 
 
 def _read_goals_md() -> str:
-    """Read and clean GOALS.md from baymax-docs/, stripping template boilerplate."""
+    """Read and clean GOALS.md from bro/, stripping template boilerplate."""
     goals_path = docs_dir() / "GOALS.md"
     if not goals_path.exists():
         goals_path.parent.mkdir(parents=True, exist_ok=True)
@@ -39,7 +39,7 @@ def _read_goals_md() -> str:
             "Write your goals below. The Planner will read this file and discuss with you.\n\n"
             "---\n\n"
         )
-        print(f"[Baymax] Created {goals_path}")
+        print(f"[TMB] Created {goals_path}")
         print("       Write your goals there, then run again.")
         sys.exit(1)
 
@@ -53,7 +53,7 @@ def _read_goals_md() -> str:
     ).strip()
 
     if not goals_md:
-        print(f"[Baymax] {goals_path} is empty or still has the template.")
+        print(f"[TMB] {goals_path} is empty or still has the template.")
         print("       Write your goals there, then run again.")
         sys.exit(1)
 
@@ -73,7 +73,7 @@ def _derive_objective(goals_md: str) -> str:
 
 
 def _scan_project_context(store: Store, issue_id: int, goals_md: str) -> str:
-    from baymax.nodes.gatekeeper import gatekeeper as run_gatekeeper
+    from tmb.nodes.gatekeeper import gatekeeper as run_gatekeeper
 
     gk_state = {
         "objective": goals_md,
@@ -116,7 +116,7 @@ def _tasks_to_blueprint(tasks: list[dict]) -> list[dict]:
 def _show_blueprint(tasks: list[dict]):
     print()
     planner_display = get_role_name("planner").upper()
-    print(f"[{planner_display}] Blueprint ({len(tasks)} tasks) — see baymax-docs/BLUEPRINT.md")
+    print(f"[{planner_display}] Blueprint ({len(tasks)} tasks) — see bro/BLUEPRINT.md")
     for t in tasks:
         bid = t.get("branch_id") or t.get("task_id", "?")
         label = t.get("title") or t["description"][:80]
@@ -131,13 +131,13 @@ def _approve_blueprint(store: Store, issue_id: int) -> bool:
         store.log(issue_id, None, "owner", "blueprint_rejected", {},
                   summary=f"{owner_display} rejected blueprint")
         store.close_issue(issue_id, "rejected")
-        print("[Baymax] Blueprint rejected. Issue closed.")
+        print("[TMB] Blueprint rejected. Issue closed.")
         return False
 
     store.log(issue_id, None, "owner", "blueprint_approved", {},
               summary=f"{owner_display} approved blueprint")
     print()
-    print("[Baymax] Blueprint approved. Generating execution plan...")
+    print("[TMB] Blueprint approved. Generating execution plan...")
     print("-" * 40)
     return True
 
@@ -153,13 +153,13 @@ def _quick_task(store: Store, instruction: str):
     objective = instruction[:120].strip()
     issue_id = store.create_issue(objective, instruction)
 
-    print(f"[Baymax] Quick task — Issue #{issue_id}: {objective}")
-    print(f"[Baymax] Project: {project_cfg['name']}  |  Root: {project_root}")
+    print(f"[TMB] Quick task — Issue #{issue_id}: {objective}")
+    print(f"[TMB] Project: {project_cfg['name']}  |  Root: {project_root}")
     print("-" * 40)
 
     project_context = _scan_project_context(store, issue_id, instruction)
 
-    from baymax.engine import build_graph
+    from tmb.engine import build_graph
 
     graph = build_graph()
     thread = {"configurable": {"thread_id": f"issue-{issue_id}"}}
@@ -191,7 +191,7 @@ def _quick_task(store: Store, instruction: str):
 
     store.log(issue_id, None, "owner", "blueprint_approved", {},
               summary="Auto-approved (quick task)")
-    print("[Baymax] Blueprint auto-approved (quick task)")
+    print("[TMB] Blueprint auto-approved (quick task)")
     print("-" * 40)
 
     state = graph.invoke(None, config=thread)
@@ -199,22 +199,22 @@ def _quick_task(store: Store, instruction: str):
     _finalize_issue(store, issue_id)
 
 
-def _scan_baymax_context(store: Store, issue_id: int, instruction: str) -> str:
-    """Scan the Baymax directory itself (not the project) for self-evolution."""
-    from baymax.nodes.gatekeeper import _get_tree, _read_key_files
+def _scan_tmb_context(store: Store, issue_id: int, instruction: str) -> str:
+    """Scan the TMB directory itself (not the project) for self-evolution."""
+    from tmb.nodes.gatekeeper import _get_tree, _read_key_files
 
-    tree = _get_tree(BAYMAX_ROOT)
-    key_files = _read_key_files(BAYMAX_ROOT)
+    tree = _get_tree(TMB_ROOT)
+    key_files = _read_key_files(TMB_ROOT)
 
     context = (
-        f"## Baymax Framework\n"
-        f"## Root: {BAYMAX_ROOT}\n\n"
+        f"## TMB Framework\n"
+        f"## Root: {TMB_ROOT}\n\n"
         f"### Directory structure\n```\n{tree}\n```\n\n"
         f"### Key files\n{key_files}\n"
     )
-    store.log(issue_id, None, "gatekeeper", "baymax_context_scanned", {},
-              summary="Scanned Baymax directory tree for self-evolution")
-    print(f"[GATEKEEPER] Scanned {len(tree.splitlines())} paths in Baymax/")
+    store.log(issue_id, None, "gatekeeper", "tmb_context_scanned", {},
+              summary="Scanned TMB directory tree for self-evolution")
+    print(f"[GATEKEEPER] Scanned {len(tree.splitlines())} paths in TMB/")
     return context
 
 
@@ -222,7 +222,7 @@ _EVOLVE_WARNING = """
 ╔══════════════════════════════════════════════════════════════╗
 ║                  ⚠  SELF-EVOLUTION MODE  ⚠                  ║
 ║                                                              ║
-║  Agents will have FULL READ/WRITE access to Baymax source.     ║
+║  Agents will have FULL READ/WRITE access to TMB source.     ║
 ║  A git snapshot will be created before any changes.          ║
 ║                                                              ║
 ║  Rollback: git revert HEAD  (after evolution completes)      ║
@@ -231,12 +231,12 @@ _EVOLVE_WARNING = """
 
 
 def _git_snapshot(instruction: str) -> bool:
-    """Commit current Baymax state as a safety snapshot before self-evolution.
+    """Commit current TMB state as a safety snapshot before self-evolution.
     Returns True if a snapshot was created, False if tree was already clean."""
     try:
         status = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=str(BAYMAX_ROOT), capture_output=True, text=True, timeout=10,
+            cwd=str(TMB_ROOT), capture_output=True, text=True, timeout=10,
         )
         if not status.stdout.strip():
             print("[EVOLVE] Working tree clean — no snapshot needed.")
@@ -244,12 +244,12 @@ def _git_snapshot(instruction: str) -> bool:
 
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(BAYMAX_ROOT), check=True, timeout=10,
+            cwd=str(TMB_ROOT), check=True, timeout=10,
         )
-        msg = f"Baymax snapshot before self-evolution: {instruction[:80]}"
+        msg = f"TMB snapshot before self-evolution: {instruction[:80]}"
         subprocess.run(
             ["git", "commit", "-m", msg],
-            cwd=str(BAYMAX_ROOT), check=True, capture_output=True, timeout=15,
+            cwd=str(TMB_ROOT), check=True, capture_output=True, timeout=15,
         )
         print(f"[EVOLVE] Git snapshot committed: {msg}")
         return True
@@ -259,12 +259,12 @@ def _git_snapshot(instruction: str) -> bool:
 
 
 def _health_check() -> bool:
-    """Verify Baymax can still be imported after self-evolution."""
+    """Verify TMB can still be imported after self-evolution."""
     print("[EVOLVE] Running health check...")
     try:
         result = subprocess.run(
-            [sys.executable, "-c", "import baymax; import baymax.engine; import baymax.store"],
-            cwd=str(BAYMAX_ROOT), capture_output=True, text=True, timeout=30,
+            [sys.executable, "-c", "import tmb; import tmb.engine; import tmb.store"],
+            cwd=str(TMB_ROOT), capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
             print(f"[EVOLVE] HEALTH CHECK FAILED — import error:")
@@ -276,8 +276,8 @@ def _health_check() -> bool:
 
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "ruff", "check", "baymax/"],
-            cwd=str(BAYMAX_ROOT), capture_output=True, text=True, timeout=30,
+            [sys.executable, "-m", "ruff", "check", "tmb/"],
+            cwd=str(TMB_ROOT), capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
             warnings = result.stdout[:500] if result.stdout else result.stderr[:500]
@@ -290,9 +290,9 @@ def _health_check() -> bool:
 
 
 def _evolve(store: Store, instruction: str):
-    """Self-evolution flow: scan Baymax → Planner plans → Owner approves
+    """Self-evolution flow: scan TMB → Planner plans → Owner approves
     → git snapshot → Planner executes → health check."""
-    from baymax.permissions import evolve_context
+    from tmb.permissions import evolve_context
 
     print(_EVOLVE_WARNING)
 
@@ -306,11 +306,11 @@ def _evolve(store: Store, instruction: str):
     print("-" * 60)
 
     with evolve_context():
-        baymax_context = _scan_baymax_context(store, issue_id, instruction)
+        tmb_context = _scan_tmb_context(store, issue_id, instruction)
 
     with evolve_context():
-        from baymax.nodes.planner import planner_evolve
-        plan = planner_evolve(instruction, baymax_context, issue_id)
+        from tmb.nodes.planner import planner_evolve
+        plan = planner_evolve(instruction, tmb_context, issue_id)
 
     if not plan or not plan.strip():
         print("[EVOLVE] Planner produced no plan. Aborting.")
@@ -338,8 +338,8 @@ def _evolve(store: Store, instruction: str):
     _git_snapshot(instruction)
 
     with evolve_context():
-        from baymax.nodes.planner import planner_evolve_execute
-        result = planner_evolve_execute(instruction, plan, baymax_context, issue_id)
+        from tmb.nodes.planner import planner_evolve_execute
+        result = planner_evolve_execute(instruction, plan, tmb_context, issue_id)
 
     healthy = _health_check()
 
@@ -356,8 +356,8 @@ def _evolve(store: Store, instruction: str):
         store.close_issue(issue_id, "failed")
         print()
         print("!" * 60)
-        print("[EVOLVE] HEALTH CHECK FAILED. Your changes may have broken Baymax.")
-        print("[EVOLVE] To rollback:  cd Baymax && git revert HEAD")
+        print("[EVOLVE] HEALTH CHECK FAILED. Your changes may have broken TMB.")
+        print("[EVOLVE] To rollback:  cd TMB && git revert HEAD")
         print("!" * 60)
 
     if result:
@@ -396,19 +396,19 @@ def _finalize_issue(store: Store, issue_id: int):
         pending = [t for t in tasks if t["status"] in ("pending", "in_progress")]
         if stuck:
             print(
-                f"[Baymax] {len(stuck)} task(s) failed/escalated. "
+                f"[TMB] {len(stuck)} task(s) failed/escalated. "
                 f"Issue #{issue_id} stays open — re-run to retry."
             )
         elif pending:
             print(
-                f"[Baymax] {len(pending)} task(s) still pending. "
+                f"[TMB] {len(pending)} task(s) still pending. "
                 f"Issue #{issue_id} stays open — re-run to continue."
             )
 
     print("-" * 40)
     store.print_summary(issue_id)
     _print_token_summary(store, issue_id)
-    print(f"[Baymax] See {docs_dir().name}/ for DISCUSSION, BLUEPRINT, FLOWCHART, and EXECUTION.")
+    print(f"[TMB] See {docs_dir().name}/ for DISCUSSION, BLUEPRINT, FLOWCHART, and EXECUTION.")
 
 
 def _run_execution_plan(
@@ -419,7 +419,7 @@ def _run_execution_plan(
     blueprint: list[dict],
 ):
     """Generate EXECUTION.md by calling planner_execution_plan directly."""
-    from baymax.nodes.planner import planner_execution_plan
+    from tmb.nodes.planner import planner_execution_plan
 
     state = {
         "objective": goals_md,
@@ -447,7 +447,7 @@ def _run_execution(
     start_task_idx: int,
 ):
     """Run the execution-only graph from a given task index."""
-    from baymax.engine import build_execution_graph
+    from tmb.engine import build_execution_graph
 
     graph = build_execution_graph()
     graph.invoke(
@@ -481,16 +481,16 @@ def _fresh_start(store: Store):
     objective = _derive_objective(goals_md)
     issue_id = store.create_issue(objective, goals_md)
 
-    print(f"[Baymax] Issue #{issue_id}: {objective}")
-    print(f"[Baymax] Project: {project_cfg['name']}  |  Root: {project_root}")
+    print(f"[TMB] Issue #{issue_id}: {objective}")
+    print(f"[TMB] Project: {project_cfg['name']}  |  Root: {project_root}")
 
     project_context = _scan_project_context(store, issue_id, goals_md)
 
-    from baymax.nodes.discussion import run_discussion
+    from tmb.nodes.discussion import run_discussion
 
     discussion_md = run_discussion(goals_md, project_context, store, issue_id)
 
-    from baymax.engine import build_graph
+    from tmb.engine import build_graph
 
     graph = build_graph()
     thread = {"configurable": {"thread_id": f"issue-{issue_id}"}}
@@ -519,7 +519,7 @@ def _fresh_start(store: Store):
         sys.exit(1)
 
     _show_blueprint(blueprint)
-    print(f"[Baymax] Review {docs_dir().name}/BLUEPRINT.md and {docs_dir().name}/FLOWCHART.md")
+    print(f"[TMB] Review {docs_dir().name}/BLUEPRINT.md and {docs_dir().name}/FLOWCHART.md")
     print()
 
     if not _approve_blueprint(store, issue_id):
@@ -540,8 +540,8 @@ def _resume(store: Store, issue: dict):
     project_cfg = load_project_config()
     project_root = get_project_root()
 
-    print(f"[Baymax] Resuming issue #{issue_id}: {issue['objective']}")
-    print(f"[Baymax] Project: {project_cfg['name']}  |  Root: {project_root}")
+    print(f"[TMB] Resuming issue #{issue_id}: {issue['objective']}")
+    print(f"[TMB] Project: {project_cfg['name']}  |  Root: {project_root}")
 
     project_context = None
 
@@ -552,19 +552,19 @@ def _resume(store: Store, issue: dict):
         return project_context
 
     if not store.has_event(issue_id, "discussion_complete"):
-        print("[Baymax] Phase: discussion (incomplete)")
+        print("[TMB] Phase: discussion (incomplete)")
         ctx = ensure_context()
-        from baymax.nodes.discussion import run_discussion
+        from tmb.nodes.discussion import run_discussion
 
         run_discussion(goals_md, ctx, store, issue_id)
 
     tasks = store.get_tasks(issue_id)
     if not tasks:
-        print("[Baymax] Phase: planning (pending)")
+        print("[TMB] Phase: planning (pending)")
         ctx = ensure_context()
         discussion_md = store.export_discussion_md(issue_id)
 
-        from baymax.engine import build_graph
+        from tmb.engine import build_graph
 
         graph = build_graph()
         thread = {"configurable": {"thread_id": f"issue-{issue_id}"}}
@@ -602,20 +602,20 @@ def _resume(store: Store, issue: dict):
         return
 
     if not store.has_event(issue_id, "blueprint_approved"):
-        print("[Baymax] Phase: approval (pending)")
+        print("[TMB] Phase: approval (pending)")
         _show_blueprint(tasks)
         if not _approve_blueprint(store, issue_id):
             sys.exit(0)
 
     if not store.has_event(issue_id, "execution_plan_generated"):
-        print("[Baymax] Phase: execution plan (pending)")
+        print("[TMB] Phase: execution plan (pending)")
         ctx = ensure_context()
         blueprint = _tasks_to_blueprint(tasks)
         _run_execution_plan(store, issue_id, goals_md, ctx, blueprint)
 
     actionable = store.get_first_actionable_task(issue_id)
     if not actionable:
-        print("[Baymax] All tasks already completed.")
+        print("[TMB] All tasks already completed.")
         store.close_issue(issue_id, "completed")
         store.print_summary(issue_id)
         return
@@ -630,7 +630,7 @@ def _resume(store: Store, issue: dict):
     total = len(tasks)
 
     print(
-        f"[Baymax] Phase: execution ([{actionable['branch_id']}] {completed_count}/{total}, "
+        f"[TMB] Phase: execution ([{actionable['branch_id']}] {completed_count}/{total}, "
         f"{completed_count} already done)"
     )
     print("-" * 40)
@@ -644,10 +644,10 @@ def _resume(store: Store, issue: dict):
 
 
 def setup():
-    """Interactive setup — writes .baymax/config/project.yaml and .env."""
+    """Interactive setup — writes .tmb/config/project.yaml and .env."""
     from pathlib import Path
 
-    print("[Baymax] Setup")
+    print("[TMB] Setup")
     print("=" * 40)
     print()
 
@@ -706,11 +706,11 @@ def setup():
     _PROVIDER_MENU = [
         ("1", "Anthropic (Claude)",  "ANTHROPIC_API_KEY", "anthropic",  None),
         ("2", "OpenAI (GPT)",        "OPENAI_API_KEY",    "openai",     None),
-        ("3", "Google (Gemini)",     "GOOGLE_API_KEY",    "google",     "baymax[google]"),
-        ("4", "Groq",               "GROQ_API_KEY",      "groq",       "baymax[groq]"),
-        ("5", "Mistral",            "MISTRAL_API_KEY",   "mistral",    "baymax[mistral]"),
-        ("6", "DeepSeek",           "DEEPSEEK_API_KEY",  "deepseek",   "baymax[deepseek]"),
-        ("7", "Ollama (local)",     None,                "ollama",     "baymax[ollama]"),
+        ("3", "Google (Gemini)",     "GOOGLE_API_KEY",    "google",     "tmb[google]"),
+        ("4", "Groq",               "GROQ_API_KEY",      "groq",       "tmb[groq]"),
+        ("5", "Mistral",            "MISTRAL_API_KEY",   "mistral",    "tmb[mistral]"),
+        ("6", "DeepSeek",           "DEEPSEEK_API_KEY",  "deepseek",   "tmb[deepseek]"),
+        ("7", "Ollama (local)",     None,                "ollama",     "tmb[ollama]"),
         ("s", "Skip",               None,                None,         None),
     ]
 
@@ -745,7 +745,7 @@ def setup():
     print()
     print("=== Web Search ===")
     print()
-    print("  Baymax can search the web during planning.")
+    print("  TMB can search the web during planning.")
     print("  Tavily (tavily.com) gives the best results — free tier: 1000 searches/month.")
     print("  Without a key, DuckDuckGo is used as a free fallback.")
     print()
@@ -763,7 +763,7 @@ def setup():
     print()
     print("=== MCP Connections (optional) ===")
     print()
-    print("  Baymax can connect to external services via MCP.")
+    print("  TMB can connect to external services via MCP.")
     print()
     print("  [1] Notion    — read/create pages, search workspace")
     print("  [2] GitHub    — issues, PRs, code search")
@@ -835,27 +835,27 @@ def setup():
     if not project_toml.exists():
         print()
         print("No pyproject.toml found at project root.")
-        create = input("  Create one with Baymax as a dependency? (yes/no) [yes]: ").strip().lower()
+        create = input("  Create one with TMB as a dependency? (yes/no) [yes]: ").strip().lower()
         if create in ("", "yes", "y"):
-            baymax_rel = BAYMAX_ROOT.resolve().relative_to(project_root.resolve())
+            tmb_rel = TMB_ROOT.resolve().relative_to(project_root.resolve())
             toml_content = (
                 f'[project]\nname = "{name}"\nversion = "0.1.0"\n'
                 f'requires-python = ">=3.13"\n'
                 f'dependencies = [\n'
-                f'    "baymax",\n'
+                f'    "tmb",\n'
                 f']\n\n'
                 f'[tool.uv]\npackage = false\n\n'
-                f'[tool.uv.sources]\nbaymax = {{ path = "./{baymax_rel}", editable = true }}\n'
+                f'[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n'
             )
             project_toml.write_text(toml_content)
             print(f"  Wrote {project_toml}")
             print(f"  Run `uv sync` at {project_root} to install.")
 
     print()
-    print("[Baymax] Setup complete.")
+    print("[TMB] Setup complete.")
     dd = docs_dir().name
     print(f"  1. Write your goals in {dd}/GOALS.md")
-    print("  2. Run: uv run baymax")
+    print("  2. Run: uv run tmb")
     print()
 
 
@@ -867,7 +867,7 @@ def _is_first_run() -> bool:
 def run():
     """Phase-aware entry point: resumes an open issue or starts fresh."""
     if _is_first_run():
-        print("[Baymax] First run detected — running setup.\n")
+        print("[TMB] First run detected — running setup.\n")
         setup()
 
     ensure_dirs()
@@ -879,7 +879,7 @@ def run():
 
         if goals_md != existing["goals_md"]:
             print(
-                f"[Baymax] GOALS.md has changed since issue #{existing['id']} was started."
+                f"[TMB] GOALS.md has changed since issue #{existing['id']} was started."
             )
             choice = (
                 input("  (c)ontinue old issue / (n)ew issue? ").strip().lower()
@@ -907,7 +907,7 @@ def log_history(issue_id: int | None = None):
             "SELECT * FROM issues ORDER BY id DESC LIMIT 20"
         ).fetchall()
         if not rows:
-            print("[Baymax] No issues found.")
+            print("[TMB] No issues found.")
             return
         print(f"\n{'=' * 60}")
         print("  Recent Issues")
@@ -924,7 +924,7 @@ def log_history(issue_id: int | None = None):
                 f"  [{icon}] #{r['id']}  {r['objective'][:50]}  ({r['status']})"
             )
         print()
-        print("  View details: baymax log <issue_id>")
+        print("  View details: tmb log <issue_id>")
         print()
 
 
@@ -936,7 +936,7 @@ def report(issue_id: int):
     report_path = docs_dir() / f"REPORT-{issue_id}.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(md)
-    print(f"[Baymax] Report written to {report_path}")
+    print(f"[TMB] Report written to {report_path}")
     print(f"       Open it in your editor for full details.")
 
 
@@ -953,7 +953,7 @@ def tokens(issue_id: int | None = None):
         "FROM token_usage GROUP BY issue_id, node ORDER BY issue_id, node"
     ).fetchall()
     if not rows:
-        print("[Baymax] No token usage recorded yet.")
+        print("[TMB] No token usage recorded yet.")
         return
 
     from collections import defaultdict
@@ -996,7 +996,7 @@ def main():
         log_history(issue_id)
     elif cmd == "report":
         if len(sys.argv) < 3:
-            print("Usage: baymax report <issue_id>")
+            print("Usage: tmb report <issue_id>")
             sys.exit(1)
         report(int(sys.argv[2]))
     elif cmd == "tokens":
@@ -1004,17 +1004,17 @@ def main():
         tokens(issue_id)
     elif cmd == "evolve":
         if len(sys.argv) < 3:
-            print('Usage: baymax evolve "instruction"')
+            print('Usage: tmb evolve "instruction"')
             sys.exit(1)
         instruction = " ".join(sys.argv[2:])
         store = Store()
         _evolve(store, instruction)
     elif cmd == "serve":
-        from baymax.mcp.server import run_server
+        from tmb.mcp.server import run_server
         if "--http" in sys.argv:
             idx = sys.argv.index("--http")
             port = int(sys.argv[idx + 1]) if idx + 1 < len(sys.argv) else 8000
-            print(f"[Baymax] Starting MCP server (HTTP on port {port})...")
+            print(f"[TMB] Starting MCP server (HTTP on port {port})...")
             run_server(transport="http", port=port)
         else:
             run_server(transport="stdio")
@@ -1023,18 +1023,18 @@ def main():
         store = Store()
         _quick_task(store, instruction)
     else:
-        print("Baymax — AI Direction & Execution")
+        print("TMB — AI Direction & Execution")
         print()
         print("Usage:")
-        print("  baymax                               Full workflow (reads baymax-docs/GOALS.md)")
-        print('  baymax "update FLOWCHART"             Quick task (full pipeline)')
-        print('  baymax evolve "instruction"           Self-evolution (modify Baymax)')
-        print("  baymax setup                          Interactive project setup")
-        print("  baymax log                            Show recent issues")
-        print("  baymax log <id>                       Show issue details + ledger")
-        print("  baymax report <id>                    Export full report as markdown")
-        print("  baymax tokens                         Show token usage across all issues")
-        print("  baymax tokens <id>                    Show token usage for one issue")
-        print("  baymax serve                          Start MCP server (stdio)")
-        print("  baymax serve --http 8080              Start MCP server (HTTP)")
+        print("  tmb                               Full workflow (reads bro/GOALS.md)")
+        print('  tmb "update FLOWCHART"             Quick task (full pipeline)')
+        print('  tmb evolve "instruction"           Self-evolution (modify TMB)')
+        print("  tmb setup                          Interactive project setup")
+        print("  tmb log                            Show recent issues")
+        print("  tmb log <id>                       Show issue details + ledger")
+        print("  tmb report <id>                    Export full report as markdown")
+        print("  tmb tokens                         Show token usage across all issues")
+        print("  tmb tokens <id>                    Show token usage for one issue")
+        print("  tmb serve                          Start MCP server (stdio)")
+        print("  tmb serve --http 8080              Start MCP server (HTTP)")
         sys.exit(1)

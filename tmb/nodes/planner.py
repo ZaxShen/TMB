@@ -13,11 +13,11 @@ import re
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from baymax.config import get_llm, load_prompt, load_nodes_config, load_project_config, get_project_root, get_role_name, extract_token_usage
-from baymax.paths import BAYMAX_ROOT, docs_dir, SEED_SKILLS_DIR, user_skills_dir
-from baymax.state import AgentState
-from baymax.store import Store
-from baymax.tools import get_tools_for_node
+from tmb.config import get_llm, load_prompt, load_nodes_config, load_project_config, get_project_root, get_role_name, extract_token_usage
+from tmb.paths import TMB_ROOT, docs_dir, SEED_SKILLS_DIR, user_skills_dir
+from tmb.state import AgentState
+from tmb.store import Store
+from tmb.tools import get_tools_for_node
 
 _MAX_EXPLORE_ROUNDS = 10
 
@@ -214,7 +214,7 @@ FLOWCHART_INSTRUCTION = (
     "- Core algorithms or processing stages\n"
     "- Key outputs (reports, APIs, files)\n\n"
     "## DO NOT INCLUDE\n"
-    "- Baymax's own workflow (planning steps, task sequence, validation)\n"
+    "- TMB's own workflow (planning steps, task sequence, validation)\n"
     "- Implementation details (file I/O, imports, error handling)\n"
     "- Per-field or per-column details\n"
     "- Setup, install, or teardown steps\n\n"
@@ -738,11 +738,11 @@ def planner_quick_task(instruction: str, project_context: str, issue_id: int):
 
 def _evolve_plan_instruction():
     return (
-        "You are in **self-evolution mode**. You are modifying the Baymax framework itself.\n\n"
-        f"The {get_role_name('owner')} has given you an instruction to improve or change the Baymax engine.\n"
-        "You have full read access to Baymax's own source code.\n\n"
+        "You are in **self-evolution mode**. You are modifying the TMB framework itself.\n\n"
+        f"The {get_role_name('owner')} has given you an instruction to improve or change the TMB engine.\n"
+        "You have full read access to TMB's own source code.\n\n"
         "Steps:\n"
-        "1. Use `file_read` and `search` to explore the Baymax codebase.\n"
+        "1. Use `file_read` and `search` to explore the TMB codebase.\n"
         "2. Understand the current architecture — modules, tools, permissions, engine, prompts, config.\n"
         "3. Produce a structured **Evolution Plan** in Markdown:\n\n"
         "```\n"
@@ -776,25 +776,25 @@ def _evolve_execute_instruction():
     )
 
 
-def planner_evolve(instruction: str, baymax_context: str, issue_id: int) -> str:
+def planner_evolve(instruction: str, tmb_context: str, issue_id: int) -> str:
     """Exploration + plan phase of self-evolution. Returns the plan markdown.
 
-    Runs inside evolve_context() — Baymax/** blacklist is lifted for reads.
+    Runs inside evolve_context() — TMB/** blacklist is lifted for reads.
     """
     node_cfg = load_nodes_config().get("evolve", load_nodes_config().get("planner", {}))
     llm = get_llm("planner")
     system_prompt = load_prompt("planner")
     store = Store()
 
-    baymax_root_str = str(BAYMAX_ROOT)
+    tmb_root_str = str(TMB_ROOT)
     tool_names = ["file_read", "search"]
-    tools = get_tools_for_node(tool_names, baymax_root_str, node_name="planner")
+    tools = get_tools_for_node(tool_names, tmb_root_str, node_name="planner")
     tool_map = {t.name: t for t in tools}
     llm_with_tools = llm.bind_tools(tools)
 
     parts = []
-    if baymax_context:
-        parts.append(f"## Baymax Codebase Context\n{baymax_context}")
+    if tmb_context:
+        parts.append(f"## TMB Codebase Context\n{tmb_context}")
     parts.append(f"## Instruction\n{instruction}")
     parts.append(_evolve_plan_instruction())
 
@@ -804,7 +804,7 @@ def planner_evolve(instruction: str, baymax_context: str, issue_id: int) -> str:
     ]
 
     planner_display = get_role_name("planner").upper()
-    print(f"[{planner_display}] Exploring Baymax codebase for evolution plan...")
+    print(f"[{planner_display}] Exploring TMB codebase for evolution plan...")
     token_accum = {"input_tokens": 0, "output_tokens": 0}
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS,
@@ -823,27 +823,27 @@ def planner_evolve(instruction: str, baymax_context: str, issue_id: int) -> str:
 
 
 def planner_evolve_execute(
-    instruction: str, plan: str, baymax_context: str, issue_id: int,
+    instruction: str, plan: str, tmb_context: str, issue_id: int,
 ) -> str:
     """Execution phase of self-evolution. Applies the approved plan.
 
-    Runs inside evolve_context() — full Baymax read/write access.
+    Runs inside evolve_context() — full TMB read/write access.
     """
     node_cfg = load_nodes_config().get("evolve", load_nodes_config().get("planner", {}))
     llm = get_llm("planner")
     system_prompt = load_prompt("planner")
     store = Store()
 
-    baymax_root_str = str(BAYMAX_ROOT)
+    tmb_root_str = str(TMB_ROOT)
     tool_names = list(set(
         node_cfg.get("tools", ["file_read", "search"]) + ["file_write", "shell"]
     ))
-    tools = get_tools_for_node(tool_names, baymax_root_str, node_name="planner")
+    tools = get_tools_for_node(tool_names, tmb_root_str, node_name="planner")
     tool_map = {t.name: t for t in tools}
     llm_with_tools = llm.bind_tools(tools)
 
     parts = [
-        f"## Baymax Codebase Context\n{baymax_context}" if baymax_context else "",
+        f"## TMB Codebase Context\n{tmb_context}" if tmb_context else "",
         f"## Instruction\n{instruction}",
         f"## Approved Evolution Plan\n{plan}",
         _evolve_execute_instruction(),
@@ -1015,7 +1015,7 @@ def _extract_verdict(text: str) -> bool:
 
 def _resolve_skill_path(file_path: str):
     """Resolve a skill file path, checking seed dir then user dir."""
-    p = BAYMAX_ROOT / file_path
+    p = TMB_ROOT / file_path
     if p.exists():
         return p
     p = user_skills_dir() / file_path.replace("skills/", "", 1)

@@ -1,6 +1,6 @@
-# TMB
+# TMB — Trust My Bot
 
-> Your reliable agents framework — maintainable, token-efficient, and built to production standards.
+> trust me bro, it works.
 
 ---
 

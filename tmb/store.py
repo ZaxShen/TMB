@@ -160,6 +160,21 @@ class Store:
                 updated_at      TEXT    NOT NULL,
                 meta            TEXT    NOT NULL DEFAULT '{}'
             );
+
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id      TEXT    NOT NULL,
+                role            TEXT    NOT NULL,
+                content         TEXT    NOT NULL,
+                escalated_to    INTEGER REFERENCES issues(id),
+                created_at      TEXT    NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS project_context (
+                key             TEXT    PRIMARY KEY,
+                value           TEXT    NOT NULL,
+                updated_at      TEXT    NOT NULL
+            );
         """)
         self._migrate()
 
@@ -530,24 +545,56 @@ class Store:
         )
         self._conn.commit()
 
-    def export_blueprint_md(self, issue_id: int, blueprint: list[dict]) -> str:
+    def export_blueprint_md(self, issue_id: int, blueprint: list[dict] | None = None) -> str:
+        """Generate blueprint markdown. If blueprint is None, reads tasks from DB with live statuses."""
         issue = self.get_issue(issue_id)
         now = _now()
+
+        if blueprint is None:
+            tasks = self.get_tasks(issue_id)
+        else:
+            tasks = None
+
+        items = tasks if tasks is not None else blueprint
+        status_icons = {
+            "pending": " ", "in_progress": "~", "completed": "x",
+            "failed": "!", "escalated": "^",
+        }
+
+        completed = sum(1 for t in items if t.get("status") == "completed") if tasks else 0
+        total = len(items)
+        progress = f" ({completed}/{total} completed)" if tasks else ""
+
         lines = [
             f"# Blueprint — Issue #{issue_id}",
             "",
             f"**Objective**: {issue['objective']}",
-            f"**Date**: {now}",
-            f"**Tasks**: {len(blueprint)}",
+            f"**Updated**: {now}",
+            f"**Tasks**: {total}{progress}",
             "",
             "---",
             "",
         ]
-        for t in blueprint:
-            lines.append(f"## Task {t['branch_id']}: {t['description']}")
+        for t in items:
+            bid = t.get("branch_id", "?")
+            desc = t.get("description", "")
+            status = t.get("status", "")
+            icon = status_icons.get(status, " ")
+            status_label = f" [{status}]" if status else ""
+
+            lines.append(f"## [{icon}] Task {bid}: {desc}")
             lines.append("")
-            lines.append(f"- **Tools**: {', '.join(t.get('tools_required', []))}")
-            lines.append(f"- **Success criteria**: {t['success_criteria']}")
+            tools = t.get("tools_required", [])
+            if isinstance(tools, str):
+                import json as _json
+                try:
+                    tools = _json.loads(tools)
+                except Exception:
+                    tools = []
+            lines.append(f"- **Tools**: {', '.join(tools)}")
+            lines.append(f"- **Success criteria**: {t.get('success_criteria', '')}")
+            if status:
+                lines.append(f"- **Status**: {status}")
             lines.append("")
         return "\n".join(lines)
 
@@ -616,6 +663,29 @@ class Store:
             "SELECT output FROM tool_calls WHERE id = ?", (tool_call_id,)
         ).fetchone()
         return row["output"] if row else None
+
+    def log_chat(self, session_id: str, role: str, content: str,
+                 escalated_to: int | None = None):
+        self._conn.execute(
+            "INSERT INTO chat_messages (session_id, role, content, escalated_to, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (session_id, role, content, escalated_to, _now()),
+        )
+        self._conn.commit()
+
+    def get_chat_history(self, session_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM chat_messages WHERE session_id = ? ORDER BY id",
+            (session_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_chat_escalated(self, session_id: str, issue_id: int):
+        self._conn.execute(
+            "UPDATE chat_messages SET escalated_to = ? WHERE session_id = ? AND escalated_to IS NULL",
+            (issue_id, session_id),
+        )
+        self._conn.commit()
 
     def get_token_summary(self, issue_id: int) -> dict:
         """Aggregate token usage by node for an issue.
@@ -904,6 +974,30 @@ class Store:
             "DELETE FROM file_registry WHERE rel_path = ?", (rel_path,)
         )
         self._conn.commit()
+
+    def file_registry_count(self) -> int:
+        row = self._conn.execute("SELECT COUNT(*) FROM file_registry").fetchone()
+        return row[0]
+
+    # ── Project context (key-value) ────────────────────────
+
+    def set_project_meta(self, key: str, value: str):
+        self._conn.execute(
+            "INSERT INTO project_context (key, value, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            (key, value, _now()),
+        )
+        self._conn.commit()
+
+    def get_project_meta(self, key: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT value FROM project_context WHERE key = ?", (key,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def get_all_project_meta(self) -> dict[str, str]:
+        rows = self._conn.execute("SELECT key, value FROM project_context").fetchall()
+        return {r[0]: r[1] for r in rows}
 
     # ── Summary ─────────────────────────────────────────────
 

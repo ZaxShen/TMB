@@ -83,6 +83,16 @@ def gatekeeper(state: AgentState) -> dict:
         f"### Key files\n{key_files}\n"
     )
 
+    from tmb.store import Store
+    from tmb.scanner import build_project_context_from_scan
+
+    store = Store()
+    if store.file_registry_count() > 0:
+        scan_ctx = build_project_context_from_scan(store)
+        if scan_ctx:
+            context += f"\n{scan_ctx}\n"
+            print(f"[GATEKEEPER] Enriched with scan data ({store.file_registry_count()} files in registry)")
+
     print(f"[GATEKEEPER] Scanned {len(tree.splitlines())} paths at {root}")
 
     return {"project_context": context}

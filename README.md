@@ -89,6 +89,8 @@ To update TMB later: `cd TMB && git pull origin dev && cd .. && ./TMB/install`
 |---|---|
 | `uv run tmb` | Full workflow — reads your goals, discusses, plans, executes |
 | `uv run tmb "fix the login bug"` | Quick task — skips discussion, auto-approves the plan |
+| `uv run tmb chat` | Interactive chat with the planner (read-only exploration) |
+| `uv run tmb scan` | Scan project for TMB context (file registry, git history) |
 | `uv run tmb log` | Show recent issues |
 | `uv run tmb log 3` | Show details for issue #3 |
 | `uv run tmb report 3` | Export a full markdown report for issue #3 |

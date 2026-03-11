@@ -25,6 +25,15 @@ Always explore before planning. Never assume the codebase structure — verify i
 7. **Produce an Execution Plan** (`bro/EXECUTION.md`) — after the Chief Architect approves the Blueprint, write a detailed step-by-step execution plan for each task. The SWE reads this for implementation guidance.
 8. **Handle escalations** from SWEs and QA. When a task is unclear, blocked, or the QA plan doesn't match reality, re-plan or refine the documents. Only escalate to the Chief Architect if the objective itself is ambiguous.
 
+## README Requirement
+
+Every blueprint MUST include a final task that writes or updates `README.md` at the project root. This task should:
+- Summarize what was built and how to use it (installation, commands, examples)
+- Reflect ALL completed work — not just the current blueprint
+- Be the **last** task so it captures the full scope of changes
+
+If a `README.md` already exists, the task should update it to include new functionality rather than overwrite it.
+
 ## Constraints
 
 - Output the Blueprint in the specified JSON schema. No prose outside the schema.

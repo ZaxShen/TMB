@@ -5,6 +5,8 @@ Usage:
   tmb "update FLOWCHART"            Quick task (full pipeline, no interactive steps)
   tmb evolve "instruction"          Self-evolution (modify TMB itself)
   tmb setup                         Interactive project setup
+  tmb chat                          Interactive chat with the planner
+  tmb scan                          Scan project for TMB context
   tmb log                           Show recent issues
   tmb log <id>                      Show issue details + ledger
   tmb report <id>                   Export full report as markdown
@@ -18,6 +20,7 @@ import json
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 import yaml
 
@@ -149,6 +152,8 @@ def _quick_task(store: Store, instruction: str):
     """
     project_cfg = load_project_config()
     project_root = get_project_root()
+
+    _maybe_suggest_scan(store, project_root)
 
     objective = instruction[:120].strip()
     issue_id = store.create_issue(objective, instruction)
@@ -472,10 +477,25 @@ def _run_execution(
 # ── Fresh Start ──────────────────────────────────────────────
 
 
+def _maybe_suggest_scan(store: Store, project_root):
+    """Hint user to run 'tmb scan' if the project has source files but no scan data."""
+    if store.file_registry_count() > 0:
+        return
+    root = Path(project_root)
+    has_source = any(
+        root.glob(pat) for pat in ["*.py", "*.js", "*.ts", "*.go", "*.rs", "*.java",
+                                    "package.json", "pyproject.toml", "Cargo.toml", "go.mod"]
+    )
+    if has_source:
+        print("[TMB] Existing project detected. Run 'uv run tmb scan' for better planning context.\n")
+
+
 def _fresh_start(store: Store):
     """Full workflow: goals → discuss → plan (blueprint + flowchart) → approve → execution plan → execute."""
     project_cfg = load_project_config()
     project_root = get_project_root()
+
+    _maybe_suggest_scan(store, project_root)
 
     goals_md = _read_goals_md()
     objective = _derive_objective(goals_md)
@@ -864,6 +884,142 @@ def _is_first_run() -> bool:
     return not (user_cfg_dir() / "project.yaml").exists()
 
 
+def scan():
+    """Scan the project directory and populate TMB's DB with file registry + context."""
+    from tmb.scanner import scan_project
+
+    ensure_dirs()
+    store = Store()
+    project_root = get_project_root()
+
+    print(f"[TMB] Scanning project: {project_root}")
+    print("-" * 40)
+
+    stats = scan_project(project_root, store)
+
+    print(f"[TMB] Scan complete:")
+    print(f"  Files registered: {stats['file_count']}")
+    print(f"  Total size: {_human_bytes(stats['total_size'])}")
+    print(f"  Tech stack: {stats['tech_stack']}")
+    if stats["has_git"]:
+        print(f"  Git history: captured")
+    print()
+    print("[TMB] Context stored in DB — the planner will use this automatically.")
+
+
+def _human_bytes(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n /= 1024
+    return f"{n:.1f}TB"
+
+
+def chat():
+    """Interactive chat with the planner — read-only exploration, with optional planning escalation."""
+    import uuid
+    from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
+
+    from tmb.config import get_llm, load_prompt, extract_token_usage
+    from tmb.tools import get_tools_for_node
+
+    ensure_dirs()
+    store = Store()
+    project_root = str(get_project_root())
+    session_id = uuid.uuid4().hex[:12]
+
+    system_prompt = load_prompt("chat")
+    llm = get_llm("planner")
+    chat_tools = get_tools_for_node(
+        ["file_inspect", "search"], project_root, node_name="planner",
+    )
+    tool_map = {t.name: t for t in chat_tools} if chat_tools else {}
+    llm_with_tools = llm.bind_tools(chat_tools) if chat_tools else llm
+
+    messages = [SystemMessage(content=system_prompt)]
+
+    planner_display = get_role_name("planner").upper()
+    print(f"[TMB] Chat mode — session {session_id}")
+    print(f"[TMB] Type your questions. Press Ctrl+C or type 'exit' to quit.\n")
+
+    while True:
+        try:
+            user_input = input(f"[you] ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\n[TMB] Chat ended.")
+            break
+        if not user_input or user_input.lower() in ("exit", "quit", "q"):
+            print("[TMB] Chat ended.")
+            break
+
+        store.log_chat(session_id, "user", user_input)
+        messages.append(HumanMessage(content=user_input))
+
+        for _ in range(10):
+            response = llm_with_tools.invoke(messages)
+            messages.append(response)
+
+            if not hasattr(response, "tool_calls") or not response.tool_calls:
+                break
+
+            for tc in response.tool_calls:
+                tool_fn = tool_map.get(tc["name"])
+                if tool_fn:
+                    try:
+                        result = tool_fn.invoke(tc["args"])
+                    except Exception as e:
+                        result = f"[error] {e}"
+                    result_str = str(result)
+                    if len(result_str) > 8000:
+                        result_str = result_str[:8000] + "\n... (truncated)"
+                    messages.append(ToolMessage(content=result_str, tool_call_id=tc["id"]))
+                else:
+                    messages.append(ToolMessage(
+                        content=f"[error] Unknown tool: {tc['name']}",
+                        tool_call_id=tc["id"],
+                    ))
+
+        content = response.content
+        if isinstance(content, list):
+            content = "\n".join(
+                block.get("text", "") if isinstance(block, dict) else str(block)
+                for block in content
+            )
+
+        store.log_chat(session_id, "assistant", content)
+        print(f"\n[{planner_display}] {content}\n")
+
+        if re.search(r"ready to plan\?", content, re.IGNORECASE):
+            try:
+                confirm = input("[TMB] Escalate to planning? (y/n): ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                print("\n[TMB] Chat ended.")
+                break
+            if confirm in ("y", "yes"):
+                chat_history = store.get_chat_history(session_id)
+                summary_parts = []
+                for msg in chat_history:
+                    prefix = "User" if msg["role"] == "user" else "Planner"
+                    summary_parts.append(f"{prefix}: {msg['content']}")
+                chat_summary = "\n".join(summary_parts[-20:])
+
+                instruction = (
+                    f"Based on the following chat discussion, plan and execute:\n\n"
+                    f"{chat_summary}"
+                )
+
+                issue_id = store.create_issue(
+                    instruction[:120].strip(), instruction,
+                )
+                store.mark_chat_escalated(session_id, issue_id)
+                store.log_chat(session_id, "system", f"Escalated to issue #{issue_id}")
+
+                print(f"\n[TMB] Created issue #{issue_id} from chat — starting planning...")
+                print("-" * 40)
+                _quick_task(store, instruction)
+                break
+
+
 def run():
     """Phase-aware entry point: resumes an open issue or starts fresh."""
     if _is_first_run():
@@ -979,7 +1135,7 @@ def tokens(issue_id: int | None = None):
     print()
 
 
-_KNOWN_COMMANDS = {"setup", "log", "report", "tokens", "serve", "evolve", "help", "--help", "-h"}
+_KNOWN_COMMANDS = {"setup", "log", "report", "tokens", "serve", "evolve", "chat", "scan", "help", "--help", "-h"}
 
 
 def main():
@@ -1009,6 +1165,10 @@ def main():
         instruction = " ".join(sys.argv[2:])
         store = Store()
         _evolve(store, instruction)
+    elif cmd == "chat":
+        chat()
+    elif cmd == "scan":
+        scan()
     elif cmd == "serve":
         from tmb.mcp.server import run_server
         if "--http" in sys.argv:
@@ -1030,6 +1190,8 @@ def main():
         print('  tmb "update FLOWCHART"             Quick task (full pipeline)')
         print('  tmb evolve "instruction"           Self-evolution (modify TMB)')
         print("  tmb setup                          Interactive project setup")
+        print("  tmb chat                           Interactive chat with the planner")
+        print("  tmb scan                           Scan project for TMB context")
         print("  tmb log                            Show recent issues")
         print("  tmb log <id>                       Show issue details + ledger")
         print("  tmb report <id>                    Export full report as markdown")

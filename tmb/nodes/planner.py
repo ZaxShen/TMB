@@ -1141,6 +1141,9 @@ def planner_validate(state: AgentState) -> dict:
 
         print(f"[{planner_display}] [{branch_id}] — PASS")
 
+        blueprint_md = store.export_blueprint_md(issue_id)
+        _write_doc("BLUEPRINT.md", blueprint_md)
+
         if store.has_event(issue_id, "flowchart_generated"):
             _maybe_update_flowchart_after_task(
                 llm, system_prompt, state, task, verdict_text,

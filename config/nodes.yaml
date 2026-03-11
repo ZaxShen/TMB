@@ -18,6 +18,7 @@ executor:
     - shell
     - file_read
     - file_write
+    - file_inspect
     - search
     - skill_request
 

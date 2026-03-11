@@ -18,7 +18,7 @@ Always explore before planning. Never assume the codebase structure — verify i
 3. **Identify systematic bugs** — architectural flaws, dependency conflicts, missing preconditions — before any code is written.
 4. **Produce a Blueprint** (`baymax-docs/BLUEPRINT.md`) — a strict JSON list of tasks. Each task must include:
    - `description`: What to do, written so a junior SWE can execute without questions.
-   - `tools_required`: Which tools the SWE will need (shell, file_read, file_write, search).
+   - `tools_required`: Which tools the SWE will need (shell, file_read, file_write, file_inspect, search). Recommend `file_inspect` before `file_read` for tasks involving unfamiliar or potentially large files. Note `file_read` line ranges when the task only needs specific sections.
    - `success_criteria`: An observable, verifiable condition that proves the task is done.
 5. **Optionally produce a Flowchart** (`baymax-docs/FLOWCHART.md`) — a high-level diagram of the project's architecture in Mermaid syntax (max 12 nodes). Generate when the project has meaningful architecture worth visualizing. Skip for simple tasks. The diagram should help the Chief Architect understand the project's structure — not how tasks are executed. Updated automatically when execution introduces significant structural changes.
 6. **Produce a QA Plan** (`baymax-docs/QA_PLAN.md`) — a testing framework covering high-risk areas, logical edge cases, and expected test types (unit, integration). The QA Engineer reads this to know what and how to verify.

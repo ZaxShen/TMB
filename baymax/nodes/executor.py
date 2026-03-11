@@ -13,11 +13,25 @@ from baymax.store import Store
 from baymax.tools import get_tools_for_node
 
 _MAX_TOOL_ROUNDS = 15
+_MAX_TOOL_OUTPUT_CHARS = 20_000
+_CONTEXT_BUDGET_CHARS = 600_000  # ~150K tokens; leaves headroom under 200K limit
 
 
 def _get_execution_plan(store: Store, issue_id: int, branch_id: str) -> str:
     """Read the per-task execution plan from SQLite."""
     return store.get_task_execution_plan(issue_id, branch_id)
+
+
+def _estimate_context_chars(messages: list) -> int:
+    """Sum character lengths across all messages for budget tracking."""
+    total = 0
+    for m in messages:
+        content = m.content if hasattr(m, "content") else str(m)
+        if isinstance(content, list):
+            total += sum(len(str(block)) for block in content)
+        else:
+            total += len(str(content))
+    return total
 
 
 def _normalize_content(content) -> str:
@@ -150,8 +164,25 @@ def executor(state: AgentState) -> dict:
     tool_map = {t.name: t for t in tools} if tools else {}
     tool_outputs = []
     token_accum = {"input_tokens": 0, "output_tokens": 0}
+    budget_exceeded = False
 
     for _round in range(_MAX_TOOL_ROUNDS):
+        ctx_chars = _estimate_context_chars(messages)
+        if ctx_chars > _CONTEXT_BUDGET_CHARS:
+            budget_exceeded = True
+            messages.append(HumanMessage(
+                content=(
+                    f"[system] Context budget exceeded ({ctx_chars:,} chars). "
+                    f"Stop using tools and return your structured log now."
+                )
+            ))
+            response = llm_with_tools.invoke(messages)
+            messages.append(response)
+            usage = extract_token_usage(response)
+            token_accum["input_tokens"] += usage["input_tokens"]
+            token_accum["output_tokens"] += usage["output_tokens"]
+            break
+
         response = llm_with_tools.invoke(messages)
         messages.append(response)
 
@@ -170,9 +201,25 @@ def executor(state: AgentState) -> dict:
                 except Exception as e:
                     result = f"[error] {e}"
                 result_str = str(result)
-                tool_outputs.append(f"[{tc['name']}] {result_str}")
-                print(f"  [{tc['name']}] done")
-                messages.append(ToolMessage(content=result_str, tool_call_id=tc["id"]))
+
+                is_truncated = len(result_str) > _MAX_TOOL_OUTPUT_CHARS
+                store.log_tool_call(
+                    issue_id, branch_id, _round, tc["name"],
+                    tc.get("args", {}), result_str, is_truncated=is_truncated,
+                )
+
+                if is_truncated:
+                    llm_result = (
+                        result_str[:_MAX_TOOL_OUTPUT_CHARS]
+                        + f"\n\n... (truncated \u2014 {len(result_str):,} chars total. "
+                        f"Full output saved to DB.)"
+                    )
+                else:
+                    llm_result = result_str
+
+                tool_outputs.append(f"[{tc['name']}] {llm_result}")
+                print(f"  [{tc['name']}] done ({len(result_str):,} chars)")
+                messages.append(ToolMessage(content=llm_result, tool_call_id=tc["id"]))
             else:
                 messages.append(ToolMessage(
                     content=f"[error] Unknown tool: {tc['name']}",
@@ -180,6 +227,12 @@ def executor(state: AgentState) -> dict:
                 ))
 
     store.log_tokens(issue_id, "executor", token_accum["input_tokens"], token_accum["output_tokens"])
+
+    if budget_exceeded:
+        store.log(issue_id, branch_id, "executor", "context_budget_exceeded", {
+            "chars": _estimate_context_chars(messages),
+            "rounds_used": _round + 1,
+        }, summary=f"Context budget hit after {_round + 1} rounds")
 
     execution_log = _normalize_content(response.content)
     if tool_outputs:

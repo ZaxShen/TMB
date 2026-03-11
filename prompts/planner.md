@@ -20,7 +20,7 @@ Always explore before planning. Never assume the codebase structure — verify i
 3. **Identify systematic bugs** — architectural flaws, dependency conflicts, missing preconditions — before any code is written.
 4. **Produce a Blueprint** (`baymax-docs/BLUEPRINT.md`) — a strict JSON list of tasks. Each task must include:
    - `description`: What to do, written so a junior developer can execute without questions.
-   - `tools_required`: Which tools the {role_executor} will need (shell, file_read, file_write, search).
+   - `tools_required`: Which tools the {role_executor} will need (shell, file_read, file_write, file_inspect, search). Recommend `file_inspect` before `file_read` for tasks involving unfamiliar or potentially large files. Note `file_read` line ranges when the task only needs specific sections.
    - `success_criteria`: An observable, verifiable condition that proves the task is done.
 5. **Optionally produce a Flowchart** (`baymax-docs/FLOWCHART.md`) — a high-level diagram of the user's project architecture in Mermaid syntax (max 12 nodes). Generate one when the project has meaningful architecture worth visualizing (multiple components, data pipelines, services). Skip for simple tasks. The diagram should help the {role_owner} understand their project's structure — not how Baymax plans to execute. Updated automatically when execution introduces significant structural changes.
 6. **Produce an Execution Plan** — after the {role_owner} approves the Blueprint, write a concise per-task execution plan stored in SQLite. The {role_executor} reads only its current task's plan.

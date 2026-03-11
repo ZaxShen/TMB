@@ -208,16 +208,71 @@ def create_file_inspect_tool(project_root: str, node_name: str = "planner"):
     return file_inspect
 
 
+_FILE_READ_MAX_LINES = 500
+
+
 def create_file_read_tool(project_root: str, node_name: str = "executor"):
     @tool
-    def file_read(file_path: str) -> str:
-        """Read a file relative to the project root. Returns the raw file contents."""
+    def file_read(file_path: str, line_start: int = 1, line_end: int | None = None) -> str:
+        """Read a file relative to the project root. Returns contents with line numbers.
+
+        For large files, use line_start/line_end to read specific sections.
+        Use file_inspect first for a quick overview (structure, size, format).
+
+        Args:
+            file_path: Path relative to the project root.
+            line_start: First line to return (1-based, default 1).
+            line_end: Last line to return (inclusive). Omit to read up to 500 lines from line_start.
+        """
         assert_not_blacklisted(file_path)
         assert_node_access(file_path, node_name)
         target = _resolve_safe(project_root, file_path)
         if not target.exists():
             return f"[error] File not found: {file_path}"
-        return target.read_text()
+
+        try:
+            raw = target.read_text(encoding="utf-8", errors="strict")
+        except (UnicodeDecodeError, ValueError):
+            size = target.stat().st_size
+            size_str = (
+                f"{size / 1_048_576:.1f} MB" if size > 1_048_576
+                else f"{size / 1024:.1f} KB"
+            )
+            return (
+                f"[binary file] {file_path} ({size_str})\n"
+                f"Cannot read as text. Use file_inspect for metadata, "
+                f"or shell for specific analysis."
+            )
+
+        lines = raw.splitlines()
+        total = len(lines)
+
+        start = max(1, line_start)
+        if line_end is not None:
+            end = min(line_end, total)
+        else:
+            end = min(start + _FILE_READ_MAX_LINES - 1, total)
+
+        selected = lines[start - 1 : end]
+        is_capped = end < total and line_end is None
+
+        width = len(str(end))
+        numbered = [f"{start + i:>{width}} | {line}" for i, line in enumerate(selected)]
+
+        header = f"File: {file_path} ({total} lines)"
+        if start > 1 or end < total:
+            header += f" [showing lines {start}\u2013{end}]"
+
+        result = header + "\n\n" + "\n".join(numbered)
+
+        if is_capped:
+            result += (
+                f"\n\n... ({total - end} more lines. "
+                f"Use line_start/line_end to read further, "
+                f"or file_inspect for a structural overview.)"
+            )
+
+        return result
 
     return file_read
 

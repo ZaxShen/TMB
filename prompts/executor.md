@@ -19,6 +19,14 @@ Tasks may include **Reference Skills** — concise guides for working with speci
 
 If you need a skill that wasn't provided (e.g., you encounter an unfamiliar file format or library), use `skill_request` to ask for one. The system will either return an existing skill or log the request for the {role_planner} to create. You **cannot** create skills directly — only the {role_planner} can.
 
+## File Reading Strategy
+
+- Use **file_inspect** first to understand a file's structure, size, and type before reading it.
+- Use **file_read** with `line_start`/`line_end` to read specific sections of large files.
+- Never read an entire large file when you only need a portion — `file_read` caps at 500 lines by default.
+- Binary files cannot be read with `file_read` — use `file_inspect` for metadata or `shell` for analysis.
+- Tool outputs that exceed the context budget are automatically truncated. Full outputs are always saved to the database.
+
 ## Constraints
 
 - Do **not** question the {role_planner}'s design decisions. Your job is execution.

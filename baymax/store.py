@@ -8,6 +8,7 @@ Tables:
   skills          — Curated + agent-created skill metadata
   skill_requests  — Unfulfilled skill requests
   token_usage     — Per-invocation token counts
+  tool_calls      — Full tool invocation log (args + untruncated output)
   file_registry   — Persistent map of discovered project files (zero-rescan upgrades)
 """
 
@@ -133,6 +134,19 @@ class Store:
                 node            TEXT    NOT NULL,
                 input_tokens    INTEGER NOT NULL DEFAULT 0,
                 output_tokens   INTEGER NOT NULL DEFAULT 0,
+                created_at      TEXT    NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS tool_calls (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                issue_id        INTEGER NOT NULL REFERENCES issues(id),
+                branch_id       TEXT,
+                round           INTEGER NOT NULL DEFAULT 0,
+                tool_name       TEXT    NOT NULL,
+                tool_args       TEXT    NOT NULL DEFAULT '{}',
+                output          TEXT    NOT NULL DEFAULT '',
+                output_chars    INTEGER NOT NULL DEFAULT 0,
+                is_truncated    INTEGER NOT NULL DEFAULT 0,
                 created_at      TEXT    NOT NULL
             );
 
@@ -563,6 +577,45 @@ class Store:
             (issue_id, node, input_tokens, output_tokens, _now()),
         )
         self._conn.commit()
+
+    # ── Tool calls ─────────────────────────────────────────────
+
+    def log_tool_call(self, issue_id: int, branch_id: str | None, round_num: int,
+                      tool_name: str, tool_args: dict, output: str,
+                      is_truncated: bool = False):
+        """Record a single tool invocation with its full (untruncated) output."""
+        self._conn.execute(
+            "INSERT INTO tool_calls (issue_id, branch_id, round, tool_name, tool_args, "
+            "output, output_chars, is_truncated, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (issue_id, branch_id, round_num, tool_name, json.dumps(tool_args),
+             output, len(output), int(is_truncated), _now()),
+        )
+        self._conn.commit()
+
+    def get_tool_calls(self, issue_id: int, branch_id: str | None = None) -> list[dict]:
+        """Retrieve tool call log for debugging. Omits full output by default."""
+        if branch_id is not None:
+            rows = self._conn.execute(
+                "SELECT id, issue_id, branch_id, round, tool_name, tool_args, "
+                "output_chars, is_truncated, created_at "
+                "FROM tool_calls WHERE issue_id = ? AND branch_id = ? ORDER BY id",
+                (issue_id, branch_id),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT id, issue_id, branch_id, round, tool_name, tool_args, "
+                "output_chars, is_truncated, created_at "
+                "FROM tool_calls WHERE issue_id = ? ORDER BY id",
+                (issue_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_tool_call_output(self, tool_call_id: int) -> str | None:
+        """Retrieve the full untruncated output of a specific tool call."""
+        row = self._conn.execute(
+            "SELECT output FROM tool_calls WHERE id = ?", (tool_call_id,)
+        ).fetchone()
+        return row["output"] if row else None
 
     def get_token_summary(self, issue_id: int) -> dict:
         """Aggregate token usage by node for an issue.

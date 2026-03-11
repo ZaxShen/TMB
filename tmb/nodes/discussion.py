@@ -4,7 +4,7 @@ Flow:
   1. Planner writes questions to bro/DISCUSSION.md with an answer section
   2. Terminal prompts the Project Owner to edit the file, then press Enter
   3. System reads the answer from below a marker in the file
-  4. Repeat until Planner says READY TO BUILD
+  4. Repeat until Planner says TRUST ME BRO, LET'S BUILD
 
 The discussion is stored in SQLite (permanent) and bro/DISCUSSION.md (current).
 """
@@ -17,6 +17,7 @@ from tmb.config import get_llm, get_role_name, get_project_root, load_nodes_conf
 from tmb.paths import docs_dir
 from tmb.store import Store
 from tmb.tools import get_tools_for_node
+from tmb.types import TokenAccumulator
 
 
 _DISCUSSION_SYSTEM = """You are a {role_planner}. The {role_owner} has written goals in bro/GOALS.md.
@@ -31,13 +32,13 @@ Rules:
 - Explore first, ask second. Only ask the {role_owner} things you genuinely cannot determine from the codebase.
 - Ask focused, specific questions to eliminate ambiguity.
 - Challenge assumptions if you see risks or contradictions.
-- When you fully understand the requirements, say exactly: READY TO BUILD
+- When you fully understand the requirements, say exactly: TRUST ME BRO, LET'S BUILD
 - Keep each response concise — max 3-4 questions at a time.
 - Number your questions so the {role_owner} can answer by number.
 - Reference the project context when relevant.
 """
 
-_READY_SIGNAL = "READY TO BUILD"
+_READY_SIGNAL = "TRUST ME BRO, LET'S BUILD"
 _ANSWER_MARKER = "---ANSWER-BELOW---"
 
 
@@ -102,7 +103,7 @@ def _read_owner_answer(path) -> str:
 _MAX_TOOL_ROUNDS = 10
 
 
-def _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum: dict | None = None):
+def _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum: "TokenAccumulator | None" = None):
     """Let the planner use tools (file_inspect, search) before responding to the owner."""
     import sys
     import time
@@ -129,8 +130,7 @@ def _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum: d
 
         if token_accum is not None:
             usage = extract_token_usage(response)
-            token_accum["input_tokens"] = token_accum.get("input_tokens", 0) + usage["input_tokens"]
-            token_accum["output_tokens"] = token_accum.get("output_tokens", 0) + usage["output_tokens"]
+            token_accum.add(usage)
 
         if not hasattr(response, "tool_calls") or not response.tool_calls:
             break
@@ -187,7 +187,7 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
         f"Review these goals. Use your tools to explore relevant files first "
         f"(e.g., read CSVs, scripts, configs), then ask the {owner_display} "
         "only questions you cannot answer yourself. "
-        "If everything is clear, say READY TO BUILD."
+        "If everything is clear, say TRUST ME BRO, LET'S BUILD."
     )
 
     messages = [
@@ -220,7 +220,7 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
         print()
         print(f"[DISCUSSION] {planner_display} is reviewing your goals...")
 
-    token_accum = {"input_tokens": 0, "output_tokens": 0}
+    token_accum = TokenAccumulator()
     while True:
         if not needs_owner_input:
             response, messages = _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum=token_accum)
@@ -245,7 +245,7 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
                 )
                 print()
                 print("-" * 40)
-                print("[DISCUSSION] Requirements aligned. Proceeding to blueprint.")
+                print("[DISCUSSION] Trust me bro, we're aligned. Let's build this thing.")
                 dd = docs_dir().name
                 print(f"[TMB] Discussion saved to {dd}/DISCUSSION.md")
                 break
@@ -268,6 +268,6 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
         messages.append(HumanMessage(content=owner_answer))
         print(f"[{owner_display}]: {owner_answer[:120]}...")
 
-    store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
+    store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
     discussion_md = store.export_discussion_md(issue_id)
     return discussion_md

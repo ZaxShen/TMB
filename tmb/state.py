@@ -24,4 +24,5 @@ class AgentState(MessagesState):
     execution_log: str
     review_feedback: str
     iteration_count: int
+    replan_count: int
     next_node: Literal["planner", "planner_plan", "planner_execution_plan", "planner_validate", "executor", "human_review", "__end__"]

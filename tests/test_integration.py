@@ -162,3 +162,104 @@ def test_executor_validate_pipeline(project_dir, db_store):
     summary = db_store.get_token_summary(issue_id)
     assert summary["total"]["in"] > 0
     assert summary["total"]["out"] > 0
+
+
+def test_fail_retry_pass_pipeline(project_dir, db_store):
+    """Pipeline: executor runs → validate FAILs → retry → validate PASSes."""
+
+    issue_id = db_store.create_issue("Fix the bug")
+    blueprint = [
+        {
+            "branch_id": "1",
+            "description": "Fix the bug in main.py",
+            "tools_required": ["file_write"],
+            "skills_required": [],
+            "success_criteria": "bug is fixed and tests pass",
+        },
+    ]
+    db_store.create_tasks(issue_id, blueprint)
+
+    executor_resp_1 = _fake_ai_message("Attempted fix.")
+    fail_response = _fake_ai_message(
+        '```json\n{"verdict": "FAIL", "evidence": "tests still failing"}\n```'
+    )
+    executor_resp_2 = _fake_ai_message("Applied correct fix.")
+    pass_response = _fake_ai_message(
+        '```json\n{"verdict": "PASS", "evidence": "all tests pass"}\n```'
+    )
+
+    executor_responses = [executor_resp_1, executor_resp_2]
+    validate_responses = [fail_response, pass_response]
+
+    exec_idx = {"i": 0}
+    val_idx = {"i": 0}
+
+    class FakeExecLLM:
+        def invoke(self, messages, **kwargs):
+            idx = min(exec_idx["i"], len(executor_responses) - 1)
+            exec_idx["i"] += 1
+            return executor_responses[idx]
+        def bind_tools(self, tools):
+            return self
+
+    class FakeValLLM:
+        def invoke(self, messages, **kwargs):
+            idx = min(val_idx["i"], len(validate_responses) - 1)
+            val_idx["i"] += 1
+            return validate_responses[idx]
+        def bind_tools(self, tools):
+            return self
+
+    def fake_get_llm(node_name):
+        if node_name == "executor":
+            return FakeExecLLM()
+        return FakeValLLM()
+
+    nodes_config = {
+        "planner": {"model": {"provider": "anthropic", "name": "test"}, "tools": []},
+        "executor": {"model": {"provider": "anthropic", "name": "test"}, "tools": []},
+    }
+
+    with (
+        patch("tmb.nodes.executor.get_llm", side_effect=fake_get_llm),
+        patch("tmb.nodes.executor.load_prompt", return_value="You are an executor."),
+        patch("tmb.nodes.executor.load_nodes_config", return_value=nodes_config),
+        patch("tmb.nodes.executor.get_project_root", return_value=project_dir),
+        patch("tmb.nodes.executor.get_tools_for_node", return_value=[]),
+        patch("tmb.nodes.executor.Store", return_value=db_store),
+
+        patch("tmb.nodes.planner.get_llm", side_effect=fake_get_llm),
+        patch("tmb.nodes.planner.load_prompt", return_value="You are a planner."),
+        patch("tmb.nodes.planner.load_nodes_config", return_value=nodes_config),
+        patch("tmb.nodes.planner.get_project_root", return_value=project_dir),
+        patch("tmb.nodes.planner.load_project_config", return_value={"max_retry_per_task": 3}),
+        patch("tmb.nodes.planner.get_tools_for_node", return_value=[]),
+        patch("tmb.nodes.planner.Store", return_value=db_store),
+        patch("tmb.nodes.planner.docs_dir", return_value=project_dir / "bro"),
+    ):
+        from tmb.engine import build_execution_graph
+
+        graph = build_execution_graph()
+
+        initial_state = {
+            "objective": "Fix the bug",
+            "project_context": "",
+            "discussion": "",
+            "issue_id": issue_id,
+            "blueprint": blueprint,
+            "current_task_idx": 0,
+            "execution_log": "",
+            "review_feedback": "",
+            "iteration_count": 0,
+            "replan_count": 0,
+            "messages": [],
+            "next_node": "",
+        }
+
+        final_state = graph.invoke(initial_state)
+
+    assert final_state["current_task_idx"] == 1
+    task = db_store.get_task_row(issue_id, "1")
+    assert task["status"] == "completed"
+    assert db_store.has_event(issue_id, "verdict_fail")
+    assert db_store.has_event(issue_id, "verdict_pass")

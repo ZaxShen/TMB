@@ -22,6 +22,7 @@ Four layers:
 from __future__ import annotations
 
 import contextvars
+import re
 from contextlib import contextmanager
 from fnmatch import fnmatch
 from pathlib import Path
@@ -120,7 +121,10 @@ def _load_blacklist() -> list[str]:
 def is_blacklisted(file_path: str) -> bool:
     """Check if a relative path matches any blacklist pattern."""
     patterns = _load_blacklist()
-    normalized = file_path.lstrip("./")
+    # Strip leading "./" prefix but preserve dotfile names (e.g. .env)
+    normalized = file_path
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
     for pattern in patterns:
         if fnmatch(normalized, pattern):
             return True
@@ -139,17 +143,43 @@ def assert_not_blacklisted(file_path: str):
 
 
 def _extract_paths(line: str) -> list[str]:
-    """Extract plausible file paths from a line of shell output."""
+    """Extract plausible file paths from a line of shell output.
+
+    Handles quoted paths, URL-encoded chars, and normalizes before matching.
+    """
+    import urllib.parse
     candidates = []
     for token in line.split():
-        cleaned = token.strip("'\"(),;:")
+        cleaned = token.strip("'\"(),;:`")
+        cleaned = urllib.parse.unquote(cleaned)
         if "/" in cleaned or cleaned.startswith("."):
             candidates.append(cleaned)
     return candidates
 
 
+# Base64 pattern: 20+ chars of [A-Za-z0-9+/] ending with optional padding
+_B64_RE = re.compile(r"[A-Za-z0-9+/]{20,}={0,2}")
+
+
+def _contains_blacklisted_b64(line: str, patterns: list[str]) -> bool:
+    """Check if any base64-encoded string in the line decodes to a blacklisted path."""
+    import base64
+    for match in _B64_RE.finditer(line):
+        try:
+            decoded = base64.b64decode(match.group(), validate=True).decode("utf-8", errors="ignore")
+        except Exception:
+            continue
+        for pattern in patterns:
+            if fnmatch(decoded, pattern) or fnmatch(Path(decoded).name, pattern):
+                return True
+    return False
+
+
 def filter_blacklisted_output(text: str, project_root: str) -> str:
-    """Scrub lines that reference blacklisted file paths from shell/search output."""
+    """Scrub lines that reference blacklisted file paths from shell/search output.
+
+    Checks plain-text paths, URL-encoded paths, and base64-encoded paths.
+    """
     if not text:
         return text
     patterns = _load_blacklist()
@@ -168,6 +198,8 @@ def filter_blacklisted_output(text: str, project_root: str) -> str:
                     break
             if is_blocked:
                 break
+        if not is_blocked:
+            is_blocked = _contains_blacklisted_b64(line, patterns)
         if is_blocked:
             filtered.append("[REDACTED — blacklisted path]")
         else:

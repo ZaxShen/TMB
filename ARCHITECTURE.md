@@ -7,7 +7,9 @@
 
 ## Table of Contents
 
+- [Why This Architecture](#why-this-architecture)
 - [Workflow](#workflow)
+- [How Trust Is Enforced (Technical Detail)](#how-trust-is-enforced-technical-detail)
 - [Roles](#roles)
 - [Documents](#documents)
 - [Permissions](#permissions)
@@ -18,6 +20,24 @@
 - [MCP Integration](#mcp-integration)
 - [Self-Evolution](#self-evolution)
 - [Design Principles](#design-principles)
+
+---
+
+## Why This Architecture
+
+Most AI coding tools follow a single-agent, single-context model: one LLM sees everything and does everything. This works for small tasks but breaks down at scale for three reasons.
+
+First, **context pollution**. When a single agent holds your goals, discussion, full codebase context, and the specific task it's executing, the LLM frequently hallucinates connections between unrelated pieces of context. An executor that knows the project uses "school-based matching" might over-engineer a simple CSV-writing task by adding matching logic where none was requested.
+
+Second, **no independent verification**. If the same agent writes code and checks it, it's grading its own homework. It already "believes" its implementation is correct, so it tends to confirm its own work rather than critically evaluate it.
+
+Third, **no audit trail**. Conversations scroll away. If something breaks two weeks later, you can't reconstruct what the agent did, what context it had, or what decisions led to the current state.
+
+TMB's architecture solves each of these:
+
+- **Role separation** — Planner and Executor are distinct agents with different context, different tools, and different LLM configs. The Executor never sees high-level context. The Planner never writes project code directly.
+- **Cross-agent validation** — The Planner validates the Executor's work independently, using its full project context to run tests, inspect outputs, and check against success criteria.
+- **Persistent audit** — Everything is stored in SQLite: discussions, blueprints, per-task execution plans, every tool invocation (with full untruncated output), and validation verdicts.
 
 ---
 
@@ -76,6 +96,54 @@ Modifies TMB's own source code through a guarded flow:
 6. Health check verifies TMB still imports and passes lint
 
 The `TMB/**` blacklist is only lifted during the evolve session.
+
+---
+
+## How Trust Is Enforced (Technical Detail)
+
+This section explains the concrete mechanisms behind each trust guarantee from the README.
+
+### 1. Nothing runs without your approval
+
+The engine is built on [LangGraph](https://github.com/langchain-ai/langgraph) with an explicit `interrupt_after=["planner_plan"]` checkpoint. After the Planner generates a blueprint, the graph pauses execution and returns control to the CLI, which prompts you for approval. The graph literally cannot advance to execution without you calling `graph.invoke(None, config=thread)` after approval. This isn't a prompt-level instruction — it's a structural constraint in the state machine.
+
+For quick tasks (`tmb "..."`), the approval is auto-granted, but the full planner → executor → validator pipeline still runs. There is no mode where code executes without validation.
+
+### 2. Agents can't see what they shouldn't
+
+Information isolation is enforced at four layers:
+
+**Layer 1 — Context injection.** The Executor's system prompt and task prompt are constructed in `executor.py`. It receives only: the task description, success criteria, execution plan (from SQLite), and assigned skills. The Executor function never reads GOALS.md, DISCUSSION.md, or BLUEPRINT.md. This isn't just prompt engineering — the information is structurally absent from the Executor's message list.
+
+**Layer 2 — Node-level file access.** `permissions.py` maintains a mapping of which files each node can access. If the Executor's tool call tries to read `GOALS.md`, `assert_node_access()` raises a `PermissionError` before any file I/O occurs.
+
+**Layer 3 — Project blacklist.** Glob patterns in `project.yaml → blacklist[]` (e.g., `.env`, `TMB/**`, `**/secrets/**`) block all agents from accessing sensitive paths. The check runs on every `file_read`, `file_write`, and `file_inspect` call. Shell output is scrubbed line-by-line against the same patterns via `filter_blacklisted_output()`.
+
+**Layer 4 — Evolve context.** During self-evolution only, a `contextvars.ContextVar` toggle temporarily lifts the `TMB/**` blacklist. When the context manager exits, the blacklist is automatically restored — there's no global flag that can get stuck.
+
+### 3. Every task is validated
+
+The Planner validates, not the Executor, because the Planner already holds full project context (goals, discussion, codebase exploration, all previous task results). Validation isn't just asking the LLM "did this work?" — the Planner has access to `shell`, `file_inspect`, and `search` tools during validation. It can run tests, inspect output files, check file contents, and verify against the original success criteria.
+
+The verdict is extracted from the LLM's response with a multi-tier parser: structured JSON block first, then regex for `"verdict": "PASS"`, then keyword fallback. FAIL is the default if parsing fails entirely.
+
+On FAIL, the Planner's feedback (what specifically went wrong) is injected into the Executor's next attempt as `review_feedback`. The Executor sees what failed and why, but still doesn't see the broader project context.
+
+After `max_retry_per_task` (default 3) consecutive failures, the task is marked `escalated` and control returns to the human.
+
+### 4. Everything is recorded
+
+The `ledger` table in SQLite is append-only. Every agent action creates a row with: issue_id, branch_id, from_node, event_type, a human-readable summary, and a full JSON payload. The `tool_calls` table separately logs every tool invocation with arguments and complete output (including output that was truncated before being shown to the LLM).
+
+Token usage is tracked per-invocation per-node in the `token_usage` table. `tmb tokens 3` gives you a breakdown of exactly how many tokens each agent consumed for any issue.
+
+`tmb report 3` reconstructs the full narrative: objective, discussion transcript, blueprint, per-task execution plans, tool calls, validation verdicts, and token costs — all from the database, not from conversation history.
+
+### 5. You can interrupt anytime
+
+Resumability works because all state lives in SQLite, not in LangGraph's in-memory checkpointer. On restart, the CLI checks for an open issue (`get_open_issue()`), loads its tasks, finds the first task with status `pending`, `failed`, `in_progress`, or `escalated` (`get_first_actionable_task()`), and uses `build_execution_graph()` — a smaller graph that starts directly at the Executor node, skipping the already-completed planning phase.
+
+The discussion phase is similarly resumable: if the last discussion entry was from the Planner (unanswered question), TMB reopens DISCUSSION.md with the answer section and waits for your input. If the last entry was from you, it picks up the conversation from there.
 
 ---
 
@@ -143,6 +211,7 @@ Everything is persisted in `.tmb/tmb.db` (SQLite + JSON):
 | `ledger` | Every agent action with a `summary` one-liner — full JSON detail stored but never bulk-read |
 | `skills` | Registered skill files — name, description, tags, file path |
 | `token_usage` | Per-invocation token counts by node |
+| `tool_calls` | Full tool invocation log — tool name, arguments, complete untruncated output, truncation flag |
 | `file_registry` | Persistent map of discovered project files — enables zero-rescan upgrades |
 
 ### Branch IDs
@@ -167,6 +236,12 @@ Branch operations: `branch_id LIKE '1.%'` finds every related task across all is
 
 Skills are **reusable knowledge artifacts** — concise markdown guides that agents load on demand instead of re-deriving patterns every time.
 
+### The problem skills solve
+
+Without skills, every time an Executor encounters a CSV file, it re-discovers (through trial and error) which library to use, how to handle encoding, and what edge cases to watch for. This wastes tokens and introduces inconsistency — the same format might be handled differently across tasks.
+
+Skills compress learned patterns into loadable context. The Planner assigns relevant skills per task, and the Executor receives them as part of its prompt — no re-discovery needed.
+
 ### Two skill locations
 
 ```
@@ -190,16 +265,18 @@ TMB/skills/              <- curated seed skills (shipped with framework)
 
 ### Trust and validation
 
+Letting agents create their own knowledge is powerful but dangerous. Research shows unvalidated self-generated skills can *degrade* agent performance (Voyager 2023, SoK 2026). TMB handles this with a tiered trust model:
+
 | Aspect | Mechanism |
 |---|---|
 | **Trust tiers** | `curated` (system/human — always trusted) vs. `agent` (requires review) |
 | **Status lifecycle** | `draft` -> `pending_review` -> `active` -> `deprecated` |
-| **Quality gate** | Agent-created skills auto-submitted for Planner review |
-| **Effectiveness tracking** | Every PASS/FAIL verdict updates counters. Effectiveness = successes / uses |
-| **Auto-deprecation** | Agent-tier skills with 5+ uses and < 30% effectiveness are deprecated |
-| **Applicability** | Each skill has `when_to_use` and `when_not_to_use` metadata |
+| **Quality gate** | Agent-created skills are auto-submitted for Planner review. The Planner reads the skill content and renders an APPROVE/REJECT verdict before any Executor can use it. |
+| **Effectiveness tracking** | Every PASS/FAIL verdict updates the skill's counters. Effectiveness = successes / total uses. |
+| **Auto-deprecation** | Agent-tier skills with 5+ uses and < 30% effectiveness are automatically deprecated — bad knowledge is purged, not accumulated. |
+| **Applicability** | Each skill has `when_to_use` and `when_not_to_use` metadata, so the Planner can assign skills precisely rather than broadly. |
 
-Design follows the agentic skills lifecycle from research (Voyager 2023, SoK 2026): curated skills improve agent success rates by +16pp, while unvalidated self-generated skills can degrade them — hence the mandatory review gate.
+Curated skills improve agent success rates by +16pp in published benchmarks. The mandatory review gate exists because the alternative — letting agents trust their own generated knowledge without verification — actively harms performance.
 
 ---
 

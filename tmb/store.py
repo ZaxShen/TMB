@@ -43,6 +43,7 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._create_tables()
 
     def _create_tables(self):
@@ -326,6 +327,28 @@ class Store:
         ).fetchone()
         return dict(row) if row else None
 
+    def claim_open_issue(self) -> dict | None:
+        """Atomically find and claim the latest open issue (race-safe).
+
+        Uses UPDATE … WHERE status='open' so only one process wins when
+        multiple callers race on the same issue.
+        """
+        row = self._conn.execute(
+            "SELECT id FROM issues WHERE status = 'open' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return None
+        issue_id = row["id"]
+        self._conn.execute(
+            "UPDATE issues SET status = 'in_progress', updated_at = ? "
+            "WHERE id = ? AND status = 'open'",
+            (_now(), issue_id),
+        )
+        self._conn.commit()
+        if self._conn.total_changes == 0:
+            return None  # another process claimed it first
+        return self.get_issue(issue_id)
+
     # ── Ledger queries ───────────────────────────────────────
 
     def has_event(self, issue_id: int, event_type: str) -> bool:
@@ -393,37 +416,44 @@ class Store:
     def create_tasks(self, issue_id: int, blueprint: list[dict]):
         now = _now()
         existing = self.get_tasks(issue_id)
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            if existing:
+                self._conn.execute(
+                    "DELETE FROM tasks WHERE issue_id = ?", (issue_id,)
+                )
+
+            for task in blueprint:
+                bid = str(task["branch_id"])
+                desc = task["description"]
+                title = desc.split("\n")[0][:120].strip()
+                parent = ".".join(bid.split(".")[:-1]) or None
+                self._conn.execute(
+                    "INSERT INTO tasks (issue_id, branch_id, parent_branch_id, title, description, "
+                    "tools_required, skills_required, success_criteria, status, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+                    (
+                        issue_id,
+                        bid,
+                        parent,
+                        title,
+                        desc,
+                        json.dumps(task.get("tools_required", [])),
+                        json.dumps(task.get("skills_required", [])),
+                        task["success_criteria"],
+                        now,
+                        now,
+                    ),
+                )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+
         if existing:
-            self._conn.execute(
-                "DELETE FROM tasks WHERE issue_id = ?", (issue_id,)
-            )
             self.log(issue_id, None, "planner", "blueprint_superseded", {
                 "old_task_count": len(existing),
             }, summary=f"Replaced {len(existing)} old tasks")
-
-        for task in blueprint:
-            bid = str(task["branch_id"])
-            desc = task["description"]
-            title = desc.split("\n")[0][:120].strip()
-            parent = ".".join(bid.split(".")[:-1]) or None
-            self._conn.execute(
-                "INSERT INTO tasks (issue_id, branch_id, parent_branch_id, title, description, "
-                "tools_required, skills_required, success_criteria, status, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
-                (
-                    issue_id,
-                    bid,
-                    parent,
-                    title,
-                    desc,
-                    json.dumps(task.get("tools_required", [])),
-                    json.dumps(task.get("skills_required", [])),
-                    task["success_criteria"],
-                    now,
-                    now,
-                ),
-            )
-        self._conn.commit()
         self.log(issue_id, None, "planner", "blueprint_created", {
             "task_count": len(blueprint),
         }, summary=f"Blueprint: {len(blueprint)} tasks")

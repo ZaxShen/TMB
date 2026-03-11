@@ -18,6 +18,7 @@ from tmb.paths import TMB_ROOT, docs_dir, SEED_SKILLS_DIR, user_skills_dir
 from tmb.state import AgentState
 from tmb.store import Store
 from tmb.tools import get_tools_for_node
+from tmb.types import TokenAccumulator
 
 _MAX_EXPLORE_ROUNDS = 10
 
@@ -40,11 +41,29 @@ def _write_doc(name: str, content: str):
     path.write_text(content)
 
 
-def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = "", token_accum: dict | None = None):
+_PLANNER_CONTEXT_BUDGET_CHARS = 600_000  # ~150K tokens; matches executor budget
+
+
+def _estimate_context_chars(messages: list) -> int:
+    """Sum character lengths across all messages for budget tracking."""
+    total = 0
+    for m in messages:
+        content = m.content if hasattr(m, "content") else str(m)
+        if isinstance(content, list):
+            total += sum(len(str(block)) for block in content)
+        else:
+            total += len(str(content))
+    return total
+
+
+def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = "",
+                   token_accum: "TokenAccumulator | None" = None,
+                   max_context_chars: int = _PLANNER_CONTEXT_BUDGET_CHARS):
     """Run a multi-turn tool loop, returning the final response.
 
     Shows live progress on a single line, overwritten after each tool call.
-    If *token_accum* is provided, accumulates {"input_tokens": N, "output_tokens": N} across calls.
+    If *token_accum* is provided, accumulates token counts across calls.
+    Stops early if estimated context exceeds *max_context_chars*.
     """
     import sys
     import time
@@ -63,7 +82,23 @@ def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = 
             sys.stdout.write(f"\r{line}...{'':20}")
             sys.stdout.flush()
 
-    for _ in range(max_rounds):
+    for rnd in range(max_rounds):
+        # Context budget check
+        ctx_chars = _estimate_context_chars(messages)
+        if ctx_chars > max_context_chars:
+            messages.append(HumanMessage(
+                content=(
+                    f"[system] Context budget exceeded ({ctx_chars:,} chars). "
+                    f"Stop using tools and return your final answer now."
+                )
+            ))
+            response = llm_with_tools.invoke(messages)
+            messages.append(response)
+            if token_accum is not None:
+                usage = extract_token_usage(response)
+                token_accum.add(usage)
+            break
+
         if counts:
             _print_progress()
         response = llm_with_tools.invoke(messages)
@@ -71,8 +106,7 @@ def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = 
 
         if token_accum is not None:
             usage = extract_token_usage(response)
-            token_accum["input_tokens"] = token_accum.get("input_tokens", 0) + usage["input_tokens"]
-            token_accum["output_tokens"] = token_accum.get("output_tokens", 0) + usage["output_tokens"]
+            token_accum.add(usage)
 
         if not hasattr(response, "tool_calls") or not response.tool_calls:
             break
@@ -247,8 +281,7 @@ def _maybe_generate_flowchart(
             HumanMessage(content="\n\n".join(decide_parts)),
         ])
         usage = extract_token_usage(decide_resp)
-        token_accum["input_tokens"] += usage["input_tokens"]
-        token_accum["output_tokens"] += usage["output_tokens"]
+        token_accum.add(usage)
         answer = _normalize_content(decide_resp.content).strip().lower()
 
         if "no" in answer and "yes" not in answer:
@@ -272,16 +305,14 @@ def _maybe_generate_flowchart(
     ]
     fc_response = llm.invoke(fc_messages)
     usage = extract_token_usage(fc_response)
-    token_accum["input_tokens"] += usage["input_tokens"]
-    token_accum["output_tokens"] += usage["output_tokens"]
+    token_accum.add(usage)
     fc_raw = _normalize_content(fc_response.content)
 
     if "mermaid" not in fc_raw.lower() and len(fc_raw) < 200:
         print(f"[{planner_display}] Flowchart too short, retrying...")
         fc_response = llm.invoke(fc_messages)
         usage = extract_token_usage(fc_response)
-        token_accum["input_tokens"] += usage["input_tokens"]
-        token_accum["output_tokens"] += usage["output_tokens"]
+        token_accum.add(usage)
         fc_raw = _normalize_content(fc_response.content)
 
     flowchart_md = (
@@ -316,7 +347,7 @@ def _maybe_update_flowchart_after_task(
 
     if "yes" in answer and "no" not in answer:
         print(f"[{planner_display}] Significant change detected — updating flowchart...")
-        token_accum = {"input_tokens": 0, "output_tokens": 0}
+        token_accum = TokenAccumulator()
         _maybe_generate_flowchart(
             llm, system_prompt,
             state.get("objective", ""),
@@ -325,7 +356,7 @@ def _maybe_update_flowchart_after_task(
             issue_id, store, token_accum, planner_display,
             force=True,
         )
-        store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
+        store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
 
 
 def _per_task_exec_instruction():
@@ -354,6 +385,7 @@ def _per_task_exec_instruction():
 def planner_plan(state: AgentState) -> dict:
     """Explore codebase, then generate BLUEPRINT.md and FLOWCHART.md."""
     node_cfg = load_nodes_config().get("planner", {})
+    project_cfg = load_project_config()
     project_root = str(get_project_root())
     llm = get_llm("planner")
     system_prompt = load_prompt("planner")
@@ -376,7 +408,7 @@ def planner_plan(state: AgentState) -> dict:
     escalation_log = state.get("execution_log", "")
     project_context = state.get("project_context", "")
     discussion = state.get("discussion", "")
-    token_accum = {"input_tokens": 0, "output_tokens": 0}
+    token_accum = TokenAccumulator()
 
     is_replan = bool(feedback)
 
@@ -413,10 +445,8 @@ def planner_plan(state: AgentState) -> dict:
                 "Summarize what you learned from the files you inspected."
             )))
             summary_resp = llm.invoke(explore_messages)
-            if token_accum is not None:
-                usage = extract_token_usage(summary_resp)
-                token_accum["input_tokens"] += usage["input_tokens"]
-                token_accum["output_tokens"] += usage["output_tokens"]
+            usage = extract_token_usage(summary_resp)
+            token_accum.add(usage)
             exploration_summary = _normalize_content(summary_resp.content)
 
         store.log(issue_id, None, "planner", "codebase_explored", {
@@ -553,8 +583,7 @@ def planner_plan(state: AgentState) -> dict:
             ]
             review_resp = llm.invoke(review_msgs)
             usage = extract_token_usage(review_resp)
-            token_accum["input_tokens"] += usage["input_tokens"]
-            token_accum["output_tokens"] += usage["output_tokens"]
+            token_accum.add(usage)
             verdict = _normalize_content(review_resp.content).strip().upper()
             if verdict.startswith("APPROVE"):
                 store.activate_skill(ps["name"])
@@ -629,10 +658,8 @@ def planner_plan(state: AgentState) -> dict:
             "Start with [ and end with ]."
         )))
         retry_resp = llm.invoke(messages)
-        if token_accum is not None:
-            usage = extract_token_usage(retry_resp)
-            token_accum["input_tokens"] += usage["input_tokens"]
-            token_accum["output_tokens"] += usage["output_tokens"]
+        usage = extract_token_usage(retry_resp)
+        token_accum.add(usage)
         raw = _normalize_content(retry_resp.content)
         try:
             blueprint = _extract_json_array(raw)
@@ -654,11 +681,24 @@ def planner_plan(state: AgentState) -> dict:
 
     # ── 2. Conditionally Generate Flowchart ─────────────────
     if not blueprint:
-        print(f"[{planner_display}] No blueprint was generated.")
-        store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
+        replan_count = state.get("replan_count", 0) + 1
+        max_replans = project_cfg.get("max_replan_attempts", 3)
+        print(f"[{planner_display}] No blueprint was generated (attempt {replan_count}/{max_replans}).")
+        store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
+        if replan_count >= max_replans:
+            store.log(issue_id, None, "planner", "replan_limit_reached", {
+                "attempts": replan_count,
+            }, summary=f"Re-plan limit reached after {replan_count} attempts")
+            print(f"[{planner_display}] ERROR: Re-plan limit reached. Aborting.")
+            return {
+                "blueprint": [],
+                "next_node": "__end__",
+                "replan_count": replan_count,
+            }
         return {
             "blueprint": [],
             "next_node": "planner",
+            "replan_count": replan_count,
             "review_feedback": "Blueprint was empty — planner should retry.",
         }
 
@@ -668,7 +708,7 @@ def planner_plan(state: AgentState) -> dict:
     )
 
     print(f"[{planner_display}] Planning complete: {len(blueprint)} tasks")
-    store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
+    store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
 
     return {
         "blueprint": blueprint,
@@ -722,14 +762,14 @@ def planner_quick_task(instruction: str, project_context: str, issue_id: int):
 
     planner_display = get_role_name("planner").upper()
     print(f"[{planner_display}] Working on quick task...")
-    token_accum = {"input_tokens": 0, "output_tokens": 0}
+    token_accum = TokenAccumulator()
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS,
         token_accum=token_accum,
     )
     result = _normalize_content(response.content)
 
-    store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
+    store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
     store.log(issue_id, None, "planner", "quick_task_completed", {},
              summary=f"Quick: {instruction[:150]}")
     print(f"[{planner_display}] Done.")
@@ -805,14 +845,14 @@ def planner_evolve(instruction: str, tmb_context: str, issue_id: int) -> str:
 
     planner_display = get_role_name("planner").upper()
     print(f"[{planner_display}] Exploring TMB codebase for evolution plan...")
-    token_accum = {"input_tokens": 0, "output_tokens": 0}
+    token_accum = TokenAccumulator()
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, _MAX_EXPLORE_ROUNDS,
         token_accum=token_accum,
     )
     plan = _normalize_content(response.content)
 
-    store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
+    store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
     _write_doc("EVOLUTION.md", plan)
     store.log(issue_id, None, "planner", "evolve_plan_generated", {
         "instruction": instruction[:300],
@@ -857,14 +897,14 @@ def planner_evolve_execute(
 
     planner_display = get_role_name("planner").upper()
     print(f"[{planner_display}] Executing evolution plan...")
-    token_accum = {"input_tokens": 0, "output_tokens": 0}
+    token_accum = TokenAccumulator()
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, 15,
         token_accum=token_accum,
     )
     result = _normalize_content(response.content)
 
-    store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
+    store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
     store.log(issue_id, None, "planner", "evolve_executed", {
         "instruction": instruction[:300],
     }, summary=f"Executed evolution: {instruction[:120]}")
@@ -911,7 +951,7 @@ def planner_execution_plan(state: AgentState) -> dict:
     ]
 
     last_response = None
-    token_accum = {"input_tokens": 0, "output_tokens": 0}
+    token_accum = TokenAccumulator()
     for i, task in enumerate(blueprint):
         branch_id = task["branch_id"]
         description = task.get("description", "")
@@ -961,7 +1001,7 @@ def planner_execution_plan(state: AgentState) -> dict:
 
         summary_lines.append(f"## Task {branch_id}\n{description[:120]}\n")
 
-    store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
+    store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
     summary_md = "\n".join(summary_lines) + "\n"
     _write_doc("EXECUTION.md", summary_md)
     store.log(issue_id, None, "planner", "execution_plan_generated", {
@@ -984,8 +1024,10 @@ def _extract_verdict(text: str) -> bool:
     Strategy (in priority order):
       1. Parse JSON block and read the "verdict" field
       2. Regex for "verdict": "PASS" / "FAIL" pattern
-      3. Fallback: first occurrence of standalone PASS or FAIL keyword
+      3. Word-boundary keyword match (avoids "password", "passthrough", etc.)
+      4. Default: FAIL (fail-closed)
     """
+    # Tier 1: JSON code block
     json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if json_match:
         try:
@@ -996,20 +1038,29 @@ def _extract_verdict(text: str) -> bool:
         except (json.JSONDecodeError, AttributeError):
             pass
 
+    # Tier 2: "verdict": "PASS" / "FAIL" field pattern
     field_match = re.search(r'"verdict"\s*:\s*"(PASS|FAIL)"', text, re.IGNORECASE)
     if field_match:
         return field_match.group(1).upper() == "PASS"
 
-    upper = text.upper()
-    pass_pos = upper.find("PASS")
-    fail_pos = upper.find("FAIL")
-    if pass_pos >= 0 and fail_pos < 0:
-        return True
-    if fail_pos >= 0 and pass_pos < 0:
-        return False
-    if pass_pos >= 0 and fail_pos >= 0:
-        return pass_pos < fail_pos
+    # Tier 3: word-boundary keyword match (prevents "password" / "passthrough" / "bypass" false positives)
+    import logging
+    logger = logging.getLogger("tmb.planner")
 
+    pass_match = re.search(r"\bPASS\b", text, re.IGNORECASE)
+    fail_match = re.search(r"\bFAIL\b", text, re.IGNORECASE)
+    if pass_match and not fail_match:
+        logger.warning("Verdict fell back to keyword match (PASS) — consider structured output")
+        return True
+    if fail_match and not pass_match:
+        logger.warning("Verdict fell back to keyword match (FAIL) — consider structured output")
+        return False
+    if pass_match and fail_match:
+        logger.warning("Verdict fell back to keyword match (both found) — consider structured output")
+        return pass_match.start() < fail_match.start()
+
+    # Tier 4: fail-closed default
+    logger.warning("No verdict could be extracted — defaulting to FAIL (fail-closed)")
     return False
 
 
@@ -1117,12 +1168,12 @@ def planner_validate(state: AgentState) -> dict:
         HumanMessage(content=verify_prompt),
     ]
 
-    token_accum = {"input_tokens": 0, "output_tokens": 0}
+    token_accum = TokenAccumulator()
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, 10, label=f"validate-{branch_id}",
         token_accum=token_accum,
     )
-    store.log_tokens(issue_id, "planner", token_accum["input_tokens"], token_accum["output_tokens"])
+    store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
 
     verdict_text = _normalize_content(response.content)
     is_pass = _extract_verdict(verdict_text)

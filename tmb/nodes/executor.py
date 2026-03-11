@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
@@ -11,6 +12,7 @@ from tmb.paths import TMB_ROOT, user_skills_dir
 from tmb.state import AgentState
 from tmb.store import Store
 from tmb.tools import get_tools_for_node
+from tmb.types import TokenAccumulator
 
 _MAX_TOOL_ROUNDS = 15
 _MAX_TOOL_OUTPUT_CHARS = 20_000
@@ -68,6 +70,24 @@ def _load_skills(store: Store, skill_names: list[str]) -> str:
         if resolved:
             parts.append(resolved.read_text().strip())
     return "\n\n---\n\n".join(parts)
+
+
+def _detect_escalation(content) -> bool:
+    """Detect escalation signal from the LLM's final response only (not tool output).
+
+    Checks in priority order:
+      1. JSON block with "status": "escalate"
+      2. Word-boundary regex \\bescalate\\b (avoids matching inside quoted tool output)
+    """
+    text = _normalize_content(content)
+    # Tier 1: structured JSON signal
+    json_match = re.search(r"\{[^}]*\"status\"\s*:\s*\"escalate\"[^}]*\}", text, re.IGNORECASE)
+    if json_match:
+        return True
+    # Tier 2: word-boundary keyword in LLM prose
+    if re.search(r"\bescalate\b", text, re.IGNORECASE):
+        return True
+    return False
 
 
 def executor(state: AgentState) -> dict:
@@ -163,7 +183,7 @@ def executor(state: AgentState) -> dict:
 
     tool_map = {t.name: t for t in tools} if tools else {}
     tool_outputs = []
-    token_accum = {"input_tokens": 0, "output_tokens": 0}
+    token_accum = TokenAccumulator()
     budget_exceeded = False
 
     for _round in range(_MAX_TOOL_ROUNDS):
@@ -179,16 +199,14 @@ def executor(state: AgentState) -> dict:
             response = llm_with_tools.invoke(messages)
             messages.append(response)
             usage = extract_token_usage(response)
-            token_accum["input_tokens"] += usage["input_tokens"]
-            token_accum["output_tokens"] += usage["output_tokens"]
+            token_accum.add(usage)
             break
 
         response = llm_with_tools.invoke(messages)
         messages.append(response)
 
         usage = extract_token_usage(response)
-        token_accum["input_tokens"] += usage["input_tokens"]
-        token_accum["output_tokens"] += usage["output_tokens"]
+        token_accum.add(usage)
 
         if not hasattr(response, "tool_calls") or not response.tool_calls:
             break
@@ -226,7 +244,7 @@ def executor(state: AgentState) -> dict:
                     tool_call_id=tc["id"],
                 ))
 
-    store.log_tokens(issue_id, "executor", token_accum["input_tokens"], token_accum["output_tokens"])
+    store.log_tokens(issue_id, "executor", token_accum.input_tokens, token_accum.output_tokens)
 
     if budget_exceeded:
         store.log(issue_id, branch_id, "executor", "context_budget_exceeded", {
@@ -238,7 +256,7 @@ def executor(state: AgentState) -> dict:
     if tool_outputs:
         execution_log += "\n\nTool outputs:\n" + "\n".join(tool_outputs)
 
-    is_escalation = "escalate" in execution_log.lower()
+    is_escalation = _detect_escalation(response.content)
 
     if is_escalation:
         store.update_task_status(issue_id, branch_id, "escalated")

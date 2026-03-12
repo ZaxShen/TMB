@@ -130,7 +130,12 @@ To update TMB later: `cd TMB && git pull origin dev && cd .. && ./TMB/install`
 | `uv run tmb tokens`              | Show token usage across all issues                           |
 | `uv run tmb tokens 3`            | Show token usage for issue #3                                |
 | `uv run tmb setup`               | Re-run setup (change LLM provider, role names, etc.)         |
+| `uv run tmb evolve "..."`        | Self-modify TMB's own code (guarded, git-snapshotted)        |
+| `uv run tmb serve`               | Expose TMB as an MCP server (for Claude Desktop, Cursor)     |
 
+### MCP — External Integrations
+
+Need Notion, GitHub, Slack, or any other service? No problem — Trust Me Bro, your agents can connect to anything via [MCP](https://modelcontextprotocol.io/). Configure in `.tmb/config/mcp.yaml`. See [ARCHITECTURE.md § MCP Integration](ARCHITECTURE.md#mcp-integration) for details.
 
 ---
 

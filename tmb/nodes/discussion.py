@@ -15,6 +15,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, Tool
 
 from tmb.config import get_llm, get_role_name, get_project_root, load_nodes_config, extract_token_usage
 from tmb.paths import docs_dir
+from tmb.utils import truncate
 from tmb.store import Store
 from tmb.tools import get_tools_for_node
 from tmb.types import TokenAccumulator
@@ -275,7 +276,7 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
 
         store.add_discussion(issue_id, "owner", owner_answer)
         messages.append(HumanMessage(content=owner_answer))
-        print(f"[{owner_display}]: {owner_answer[:120]}...")
+        print(f"[{owner_display}]: {truncate(owner_answer, 120)}")
 
     store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
     discussion_md = store.export_discussion_md(issue_id)

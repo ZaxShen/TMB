@@ -9,6 +9,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
 from tmb.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, extract_token_usage
 from tmb.paths import TMB_ROOT, user_skills_dir
+from tmb.utils import truncate, fit_line
 from tmb.state import AgentState
 from tmb.store import Store
 from tmb.tools import get_tools_for_node
@@ -141,12 +142,12 @@ def executor(state: AgentState) -> dict:
     planner_display = get_role_name("planner")
     planner_validate_display = get_role_name("planner")
     if is_retry:
-        print(f"[{executor_display}] 🔄 [{branch_id}] {total} tasks — retrying: {description[:60]}")
+        print(fit_line(f"[{executor_display}] 🔄 [{branch_id}] {total} tasks — retrying:", description))
     else:
-        print(f"[{executor_display}] 🔧 [{branch_id}] {total} tasks — starting: {description[:60]}")
+        print(fit_line(f"[{executor_display}] 🔧 [{branch_id}] {total} tasks — starting:", description))
 
     store.update_task_status(issue_id, branch_id, "in_progress", increment_attempts=True)
-    task_title = task.get("title") or description[:80]
+    task_title = task.get("title") or truncate(description, 80)
     store.log(issue_id, branch_id, "executor",
               "task_started" if not is_retry else "task_retried",
               {"description": description},

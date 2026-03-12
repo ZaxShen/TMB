@@ -15,6 +15,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
 from tmb.config import get_llm, load_prompt, load_nodes_config, load_project_config, get_project_root, get_role_name, extract_token_usage
 from tmb.paths import TMB_ROOT, docs_dir, SEED_SKILLS_DIR, user_skills_dir
+from tmb.utils import truncate
 from tmb.state import AgentState
 from tmb.store import Store
 from tmb.tools import get_tools_for_node
@@ -517,7 +518,7 @@ def planner_plan(state: AgentState) -> dict:
                     "request_id": req["id"], "need": req["need"][:200],
                     "matched_skill": best["name"],
                 }, summary=f"Skill request matched → {best['name']}")
-                print(f"  [{planner_display}] Request '{req['need'][:60]}' → existing skill: {best['name']}")
+                print(f"  [{planner_display}] Request '{truncate(req['need'], 60)}' → existing skill: {best['name']}")
             elif tools:
                 create_prompt = (
                     f"An agent ({req['requested_by']}) requested a skill:\n\n"
@@ -548,7 +549,7 @@ def planner_plan(state: AgentState) -> dict:
                     }, summary=f"Created skill for request: {skill_name}")
                     print(f"  [{planner_display}] Created skill '{skill_name}' for request")
             else:
-                print(f"  [{planner_display}] No tools to create skill for: {req['need'][:60]}")
+                print(f"  [{planner_display}] No tools to create skill for: {truncate(req['need'], 60)}")
 
     # ── 0c. Review pending skills ─────────────────────────────
     pending_skills = store.get_skills_pending_review()
@@ -610,7 +611,7 @@ def planner_plan(state: AgentState) -> dict:
     if exploration_summary:
         parts.append(f"## Codebase Exploration\n{exploration_summary}")
     if existing_tree:
-        tree_lines = [f"- **{t['branch_id']}**: {t['title']} [{t['status']}] (issue #{t['issue_id']}: {t['objective'][:60]})"
+        tree_lines = [f"- **{t['branch_id']}**: {t['title']} [{t['status']}] (issue #{t['issue_id']}: {truncate(t['objective'], 60)})"
                       for t in existing_tree]
         parts.append(f"## Existing Task Tree\n" + "\n".join(tree_lines))
     if available_skills:
@@ -957,12 +958,12 @@ def planner_execution_plan(state: AgentState) -> dict:
         description = task.get("description", "")
         success_criteria = task.get("success_criteria", "")
         skills = task.get("skills_required", [])
-        title = description[:80]
+        title = truncate(description, 80)
 
         existing_plan = store.get_task_execution_plan(issue_id, branch_id)
         if existing_plan:
             print(f"  [{branch_id}] already has plan, skipping")
-            summary_lines.append(f"## Task {branch_id}\n{description[:120]}...\n")
+            summary_lines.append(f"## Task {branch_id}\n{truncate(description, 120)}\n")
             continue
 
         parts = []
@@ -977,7 +978,7 @@ def planner_execution_plan(state: AgentState) -> dict:
             f"**Skills**: {', '.join(skills) if skills else 'none'}"
         )
         if i > 0:
-            prev_titles = [f"- [{t['branch_id']}] {t.get('description', '')[:60]}" for t in blueprint[:i]]
+            prev_titles = [f"- [{t['branch_id']}] {truncate(t.get('description', ''), 60)}" for t in blueprint[:i]]
             parts.append(f"## Previous Tasks (already planned)\n" + "\n".join(prev_titles))
         parts.append(_per_task_exec_instruction())
 
@@ -999,7 +1000,7 @@ def planner_execution_plan(state: AgentState) -> dict:
             "chars": len(plan_md),
         }, summary=f"Execution plan for [{branch_id}]: {title}")
 
-        summary_lines.append(f"## Task {branch_id}\n{description[:120]}\n")
+        summary_lines.append(f"## Task {branch_id}\n{truncate(description, 120)}\n")
 
     store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
     summary_md = "\n".join(summary_lines) + "\n"

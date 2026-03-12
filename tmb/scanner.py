@@ -140,7 +140,7 @@ def scan_project(project_root: Path, store: Store, blacklist: list[str] | None =
         type_counts[ftype] = type_counts.get(ftype, 0) + 1
         total_size += size
 
-    tech_stack = _detect_tech_stack(root)
+    tech_stack = detect_tech_stack(root)
     store.set_project_meta("tech_stack", tech_stack)
 
     git_log = _git_log_summary(root)
@@ -155,7 +155,7 @@ def scan_project(project_root: Path, store: Store, blacklist: list[str] | None =
     if contributors:
         store.set_project_meta("git_contributors", contributors[:2000])
 
-    doc_previews = _read_key_docs(root)
+    doc_previews = read_key_docs(root)
     if doc_previews:
         store.set_project_meta("key_docs", doc_previews[:12000])
 
@@ -173,7 +173,7 @@ def scan_project(project_root: Path, store: Store, blacklist: list[str] | None =
     }
 
 
-def _detect_tech_stack(root: Path) -> str:
+def detect_tech_stack(root: Path) -> str:
     indicators: list[str] = []
     if (root / "pyproject.toml").exists() or (root / "setup.py").exists():
         indicators.append("Python")
@@ -198,7 +198,7 @@ def _detect_tech_stack(root: Path) -> str:
     return ", ".join(indicators) if indicators else "unknown"
 
 
-def _read_key_docs(root: Path) -> str:
+def read_key_docs(root: Path) -> str:
     sections = []
     for name in _KEY_DOC_FILES:
         path = root / name

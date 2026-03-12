@@ -20,10 +20,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from tmb.utils import truncate, fit_line
+
 def _split_task_description(desc: str) -> tuple[str, str]:
     """Split a task description into a short title and the full body."""
     first_line = desc.split("\n")[0].strip()
-    title = first_line[:120]
+    title = truncate(first_line, 120)
     body = desc[len(first_line):].strip() if len(desc) > len(first_line) else ""
     return title, body
 
@@ -298,7 +300,7 @@ class Store:
         self._conn.commit()
         issue_id = cur.lastrowid
         self.log(issue_id, None, "owner", "issue_opened", {"objective": objective},
-                 summary=f"Issue opened: {objective[:100]}")
+                 summary=f"Issue opened: {truncate(objective, 100)}")
         return issue_id
 
     def update_issue_current_task(self, issue_id: int, task_row_id: int):
@@ -426,7 +428,7 @@ class Store:
             for task in blueprint:
                 bid = str(task["branch_id"])
                 desc = task["description"]
-                title = desc.split("\n")[0][:120].strip()
+                title = truncate(desc.split("\n")[0].strip(), 120)
                 parent = ".".join(bid.split(".")[:-1]) or None
                 self._conn.execute(
                     "INSERT INTO tasks (issue_id, branch_id, parent_branch_id, title, description, "
@@ -638,7 +640,7 @@ class Store:
         self._conn.execute(
             "INSERT INTO ledger (issue_id, branch_id, from_node, event_type, summary, content, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (issue_id, branch_id, from_node, event_type, summary[:200], content, _now()),
+            (issue_id, branch_id, from_node, event_type, truncate(summary, 200), content, _now()),
         )
         self._conn.commit()
 
@@ -1041,7 +1043,7 @@ class Store:
         ledger = self.get_ledger(issue_id)
 
         print(f"\n{'=' * 60}")
-        print(f"  Issue #{issue_id}: {issue['objective']}")
+        print(fit_line(f"  Issue #{issue_id}:", issue['objective']))
         print(f"  Status: {issue['status']}  |  Created: {issue['created_at']}")
         if issue["current_task_id"]:
             print(f"  Current task (row id): {issue['current_task_id']}")
@@ -1052,22 +1054,22 @@ class Store:
             for d in discussions:
                 from tmb.config import get_role_name
                 label = get_role_name("owner") if d["role"] in ("cto", "owner") else get_role_name("planner")
-                preview = d["content"][:80].replace("\n", " ")
-                print(f"    {d['created_at']}  [{label}] {preview}...")
+                preview = d["content"].replace("\n", " ")
+                print(fit_line(f"    {d['created_at']}  [{label}]", preview))
 
         if tasks:
             print(f"\n  Tasks ({len(tasks)}):")
             for t in tasks:
                 icon = {"pending": " ", "in_progress": "~", "completed": "x", "failed": "!", "escalated": "^"}.get(t["status"], "?")
-                label = t.get("title") or t["description"][:50]
-                print(f"    [{icon}] #{t['id']} [{t['branch_id']}] {label}")
+                label = t.get("title") or t.get("description", "")
+                print(fit_line(f"    [{icon}] #{t['id']} [{t['branch_id']}]", label))
                 print(f"        Status: {t['status']}  |  Attempts: {t['attempts']}  |  Updated: {t['updated_at']}")
 
         print(f"\n  Ledger ({len(ledger)} entries):")
         for entry in ledger:
             task_str = f" [{entry['branch_id']}]" if entry.get("branch_id") else ""
             label = entry.get("summary") or entry["event_type"]
-            print(f"    {entry['created_at']}  [{entry['from_node']}]{task_str}  {label}")
+            print(fit_line(f"    {entry['created_at']}  [{entry['from_node']}]{task_str}", label))
 
         print()
 
@@ -1091,7 +1093,7 @@ class Store:
             "",
             f"| Field | Value |",
             f"|---|---|",
-            f"| **Objective** | {issue['objective'][:120]} |",
+            f"| **Objective** | {issue['objective']} |",
             f"| **Status** | {issue['status']} |",
             f"| **Created** | {issue['created_at']} |",
             f"| **Closed** | {issue.get('closed_at') or '—'} |",

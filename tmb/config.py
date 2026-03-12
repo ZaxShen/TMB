@@ -10,7 +10,7 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
-from tmb.paths import TMB_ROOT, DEFAULT_CFG_DIR, PROMPTS_DIR
+from tmb.paths import TMB_ROOT, DEFAULT_CFG_DIR, PROMPTS_DIR, SYSTEM_PROMPTS_DIR, SAMPLES_DIR
 
 _TMB_ROOT = TMB_ROOT  # backward compat alias
 
@@ -77,7 +77,7 @@ def load_prompt(name: str) -> str:
     Resolution order:
       1. <project>/.tmb/prompts/<name>.md  (auto-generated during setup)
       2. prompts/samples/<preset>/<name>.md  (if roles.preset is set)
-      3. prompts/<name>.md  (generic default)
+      3. prompts/system/<name>.md  (TMB system default)
 
     Template variables like ``{role_planner}`` are replaced with display names
     from project.yaml → roles.
@@ -95,13 +95,13 @@ def load_prompt(name: str) -> str:
 
     # Priority 2: static preset samples
     if path is None and preset:
-        preset_path = PROMPTS_DIR / "samples" / preset / f"{name}.md"
+        preset_path = SAMPLES_DIR / preset / f"{name}.md"
         if preset_path.exists():
             path = preset_path
 
-    # Priority 3: generic default
+    # Priority 3: TMB system default
     if path is None:
-        path = PROMPTS_DIR / f"{name}.md"
+        path = SYSTEM_PROMPTS_DIR / f"{name}.md"
 
     text = path.read_text()
 

@@ -25,7 +25,9 @@ from pathlib import Path
 import yaml
 
 from tmb.config import load_project_config, get_project_root, get_role_name
-from tmb.paths import TMB_ROOT, PROMPTS_DIR, docs_dir, runtime_dir, user_cfg_dir, user_prompts_dir, ensure_dirs
+from tmb.paths import TMB_ROOT, SYSTEM_PROMPTS_DIR, SAMPLES_DIR, docs_dir, runtime_dir, user_cfg_dir, user_prompts_dir, ensure_dirs
+from tmb.utils import truncate, fit_line
+from tmb.scanner import detect_tech_stack, read_key_docs
 from tmb.store import Store
 
 
@@ -122,8 +124,8 @@ def _show_blueprint(tasks: list[dict]):
     print(f"[{planner_display}] 📋 Blueprint ({len(tasks)} tasks) — see bro/BLUEPRINT.md")
     for t in tasks:
         bid = t.get("branch_id") or t.get("task_id", "?")
-        label = t.get("title") or t["description"][:80]
-        print(f"  [{bid}] {label}")
+        desc = t.get("title") or t.get("description", "")
+        print(fit_line(f"  [{bid}]", desc))
     print()
 
 
@@ -413,7 +415,12 @@ def _finalize_issue(store: Store, issue_id: int):
     print("-" * 40)
     store.print_summary(issue_id)
     _print_token_summary(store, issue_id)
-    print(f"[TMB] See {docs_dir().name}/ for DISCUSSION, BLUEPRINT, FLOWCHART, and EXECUTION.")
+    dd = docs_dir()
+    doc_names = [f.stem for f in sorted(dd.glob("*.md")) if f.stem != "GOALS"]
+    if doc_names:
+        print(f"[TMB] See {dd.name}/ for {', '.join(doc_names)}.")
+    else:
+        print(f"[TMB] See {dd.name}/ for generated docs.")
 
 
 def _run_execution_plan(
@@ -482,10 +489,21 @@ def _maybe_suggest_scan(store: Store, project_root):
     if store.file_registry_count() > 0:
         return
     root = Path(project_root)
-    has_source = any(
-        root.glob(pat) for pat in ["*.py", "*.js", "*.ts", "*.go", "*.rs", "*.java",
-                                    "package.json", "pyproject.toml", "Cargo.toml", "go.mod"]
-    )
+    # Look for real source files — not TMB-scaffolded config at the root
+    _tmb_scaffolded = {"pyproject.toml", "uv.lock", ".python-version"}
+    _skip_dirs = {".git", ".venv", "venv", "node_modules", "__pycache__", ".tmb", "bro", "TMB"}
+    has_source = False
+    for child in root.iterdir():
+        if child.name.startswith(".") or child.name in _skip_dirs:
+            continue
+        if child.is_file() and child.name not in _tmb_scaffolded:
+            has_source = True
+            break
+        if child.is_dir():
+            # Check for any source files one level down
+            if any(f.is_file() for f in child.iterdir() if not f.name.startswith(".")):
+                has_source = True
+                break
     if has_source:
         print("[TMB] 💡 Existing project detected. Run 'uv run tmb scan' for better planning context.\n")
 
@@ -539,7 +557,11 @@ def _fresh_start(store: Store):
         sys.exit(1)
 
     _show_blueprint(blueprint)
-    print(f"[TMB] Review {docs_dir().name}/BLUEPRINT.md and {docs_dir().name}/FLOWCHART.md")
+    dd = docs_dir()
+    review = [f"{dd.name}/BLUEPRINT.md"]
+    if (dd / "FLOWCHART.md").exists():
+        review.append(f"{dd.name}/FLOWCHART.md")
+    print(f"[TMB] Review {' and '.join(review)}")
     print()
 
     if not _approve_blueprint(store, issue_id):
@@ -667,17 +689,43 @@ _GENERATE_META_PROMPT = """\
 You are a prompt engineer for TMB (Trust My Bot), an AI agent framework that \
 maximizes project quality through systematic reasoning.
 
-The user is setting up a new project with the following purpose:
+The user is setting up a new project. Here is their description of the project's \
+domain and purpose:
 ---
 {purpose}
 ---
 
-Your task: generate TWO system prompts tailored to this project purpose.
+Your task: generate TWO **domain-specialized system prompts** for this project.
 
 1. **Planner prompt** — guides an AI planner that explores the codebase, discusses \
 requirements with the human, creates blueprints, and validates execution.
 2. **Executor prompt** — guides an AI executor that follows the planner's blueprint \
 and executes tasks step by step.
+
+## CRITICAL — Domain-General, Not Task-Specific
+
+The prompts you generate are **persistent system prompts** that will be used for \
+EVERY task in this project — not just the first one. They must be domain-specialized \
+but task-agnostic.
+
+**DO**:
+- Infer the broad domain from the purpose (e.g., "REST API backend in FastAPI" → \
+  web development / backend engineering domain)
+- Add domain expertise that helps across ALL tasks in that domain (e.g., API design \
+  patterns, testing strategies, database conventions)
+- Tailor the reasoning examples to the domain, not to one specific task
+- Write prompts that work equally well for "add a new endpoint" and "fix a bug" \
+  and "refactor the auth layer"
+
+**DO NOT**:
+- Reference the specific purpose text as if it's the current task
+- Write "The {{role_owner}} wants X" where X is the stated purpose — they will want \
+  MANY different things over the project lifetime
+- Narrow the Domain Expertise section to only cover the stated purpose
+- Generate validation criteria or branch ID examples tied to one specific deliverable
+
+If the purpose reads like a single task (e.g., "build a login page"), generalize it \
+to the broader domain (e.g., web application development) before writing the prompts.
 
 ---
 
@@ -816,17 +864,142 @@ Return EXACTLY two markdown documents separated by this delimiter on its own lin
 ===PROMPT_SEPARATOR===
 
 First document: the Planner prompt (with ALL required sections from Part A + the \
-Systematic Reasoning Process from Part B + Domain Expertise tailored to the purpose).
+Systematic Reasoning Process from Part B + Domain Expertise tailored to the DOMAIN).
 Second document: the Executor prompt (with ALL required sections from Part A).
 
 Both must use {{role_planner}}, {{role_executor}}, and {{role_owner}} template variables \
 (NOT hardcoded role names). Keep the bro/ reserved directory rule.
+
+FINAL CHECK before returning: re-read both prompts and verify they would work \
+equally well for ANY task in this domain — not just the stated purpose. If the \
+role intro says "The {{role_owner}} wants to [specific thing]", rewrite it to \
+describe the domain instead.
 """
 
 
-def _generate_prompts(purpose: str) -> bool:
+_PRESET_KEYWORDS: dict[str, list[str]] = {
+    "software-engineering": [
+        "api", "backend", "frontend", "web", "app", "microservice", "rest",
+        "graphql", "react", "vue", "angular", "fastapi", "django", "flask",
+        "express", "node", "typescript", "javascript", "rust", "go", "java",
+        "kubernetes", "docker", "ci/cd", "devops", "architecture", "saas",
+        "mobile", "ios", "android", "crud", "auth", "deploy", "infra",
+        "monorepo", "cli", "sdk", "library", "framework", "testing",
+    ],
+    "data-analytics": [
+        "sql", "data", "analytics", "etl", "pipeline", "csv", "parquet",
+        "duckdb", "bigquery", "snowflake", "redshift", "a/b test",
+        "ab test", "experiment", "statistics", "dashboard", "report",
+        "visualization", "tableau", "looker", "metabase", "pandas",
+        "polars", "spark", "airflow", "dbt", "warehouse", "lake",
+        "metric", "kpi", "forecast", "ml", "model", "training",
+        "feature engineering", "embedding", "recommendation", "matching",
+    ],
+}
+
+_PRESET_ROLES: dict[str, dict[str, str]] = {
+    "software-engineering": {
+        "owner": "Chief Architect",
+        "planner": "Architect",
+        "executor": "SWE",
+    },
+    "data-analytics": {
+        "owner": "Lead Analyst",
+        "planner": "Analytics Architect",
+        "executor": "Data Engineer",
+    },
+}
+
+
+def _quick_project_snapshot(project_root: Path) -> dict[str, str]:
+    """Lightweight project scan for setup — no Store needed.
+
+    Returns a dict with 'tech_stack', 'key_docs', and 'is_empty' fields.
+    """
+    root = project_root.resolve()
+
+    # Check if the project has meaningful content beyond TMB scaffolding
+    _ignore_dirs = {".git", ".venv", "venv", "node_modules", "__pycache__", ".tmb", "bro", "TMB"}
+    _tmb_scaffolded = {"pyproject.toml", "uv.lock", ".python-version"}
+    has_files = False
+    if root.exists():
+        for f in root.iterdir():
+            if f.name.startswith(".") or f.name in _ignore_dirs:
+                continue
+            if f.is_file() and f.name not in _tmb_scaffolded:
+                has_files = True
+                break
+            if f.is_dir():
+                # Any non-hidden file one level down counts
+                if any(c.is_file() for c in f.iterdir() if not c.name.startswith(".")):
+                    has_files = True
+                    break
+
+    tech_stack = detect_tech_stack(root) if has_files else "unknown"
+    key_docs = read_key_docs(root) if has_files else ""
+
+    return {
+        "tech_stack": tech_stack,
+        "key_docs": key_docs[:6000],  # cap for prompt budget
+        "is_empty": str(not has_files),
+    }
+
+
+def _detect_preset(purpose: str, snapshot: dict[str, str] | None = None) -> str:
+    """Classify a project into the closest sample preset.
+
+    Uses keyword overlap scoring from both the user's purpose description
+    AND the project snapshot (tech stack, key files) when available.
+    Returns "software-engineering", "data-analytics", or "generic".
+    """
+    # Combine purpose + project signals into one string for matching
+    signals = purpose.lower()
+    if snapshot:
+        signals += " " + snapshot.get("tech_stack", "").lower()
+        signals += " " + snapshot.get("key_docs", "").lower()
+
+    scores: dict[str, int] = {}
+    for preset, keywords in _PRESET_KEYWORDS.items():
+        scores[preset] = sum(1 for kw in keywords if kw in signals)
+
+    best = max(scores, key=scores.get)  # type: ignore[arg-type]
+    if scores[best] == 0:
+        return "generic"
+    return best
+
+
+def _copy_sample_prompts(preset: str) -> bool:
+    """Copy a sample preset's prompts to the user prompts dir.
+
+    Returns True if prompts were copied, False if preset is generic or files missing.
+    """
+    sample_dir = SAMPLES_DIR / preset
+    if not sample_dir.exists():
+        return False
+
+    out_dir = user_prompts_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    copied = False
+    for name in ("planner.md", "executor.md"):
+        src = sample_dir / name
+        if src.exists():
+            (out_dir / name).write_text(src.read_text())
+            copied = True
+
+    return copied
+
+
+def _generate_prompts(
+    purpose: str,
+    preset: str = "software-engineering",
+    snapshot: dict[str, str] | None = None,
+) -> bool:
     """Use the LLM to generate tailored planner & executor prompts.
 
+    The detected *preset* is used as the primary style reference.
+    When *snapshot* is provided (tech stack, key docs), it's injected
+    into the meta-prompt so the LLM can tailor prompts to the actual codebase.
     Returns True if prompts were generated successfully, False otherwise.
     """
     import sys
@@ -836,26 +1009,29 @@ def _generate_prompts(purpose: str) -> bool:
     except Exception:
         return False
 
-    # Load base templates (canonical feature set)
-    base_planner_path = PROMPTS_DIR / "planner.md"
-    base_executor_path = PROMPTS_DIR / "executor.md"
+    # Load base templates (canonical feature set) from system/
+    base_planner_path = SYSTEM_PROMPTS_DIR / "planner.md"
+    base_executor_path = SYSTEM_PROMPTS_DIR / "executor.md"
     if not base_planner_path.exists() or not base_executor_path.exists():
         return False
 
     base_planner = base_planner_path.read_text()
     base_executor = base_executor_path.read_text()
 
-    # Load software-engineering as style reference
-    style_dir = PROMPTS_DIR / "samples" / "software-engineering"
+    # Use detected preset as the primary style reference
+    style_dir = SAMPLES_DIR / preset
+    if not style_dir.exists():
+        # Fallback to software-engineering if detected preset dir missing
+        style_dir = SAMPLES_DIR / "software-engineering"
     style_planner = (style_dir / "planner.md").read_text() if (style_dir / "planner.md").exists() else ""
     style_executor = (style_dir / "executor.md").read_text() if (style_dir / "executor.md").exists() else ""
 
-    # Load domain-specific samples as few-shot examples (exclude software-engineering — already used as style ref)
-    samples_dir = PROMPTS_DIR / "samples"
+    # Load remaining samples as few-shot examples (exclude the style reference)
+    samples_dir = SAMPLES_DIR
     few_shot_parts = []
     if samples_dir.exists():
         for sample_dir in sorted(samples_dir.iterdir()):
-            if not sample_dir.is_dir() or sample_dir.name == "software-engineering":
+            if not sample_dir.is_dir() or sample_dir.name == style_dir.name:
                 continue
             planner_path = sample_dir / "planner.md"
             executor_path = sample_dir / "executor.md"
@@ -871,8 +1047,24 @@ def _generate_prompts(purpose: str) -> bool:
 
     few_shot_examples = "\n\n".join(few_shot_parts) if few_shot_parts else "(no examples available)"
 
+    # Build project context addendum from snapshot
+    project_context = ""
+    if snapshot and snapshot.get("is_empty") != "True":
+        ctx_parts = []
+        if snapshot.get("tech_stack") and snapshot["tech_stack"] != "unknown":
+            ctx_parts.append(f"**Detected tech stack**: {snapshot['tech_stack']}")
+        if snapshot.get("key_docs"):
+            ctx_parts.append(f"**Key project files**:\n{snapshot['key_docs']}")
+        if ctx_parts:
+            project_context = (
+                "\n\nThe project already has an existing codebase. "
+                "Use this context to tailor domain expertise, tooling references, "
+                "and quality checks to the actual stack:\n\n"
+                + "\n\n".join(ctx_parts)
+            )
+
     meta_prompt = _GENERATE_META_PROMPT.format(
-        purpose=purpose,
+        purpose=purpose + project_context,
         base_planner=base_planner,
         base_executor=base_executor,
         style_reference_planner=style_planner,
@@ -924,6 +1116,88 @@ def _generate_prompts(purpose: str) -> bool:
     return True
 
 
+def _inject_tmb_dependency(toml_path: Path, content: str, tmb_rel: Path) -> None:
+    """Add TMB as a dependency to an existing pyproject.toml without overwriting.
+
+    Handles three cases:
+      1. [project] with dependencies list → append "tmb" to the list
+      2. [project] without dependencies    → add dependencies key
+      3. No [project] section              → append a minimal block
+
+    Always adds [tool.uv.sources] for the path dependency if missing.
+    """
+    import re as _re
+
+    lines = content.splitlines(keepends=True)
+    modified = False
+
+    # ── Case 1 & 2: [project] section exists ──
+    dep_pattern = _re.compile(r'^dependencies\s*=\s*\[')
+    project_header = _re.compile(r'^\[project\]')
+
+    in_project = False
+    in_deps = False
+    insert_idx = None
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if project_header.match(stripped):
+            in_project = True
+            insert_idx = i + 1  # fallback: right after [project]
+            continue
+        if in_project and stripped.startswith("[") and not stripped.startswith("[project"):
+            # Left [project] section without finding deps
+            break
+        if in_project and dep_pattern.match(stripped):
+            in_deps = True
+            # Single-line form: dependencies = []
+            if "]" in stripped:
+                if "[]" in stripped:
+                    lines[i] = line.replace("[]", '[\n    "tmb",\n]')
+                else:
+                    lines[i] = line.replace("]", '    "tmb",\n]')
+                modified = True
+                break
+            continue
+        if in_deps:
+            if "]" in stripped:
+                # Insert before the closing bracket
+                lines.insert(i, '    "tmb",\n')
+                modified = True
+                break
+
+    if not modified and in_project and insert_idx is not None:
+        # [project] exists but no dependencies key — add it
+        lines.insert(insert_idx, 'dependencies = [\n    "tmb",\n]\n')
+        modified = True
+
+    if not modified:
+        # No [project] at all — append a minimal block
+        lines.append('\n[project]\ndependencies = [\n    "tmb",\n]\n')
+
+    # ── Add [tool.uv.sources] if missing ──
+    joined = "".join(lines)
+    if "[tool.uv.sources]" not in joined:
+        uv_section = ""
+        if "[tool.uv]" not in joined:
+            uv_section = "\n[tool.uv]\npackage = false\n"
+        joined = (
+            joined.rstrip("\n") + "\n"
+            + uv_section
+            + f'\n[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n'
+        )
+    elif "tmb" not in joined.split("[tool.uv.sources]")[1].split("[")[0]:
+        # [tool.uv.sources] exists but no tmb entry
+        joined = joined.replace(
+            "[tool.uv.sources]\n",
+            f'[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n',
+        )
+
+    toml_path.write_text(joined)
+    print(f"    Added TMB dependency to {toml_path}")
+    print(f"    Run `uv sync` to install.")
+
+
 # ── CLI Commands ─────────────────────────────────────────────
 
 
@@ -932,7 +1206,7 @@ def setup():
     from pathlib import Path
 
     print()
-    print("  🤙  T R U S T   M Y   B R O  🤙")
+    print("  🤙  T R U S T   M E   B R O  🤙")
     print("  ─────────────────────────────────")
     print("  Yo, let's get this project set up.")
     print()
@@ -942,7 +1216,6 @@ def setup():
     detected_name = project_root.name
 
     name = input(f"  What's this project called? [{detected_name}]: ").strip() or detected_name
-    max_retries = input("  Max retries per task [3]: ").strip() or "3"
 
     # ── LLM Provider (moved before purpose — needed for prompt generation) ──
     _PROVIDER_MENU = [
@@ -988,41 +1261,48 @@ def setup():
         elif choice != "s":
             print("    No API key entered — set it in .env before running, bro.")
 
-    # ── Project Template ──
-    print()
-    print("  What kind of project are we building?")
-    print("    1) Generic — I'll figure it out (default)")
-    print("    2) Software Engineering — code, APIs, architecture")
-    print("    3) Data Analytics — SQL, A/B tests, ETL, reporting")
-    template_choice = input("  Choice [1]: ").strip() or "1"
+    # ── Project Snapshot ──
+    snapshot = _quick_project_snapshot(project_root)
+    if snapshot["is_empty"] == "False":
+        print()
+        tech = snapshot.get("tech_stack", "unknown")
+        if tech != "unknown":
+            print(f"  📂 Existing project detected — stack: {tech}")
+        else:
+            print(f"  📂 Existing project detected")
 
-    roles_cfg: dict = {}
-    if template_choice == "2":
-        roles_cfg = {
-            "preset": "software-engineering",
-            "owner": "Chief Architect",
-            "planner": "Architect",
-            "executor": "SWE",
-        }
-    elif template_choice == "3":
-        roles_cfg = {
-            "preset": "data-analytics",
-            "owner": "Lead Analyst",
-            "planner": "Analytics Architect",
-            "executor": "Data Engineer",
-        }
-
-    # ── Project Purpose & Prompt Generation ──
+    # ── Project Purpose & Auto-Tuned Prompts ──
     print()
-    print("  Tell me what this project's about so I can think sharper for you.")
+    print("  Tell me what this project's about so I can auto-tune prompts for you.")
     print("    Examples: 'A/B test analysis for matchmaking experiments'")
     print("              'ETL pipeline for cleaning CSV sales data with DuckDB'")
     print("              'REST API backend in FastAPI with PostgreSQL'")
     purpose = input("  Project purpose (Enter to skip): ").strip()
 
+    # Nudge user if purpose looks like a single task, not a domain description
+    if purpose:
+        _task_verbs = ["build ", "create ", "fix ", "add ", "make ", "write ", "show ", "tell ",
+                       "update ", "deploy ", "set up ", "implement ", "design "]
+        looks_like_task = any(purpose.lower().startswith(v) for v in _task_verbs)
+        if looks_like_task:
+            print("    💡 Tip: describe the project DOMAIN, not a single task.")
+            print("       e.g., 'FastAPI backend with PostgreSQL' instead of 'build a REST API'")
+            redo = input("    Rephrase? (Enter to keep, or type new purpose): ").strip()
+            if redo:
+                purpose = redo
+
+    # Auto-detect the closest sample preset from description + project context
+    detected_preset = _detect_preset(purpose or "", snapshot) if (purpose or snapshot["is_empty"] == "False") else "generic"
+    roles_cfg: dict = {}
+    if detected_preset != "generic":
+        roles_cfg = {"preset": detected_preset, **_PRESET_ROLES[detected_preset]}
+        print(f"    Detected domain: {detected_preset} 🎯")
+    elif purpose:
+        print("    Domain: generic (no strong match — using defaults)")
+
     config = {
         "name": name,
-        "max_retry_per_task": int(max_retries),
+        "max_retry_per_task": 3,
     }
     if roles_cfg:
         config["roles"] = roles_cfg
@@ -1036,16 +1316,23 @@ def setup():
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
     print(f"    Saved config → {config_path}")
 
-    # Generate tailored prompts if purpose was provided and LLM is available
-    if purpose and llm_configured:
+    # Generate or copy tailored prompts based on detected preset + project snapshot
+    prompt_source = purpose or (snapshot["is_empty"] == "False")
+    if prompt_source and llm_configured:
         print()
         print("  === Cooking up custom prompts... 🧪 ===")
-        generated = _generate_prompts(purpose)
+        generated = _generate_prompts(purpose or name, preset=detected_preset, snapshot=snapshot)
         if not generated:
-            print("    No worries, using defaults. Re-run `tmb setup` anytime to retry.")
-    elif purpose:
-        print("    No LLM configured yet — using default prompts.")
-        print("    Hook up an API key and re-run `tmb setup` to get custom ones.")
+            # LLM generation failed — fall back to copying the sample
+            if _copy_sample_prompts(detected_preset):
+                print(f"    Used {detected_preset} sample as base — still solid. 📋")
+            else:
+                print("    No worries, using defaults. Re-run `tmb setup` anytime to retry.")
+    elif prompt_source:
+        # No LLM available — copy the matched sample directly
+        if _copy_sample_prompts(detected_preset):
+            print(f"    Copied {detected_preset} prompts → .tmb/prompts/ 📋")
+            print("    Hook up an API key and re-run `tmb setup` for fully custom ones.")
 
     goals_path = docs_dir() / "GOALS.md"
     if not goals_path.exists():
@@ -1075,85 +1362,16 @@ def setup():
     else:
         print("    Skipped — DuckDuckGo fallback it is.")
 
-    # ── MCP Connections ──────────────────────────────────────
-    print()
-    print("  === MCP Connections (optional) ===")
-    print()
-    print("    Your bro can talk to external services via MCP.")
-    print()
-    print("    [1] Notion    — read/create pages, search workspace")
-    print("    [2] GitHub    — issues, PRs, code search")
-    print("    [3] Slack     — send messages, read channels")
-    print("    [s] Skip")
-    print()
-    mcp_choice = input("    Select (comma-separated, e.g. 1,2) [s]: ").strip().lower() or "s"
-
-    if mcp_choice != "s":
-        mcp_servers = {}
-        existing_env = env_path.read_text() if env_path.exists() else ""
-        new_env_lines = []
-
-        choices = [c.strip() for c in mcp_choice.split(",")]
-
-        if "1" in choices:
-            token = input("    Notion API token: ").strip()
-            if token:
-                mcp_servers["notion"] = {
-                    "command": "npx",
-                    "args": ["-y", "@notionhq/notion-mcp-server"],
-                    "env": {"NOTION_TOKEN": "${NOTION_TOKEN}"},
-                    "agents": ["planner"],
-                }
-                if "NOTION_TOKEN" not in existing_env:
-                    new_env_lines.append(f"NOTION_TOKEN={token}")
-
-        if "2" in choices:
-            token = input("    GitHub token: ").strip()
-            if token:
-                mcp_servers["github"] = {
-                    "command": "npx",
-                    "args": ["-y", "@modelcontextprotocol/server-github"],
-                    "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
-                    "agents": ["planner", "executor"],
-                }
-                if "GITHUB_TOKEN" not in existing_env:
-                    new_env_lines.append(f"GITHUB_TOKEN={token}")
-
-        if "3" in choices:
-            token = input("    Slack Bot token: ").strip()
-            if token:
-                mcp_servers["slack"] = {
-                    "command": "npx",
-                    "args": ["-y", "@anthropic/slack-mcp-server"],
-                    "env": {"SLACK_BOT_TOKEN": "${SLACK_BOT_TOKEN}"},
-                    "agents": ["planner"],
-                }
-                if "SLACK_BOT_TOKEN" not in existing_env:
-                    new_env_lines.append(f"SLACK_BOT_TOKEN={token}")
-
-        if mcp_servers:
-            mcp_config_path = user_cfg_dir() / "mcp.yaml"
-            mcp_config_path.parent.mkdir(parents=True, exist_ok=True)
-            mcp_data = yaml.safe_load(mcp_config_path.read_text()) if mcp_config_path.exists() else {}
-            existing_servers = mcp_data.get("servers") or {}
-            existing_servers.update(mcp_servers)
-            mcp_data["servers"] = existing_servers
-            mcp_config_path.write_text(yaml.dump(mcp_data, default_flow_style=False, sort_keys=False))
-            print(f"    Wrote {mcp_config_path}")
-
-        if new_env_lines:
-            with open(env_path, "a") as f:
-                f.write("\n" + "\n".join(new_env_lines) + "\n")
-            print(f"    Updated .env with MCP tokens")
-
     # ── Project-level pyproject.toml ─────────────────────────
     project_toml = project_root / "pyproject.toml"
+    tmb_rel = TMB_ROOT.resolve().relative_to(project_root.resolve())
+
     if not project_toml.exists():
+        # Fresh project — create pyproject.toml from scratch
         print()
         print("  No pyproject.toml found at project root.")
         create = input("    Create one with TMB as a dependency? (yes/no) [yes]: ").strip().lower()
         if create in ("", "yes", "y"):
-            tmb_rel = TMB_ROOT.resolve().relative_to(project_root.resolve())
             toml_content = (
                 f'[project]\nname = "{name}"\nversion = "0.1.0"\n'
                 f'requires-python = ">=3.13"\n'
@@ -1165,7 +1383,20 @@ def setup():
             )
             project_toml.write_text(toml_content)
             print(f"    Wrote {project_toml}")
-            print(f"    Run `uv sync` at {project_root} to install.")
+            print(f"    Run `uv sync` to install.")
+    else:
+        # Existing project — check if TMB is already a dependency
+        existing = project_toml.read_text()
+        if '"tmb"' not in existing and "'tmb'" not in existing:
+            print()
+            print("  Found existing pyproject.toml — your project is already set up. 👍")
+            print("  TMB is not listed as a dependency yet.")
+            inject = input("    Add TMB as a path dependency? (yes/no) [yes]: ").strip().lower()
+            if inject in ("", "yes", "y"):
+                _inject_tmb_dependency(project_toml, existing, tmb_rel)
+        else:
+            print()
+            print("  Found existing pyproject.toml with TMB already wired up. 👍")
 
     dd = docs_dir().name
     print()
@@ -1175,7 +1406,13 @@ def setup():
     print(f"  Next steps:")
     print(f"    1. Write your goals in {dd}/GOALS.md")
     print(f"    2. Run: uv run tmb")
-    print(f"    3. Trust the process. Trust your bro. 🫡")
+    print()
+    print(f"  Need Notion, GitHub, Slack, or any other integration?")
+    print(f"    No problem — Trust Me Bro, I'll set it up when you need it. 🫡")
+    print(f"    (or configure manually: TMB/ARCHITECTURE.md § MCP Integration)")
+    print()
+    print(f"  Advanced settings (retries, roles, prompts, paths):")
+    print(f"    → TMB/ARCHITECTURE.md § Configuration")
     print()
 
 
@@ -1377,7 +1614,7 @@ def log_history(issue_id: int | None = None):
                 "superseded": "🔄",
             }.get(r["status"], "❓")
             print(
-                f"  [{icon}] #{r['id']}  {r['objective'][:50]}  ({r['status']})"
+                f"  [{icon}] #{r['id']}  {truncate(r['objective'], 50)}  ({r['status']})"
             )
         print()
         print("  View details: tmb log <issue_id>")

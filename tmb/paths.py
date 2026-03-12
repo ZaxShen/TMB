@@ -17,6 +17,8 @@ TMB_ROOT = Path(__file__).resolve().parent.parent
 # ── Layer 1: Framework paths (immutable, inside TMB/) ─────
 
 PROMPTS_DIR     = TMB_ROOT / "prompts"
+SYSTEM_PROMPTS_DIR = PROMPTS_DIR / "system"
+SAMPLES_DIR     = PROMPTS_DIR / "samples"
 DEFAULT_CFG_DIR = TMB_ROOT / "config"
 SEED_SKILLS_DIR = TMB_ROOT / "skills"
 

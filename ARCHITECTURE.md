@@ -292,9 +292,18 @@ TMB tries each in order. You only create overrides for what you want to change.
 
 ### `.tmb/config/project.yaml`
 
+Created by `tmb setup`. Most fields are auto-detected — edit this file directly to customize.
+
 ```yaml
 name: my-project
+
+# How many times a failed task is retried before escalating to the owner.
+# Default: 3. Set higher for flaky environments, lower for fast-fail.
 max_retry_per_task: 3
+
+# Project purpose — used for auto-tuned prompt generation during setup.
+# Re-run `tmb setup` to regenerate prompts with a new purpose.
+# purpose: REST API backend in FastAPI with PostgreSQL
 
 # root_dir — auto-detected by default:
 #   `uv run tmb` from project root -> uses CWD
@@ -309,9 +318,9 @@ max_retry_per_task: 3
 #   runtime_dir: .tmb
 #   db_name: tmb.db
 
-# Role display names:
+# Role display names (auto-detected from purpose during setup):
 # roles:
-#   preset: it-company
+#   preset: software-engineering   # or data-analytics
 #   owner: Chief Architect
 #   planner: Architect
 #   executor: SWE
@@ -367,16 +376,27 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ### Prompts
 
-Agent prompts are Markdown files in `TMB/prompts/`. Edit to change behavior without touching Python:
+Agent prompts follow a **three-layer resolution** (first match wins):
 
 ```
-prompts/planner.md      # How the Planner plans, validates, and manages skills
-prompts/executor.md     # How the Executor executes and reports
+.tmb/prompts/planner.md                  # 1. Auto-generated (from setup, tailored to your purpose)
+prompts/samples/<preset>/planner.md      # 2. Static preset sample (software-engineering, data-analytics)
+prompts/system/planner.md                # 3. TMB system default
 ```
 
-Prompts support template variables: `{role_owner}`, `{role_planner}`, `{role_executor}` — replaced with display names from config at load time.
+Same for `executor.md`. Template variables `{role_owner}`, `{role_planner}`, `{role_executor}` are replaced with display names from config at load time.
 
-**Presets** — set `roles.preset: it-company` in `project.yaml` to load domain-specific prompts from `prompts/samples/it-company/`.
+**Directory layout**:
+
+- `prompts/system/` — TMB's core system prompts. Defines the canonical behavior (JSON schemas, validation rules, tool conventions). **Don't modify** unless you're contributing to TMB itself.
+- `prompts/samples/` — Domain-specialized reference templates (`generic/`, `software-engineering/`, `data-analytics/`). **Don't modify** — these are permanent few-shot references for auto-prompt generation.
+- `.tmb/prompts/` — Your project's actual prompts, auto-generated or copied during setup. **This is what you customize.**
+
+**Auto-tuning during setup**: when you describe your project purpose, TMB auto-detects the closest domain and either LLM-generates tailored prompts or copies the matching sample to `.tmb/prompts/`. Re-run `tmb setup` to regenerate.
+
+**Manual customization**: copy any sample from `prompts/samples/` to `.tmb/prompts/` and edit. The three samples in `prompts/samples/` are permanent references — never modified by setup.
+
+**Writing custom prompts from scratch**: use `prompts/system/planner.md` as your starting template. Every required section is documented in the meta-prompt at the top of `tmb/cli.py`.
 
 ---
 
@@ -408,6 +428,8 @@ your-project/                    # <- project root (run `uv run tmb` here)
 |   |-- tmb/                  #    Engine code
 |   |-- config/                  #    *.default.yaml only (tracked defaults)
 |   |-- prompts/                 #    Agent prompts (Markdown)
+|   |   |-- system/              #    Core system prompts (don't modify)
+|   |   +-- samples/             #    Domain reference templates (don't modify)
 |   |-- skills/                  #    Curated seed skills only
 |   +-- main.py                  #    Backward-compat shim
 |

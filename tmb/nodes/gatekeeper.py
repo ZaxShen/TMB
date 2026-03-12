@@ -71,7 +71,7 @@ def gatekeeper(state: AgentState) -> dict:
     project_cfg = load_project_config()
     root = get_project_root()
 
-    print("[GATEKEEPER] Scanning project...")
+    print("[GATEKEEPER] 🔍 Scanning project...")
 
     tree = _get_tree(root)
     key_files = _read_key_files(root)
@@ -91,8 +91,8 @@ def gatekeeper(state: AgentState) -> dict:
         scan_ctx = build_project_context_from_scan(store)
         if scan_ctx:
             context += f"\n{scan_ctx}\n"
-            print(f"[GATEKEEPER] Enriched with scan data ({store.file_registry_count()} files in registry)")
+            print(f"[GATEKEEPER] 📊 Enriched with scan data ({store.file_registry_count()} files in registry)")
 
-    print(f"[GATEKEEPER] Scanned {len(tree.splitlines())} paths at {root}")
+    print(f"[GATEKEEPER] ✅ Scanned {len(tree.splitlines())} paths at {root}")
 
     return {"project_context": context}

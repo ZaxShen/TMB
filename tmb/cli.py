@@ -42,7 +42,7 @@ def _read_goals_md() -> str:
             "Write your goals below. The Planner will read this file and discuss with you.\n\n"
             "---\n\n"
         )
-        print(f"[TMB] Created {goals_path}")
+        print(f"[TMB] 📝 Created {goals_path}")
         print("       Write your goals there, then run again.")
         sys.exit(1)
 
@@ -119,7 +119,7 @@ def _tasks_to_blueprint(tasks: list[dict]) -> list[dict]:
 def _show_blueprint(tasks: list[dict]):
     print()
     planner_display = get_role_name("planner").upper()
-    print(f"[{planner_display}] Blueprint ({len(tasks)} tasks) — see bro/BLUEPRINT.md")
+    print(f"[{planner_display}] 📋 Blueprint ({len(tasks)} tasks) — see bro/BLUEPRINT.md")
     for t in tasks:
         bid = t.get("branch_id") or t.get("task_id", "?")
         label = t.get("title") or t["description"][:80]
@@ -134,13 +134,13 @@ def _approve_blueprint(store: Store, issue_id: int) -> bool:
         store.log(issue_id, None, "owner", "blueprint_rejected", {},
                   summary=f"{owner_display} rejected blueprint")
         store.close_issue(issue_id, "rejected")
-        print("[TMB] Blueprint rejected. Issue closed.")
+        print("[TMB] ❌ Blueprint rejected. Issue closed.")
         return False
 
     store.log(issue_id, None, "owner", "blueprint_approved", {},
               summary=f"{owner_display} approved blueprint")
     print()
-    print("[TMB] Blueprint approved. Generating execution plan...")
+    print("[TMB] ✅ Blueprint approved. Generating execution plan...")
     print("-" * 40)
     return True
 
@@ -158,7 +158,7 @@ def _quick_task(store: Store, instruction: str):
     objective = instruction[:120].strip()
     issue_id = store.create_issue(objective, instruction)
 
-    print(f"[TMB] Quick task — Issue #{issue_id}: {objective}")
+    print(f"[TMB] ⚡ Quick task — Issue #{issue_id}: {objective}")
     print(f"[TMB] Project: {project_cfg['name']}  |  Root: {project_root}")
     print("-" * 40)
 
@@ -188,7 +188,7 @@ def _quick_task(store: Store, instruction: str):
 
     blueprint = state.get("blueprint", [])
     if not blueprint:
-        print(f"[{get_role_name('planner').upper()}] No blueprint was generated.")
+        print(f"[{get_role_name('planner').upper()}] ⚠️ No blueprint was generated.")
         store.close_issue(issue_id, "failed")
         return
 
@@ -196,7 +196,7 @@ def _quick_task(store: Store, instruction: str):
 
     store.log(issue_id, None, "owner", "blueprint_approved", {},
               summary="Auto-approved (quick task)")
-    print("[TMB] Blueprint auto-approved (quick task)")
+    print("[TMB] ✅ Blueprint auto-approved (quick task)")
     print("-" * 40)
 
     state = graph.invoke(None, config=thread)
@@ -219,7 +219,7 @@ def _scan_tmb_context(store: Store, issue_id: int, instruction: str) -> str:
     )
     store.log(issue_id, None, "gatekeeper", "tmb_context_scanned", {},
               summary="Scanned TMB directory tree for self-evolution")
-    print(f"[GATEKEEPER] Scanned {len(tree.splitlines())} paths in TMB/")
+    print(f"[GATEKEEPER] ✅ Scanned {len(tree.splitlines())} paths in TMB/")
     return context
 
 
@@ -244,7 +244,7 @@ def _git_snapshot(instruction: str) -> bool:
             cwd=str(TMB_ROOT), capture_output=True, text=True, timeout=10,
         )
         if not status.stdout.strip():
-            print("[EVOLVE] Working tree clean — no snapshot needed.")
+            print("[EVOLVE] ✅ Working tree clean — no snapshot needed.")
             return False
 
         subprocess.run(
@@ -256,27 +256,27 @@ def _git_snapshot(instruction: str) -> bool:
             ["git", "commit", "-m", msg],
             cwd=str(TMB_ROOT), check=True, capture_output=True, timeout=15,
         )
-        print(f"[EVOLVE] Git snapshot committed: {msg}")
+        print(f"[EVOLVE] 📸 Git snapshot committed: {msg}")
         return True
     except Exception as e:
-        print(f"[EVOLVE] Warning: git snapshot failed ({e}). Proceeding anyway.")
+        print(f"[EVOLVE] ⚠️ Warning: git snapshot failed ({e}). Proceeding anyway.")
         return False
 
 
 def _health_check() -> bool:
     """Verify TMB can still be imported after self-evolution."""
-    print("[EVOLVE] Running health check...")
+    print("[EVOLVE] 🧪 Running health check...")
     try:
         result = subprocess.run(
             [sys.executable, "-c", "import tmb; import tmb.engine; import tmb.store"],
             cwd=str(TMB_ROOT), capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
-            print(f"[EVOLVE] HEALTH CHECK FAILED — import error:")
+            print(f"[EVOLVE] ❌ HEALTH CHECK FAILED — import error:")
             print(result.stderr[:500])
             return False
     except Exception as e:
-        print(f"[EVOLVE] HEALTH CHECK FAILED — {e}")
+        print(f"[EVOLVE] ❌ HEALTH CHECK FAILED — {e}")
         return False
 
     try:
@@ -290,7 +290,7 @@ def _health_check() -> bool:
     except Exception:
         pass
 
-    print("[EVOLVE] Health check passed.")
+    print("[EVOLVE] ✅ Health check passed.")
     return True
 
 
@@ -318,7 +318,7 @@ def _evolve(store: Store, instruction: str):
         plan = planner_evolve(instruction, tmb_context, issue_id)
 
     if not plan or not plan.strip():
-        print("[EVOLVE] Planner produced no plan. Aborting.")
+        print("[EVOLVE] ⚠️ Planner produced no plan. Aborting.")
         store.close_issue(issue_id, "failed")
         return
 
@@ -354,15 +354,15 @@ def _evolve(store: Store, instruction: str):
         store.close_issue(issue_id, "completed")
         print()
         print("-" * 60)
-        print(f"[EVOLVE] Self-evolution complete. Issue #{issue_id} closed.")
+        print(f"[EVOLVE] 🎉 Self-evolution complete. Issue #{issue_id} closed.")
     else:
         store.log(issue_id, None, "system", "evolve_failed", {},
                   summary=f"Self-evolution failed health check: {instruction[:120]}")
         store.close_issue(issue_id, "failed")
         print()
         print("!" * 60)
-        print("[EVOLVE] HEALTH CHECK FAILED. Your changes may have broken TMB.")
-        print("[EVOLVE] To rollback:  cd TMB && git revert HEAD")
+        print("[EVOLVE] ❌ HEALTH CHECK FAILED. Your changes may have broken TMB.")
+        print("[EVOLVE] 🔄 To rollback:  cd TMB && git revert HEAD")
         print("!" * 60)
 
     if result:
@@ -401,12 +401,12 @@ def _finalize_issue(store: Store, issue_id: int):
         pending = [t for t in tasks if t["status"] in ("pending", "in_progress")]
         if stuck:
             print(
-                f"[TMB] {len(stuck)} task(s) failed/escalated. "
+                f"[TMB] ❌ {len(stuck)} task(s) failed/escalated. "
                 f"Issue #{issue_id} stays open — re-run to retry."
             )
         elif pending:
             print(
-                f"[TMB] {len(pending)} task(s) still pending. "
+                f"[TMB] ⏳ {len(pending)} task(s) still pending. "
                 f"Issue #{issue_id} stays open — re-run to continue."
             )
 
@@ -487,7 +487,7 @@ def _maybe_suggest_scan(store: Store, project_root):
                                     "package.json", "pyproject.toml", "Cargo.toml", "go.mod"]
     )
     if has_source:
-        print("[TMB] Existing project detected. Run 'uv run tmb scan' for better planning context.\n")
+        print("[TMB] 💡 Existing project detected. Run 'uv run tmb scan' for better planning context.\n")
 
 
 def _fresh_start(store: Store):
@@ -534,7 +534,7 @@ def _fresh_start(store: Store):
 
     blueprint = state.get("blueprint", [])
     if not blueprint:
-        print(f"[{get_role_name('planner').upper()}] No blueprint was generated.")
+        print(f"[{get_role_name('planner').upper()}] ⚠️ No blueprint was generated.")
         store.close_issue(issue_id, "failed")
         sys.exit(1)
 
@@ -560,7 +560,7 @@ def _resume(store: Store, issue: dict):
     project_cfg = load_project_config()
     project_root = get_project_root()
 
-    print(f"[TMB] Resuming issue #{issue_id}: {issue['objective']}")
+    print(f"[TMB] ⏩ Resuming issue #{issue_id}: {issue['objective']}")
     print(f"[TMB] Project: {project_cfg['name']}  |  Root: {project_root}")
 
     project_context = None
@@ -572,7 +572,7 @@ def _resume(store: Store, issue: dict):
         return project_context
 
     if not store.has_event(issue_id, "discussion_complete"):
-        print("[TMB] Phase: discussion (incomplete)")
+        print("[TMB] 💬 Phase: discussion (incomplete)")
         ctx = ensure_context()
         from tmb.nodes.discussion import run_discussion
 
@@ -580,7 +580,7 @@ def _resume(store: Store, issue: dict):
 
     tasks = store.get_tasks(issue_id)
     if not tasks:
-        print("[TMB] Phase: planning (pending)")
+        print("[TMB] 📋 Phase: planning (pending)")
         ctx = ensure_context()
         discussion_md = store.export_discussion_md(issue_id)
 
@@ -608,7 +608,7 @@ def _resume(store: Store, issue: dict):
 
         blueprint = state.get("blueprint", [])
         if not blueprint:
-            print(f"[{get_role_name('planner').upper()}] No blueprint was generated.")
+            print(f"[{get_role_name('planner').upper()}] ⚠️ No blueprint was generated.")
             store.close_issue(issue_id, "failed")
             sys.exit(1)
 
@@ -622,20 +622,20 @@ def _resume(store: Store, issue: dict):
         return
 
     if not store.has_event(issue_id, "blueprint_approved"):
-        print("[TMB] Phase: approval (pending)")
+        print("[TMB] ✋ Phase: approval (pending)")
         _show_blueprint(tasks)
         if not _approve_blueprint(store, issue_id):
             sys.exit(0)
 
     if not store.has_event(issue_id, "execution_plan_generated"):
-        print("[TMB] Phase: execution plan (pending)")
+        print("[TMB] 📝 Phase: execution plan (pending)")
         ctx = ensure_context()
         blueprint = _tasks_to_blueprint(tasks)
         _run_execution_plan(store, issue_id, goals_md, ctx, blueprint)
 
     actionable = store.get_first_actionable_task(issue_id)
     if not actionable:
-        print("[TMB] All tasks already completed.")
+        print("[TMB] 🎉 All tasks already completed.")
         store.close_issue(issue_id, "completed")
         store.print_summary(issue_id)
         return
@@ -650,7 +650,7 @@ def _resume(store: Store, issue: dict):
     total = len(tasks)
 
     print(
-        f"[TMB] Phase: execution ([{actionable['branch_id']}] {completed_count}/{total}, "
+        f"[TMB] 🔧 Phase: execution ([{actionable['branch_id']}] {completed_count}/{total}, "
         f"{completed_count} already done)"
     )
     print("-" * 40)
@@ -1192,12 +1192,12 @@ def scan():
     store = Store()
     project_root = get_project_root()
 
-    print(f"[TMB] Scanning project: {project_root}")
+    print(f"[TMB] 🔍 Scanning project: {project_root}")
     print("-" * 40)
 
     stats = scan_project(project_root, store)
 
-    print(f"[TMB] Scan complete:")
+    print(f"[TMB] ✅ Scan complete:")
     print(f"  Files registered: {stats['file_count']}")
     print(f"  Total size: {_human_bytes(stats['total_size'])}")
     print(f"  Tech stack: {stats['tech_stack']}")
@@ -1239,7 +1239,7 @@ def chat():
     messages = [SystemMessage(content=system_prompt)]
 
     planner_display = get_role_name("planner").upper()
-    print(f"[TMB] Chat mode — session {session_id}")
+    print(f"[TMB] 💬 Chat mode — session {session_id}")
     print(f"[TMB] Type your questions. Press Ctrl+C or type 'exit' to quit.\n")
 
     while True:
@@ -1314,7 +1314,7 @@ def chat():
                 store.mark_chat_escalated(session_id, issue_id)
                 store.log_chat(session_id, "system", f"Escalated to issue #{issue_id}")
 
-                print(f"\n[TMB] Created issue #{issue_id} from chat — starting planning...")
+                print(f"\n[TMB] 🚀 Created issue #{issue_id} from chat — starting planning...")
                 print("-" * 40)
                 _quick_task(store, instruction)
                 break
@@ -1335,7 +1335,7 @@ def run():
 
         if goals_md != existing["goals_md"]:
             print(
-                f"[TMB] GOALS.md has changed since issue #{existing['id']} was started."
+                f"[TMB] ⚠️ GOALS.md has changed since issue #{existing['id']} was started."
             )
             choice = (
                 input("  (c)ontinue old issue / (n)ew issue? ").strip().lower()
@@ -1370,12 +1370,12 @@ def log_history(issue_id: int | None = None):
         print(f"{'=' * 60}")
         for r in rows:
             icon = {
-                "open": "o",
-                "completed": "x",
-                "failed": "!",
-                "rejected": "-",
-                "superseded": "~",
-            }.get(r["status"], "?")
+                "open": "🔧",
+                "completed": "✅",
+                "failed": "❌",
+                "rejected": "🚫",
+                "superseded": "🔄",
+            }.get(r["status"], "❓")
             print(
                 f"  [{icon}] #{r['id']}  {r['objective'][:50]}  ({r['status']})"
             )
@@ -1392,7 +1392,7 @@ def report(issue_id: int):
     report_path = docs_dir() / f"REPORT-{issue_id}.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(md)
-    print(f"[TMB] Report written to {report_path}")
+    print(f"[TMB] 📄 Report written to {report_path}")
     print(f"       Open it in your editor for full details.")
 
 
@@ -1474,7 +1474,7 @@ def main():
         if "--http" in sys.argv:
             idx = sys.argv.index("--http")
             port = int(sys.argv[idx + 1]) if idx + 1 < len(sys.argv) else 8000
-            print(f"[TMB] Starting MCP server (HTTP on port {port})...")
+            print(f"[TMB] 🌐 Starting MCP server (HTTP on port {port})...")
             run_server(transport="http", port=port)
         else:
             run_server(transport="stdio")

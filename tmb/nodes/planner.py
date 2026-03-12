@@ -290,7 +290,7 @@ def _maybe_generate_flowchart(
             print(f"[{planner_display}] Flowchart skipped (simple project).")
             return
 
-    print(f"[{planner_display}] Generating project architecture flowchart...")
+    print(f"[{planner_display}] 🗺️ Generating project architecture flowchart...")
     fc_parts = [
         f"## Goals\n{objective}",
         f"## Blueprint\n```json\n{json.dumps(blueprint, indent=2)}\n```",
@@ -323,7 +323,7 @@ def _maybe_generate_flowchart(
     _write_doc("FLOWCHART.md", flowchart_md)
     store.log(issue_id, None, "planner", "flowchart_generated", {},
               summary="Generated FLOWCHART.md (project architecture)")
-    print(f"[{planner_display}] Flowchart saved to {docs_dir().name}/FLOWCHART.md")
+    print(f"[{planner_display}] 🗺️ Flowchart saved → {docs_dir().name}/FLOWCHART.md")
 
 
 def _maybe_update_flowchart_after_task(
@@ -346,7 +346,7 @@ def _maybe_update_flowchart_after_task(
     answer = _normalize_content(resp.content).strip().lower()
 
     if "yes" in answer and "no" not in answer:
-        print(f"[{planner_display}] Significant change detected — updating flowchart...")
+        print(f"[{planner_display}] 🗺️ Significant change detected — updating flowchart...")
         token_accum = TokenAccumulator()
         _maybe_generate_flowchart(
             llm, system_prompt,
@@ -415,7 +415,7 @@ def planner_plan(state: AgentState) -> dict:
     # ── 0. Explore the codebase ──────────────────────────────
     exploration_summary = ""
     if tools and not is_replan:
-        print(f"[{planner_display}] Exploring codebase...")
+        print(f"[{planner_display}] 🔍 Exploring codebase...")
         explore_parts = []
         if project_context:
             explore_parts.append(f"## Project Context\n{project_context}")
@@ -452,11 +452,11 @@ def planner_plan(state: AgentState) -> dict:
         store.log(issue_id, None, "planner", "codebase_explored", {
             "summary_length": len(exploration_summary),
         }, summary="Explored codebase structure and key modules")
-        print(f"[{planner_display}] Exploration complete ({len(exploration_summary)} chars)")
+        print(f"[{planner_display}] 🔍 Exploration complete ({len(exploration_summary)} chars)")
     elif is_replan:
-        print(f"[{planner_display}] Re-planning based on feedback...")
+        print(f"[{planner_display}] 🔄 Re-planning based on feedback...")
     else:
-        print(f"[{planner_display}] Building blueprint from discussion...")
+        print(f"[{planner_display}] 📋 Building blueprint from discussion...")
 
     # ── 0a. Skill provisioning ────────────────────────────────
     if tools and not is_replan:
@@ -487,7 +487,7 @@ def planner_plan(state: AgentState) -> dict:
             HumanMessage(content="\n\n".join(provision_parts)),
         ]
 
-        print(f"[{planner_display}] Provisioning skills for downstream agents...")
+        print(f"[{planner_display}] 🧠 Provisioning skills for downstream agents...")
         _run_tool_loop(llm_with_tools, provision_messages, tool_map, _MAX_EXPLORE_ROUNDS, label="skills", token_accum=token_accum)
 
         new_skills = store.get_all_skills()
@@ -497,7 +497,7 @@ def planner_plan(state: AgentState) -> dict:
             store.log(issue_id, None, "planner", "skills_provisioned", {
                 "created": skill_names,
             }, summary=f"Auto-provisioned {created_count} skill(s): {', '.join(skill_names)}")
-            print(f"[{planner_display}] Created {created_count} skill(s): {', '.join(skill_names)}")
+            print(f"[{planner_display}] ✅ Created {created_count} skill(s): {', '.join(skill_names)}")
         else:
             print(f"[{planner_display}] No new skills needed.")
 
@@ -639,7 +639,7 @@ def planner_plan(state: AgentState) -> dict:
         HumanMessage(content="\n\n".join(parts)),
     ]
 
-    print(f"[{planner_display}] Generating blueprint...")
+    print(f"[{planner_display}] 📋 Generating blueprint...")
     response, messages = _run_tool_loop(llm_with_tools, messages, tool_map, 5, label="blueprint", token_accum=token_accum)
     raw = _normalize_content(response.content)
 
@@ -664,7 +664,7 @@ def planner_plan(state: AgentState) -> dict:
         try:
             blueprint = _extract_json_array(raw)
         except (json.JSONDecodeError, IndexError, ValueError):
-            print(f"[{planner_display}] WARNING: Failed to parse blueprint JSON. Raw response ({len(raw)} chars):")
+            print(f"[{planner_display}] ⚠️ Failed to parse blueprint JSON. Raw response ({len(raw)} chars):")
             print(raw[:300])
             blueprint = []
 
@@ -677,19 +677,19 @@ def planner_plan(state: AgentState) -> dict:
 
     blueprint_md = store.export_blueprint_md(issue_id, blueprint)
     _write_doc("BLUEPRINT.md", blueprint_md)
-    print(f"[{planner_display}] Blueprint saved to {docs_dir().name}/BLUEPRINT.md ({len(blueprint)} tasks)")
+    print(f"[{planner_display}] 📋 Blueprint saved → {docs_dir().name}/BLUEPRINT.md ({len(blueprint)} tasks)")
 
     # ── 2. Conditionally Generate Flowchart ─────────────────
     if not blueprint:
         replan_count = state.get("replan_count", 0) + 1
         max_replans = project_cfg.get("max_replan_attempts", 3)
-        print(f"[{planner_display}] No blueprint was generated (attempt {replan_count}/{max_replans}).")
+        print(f"[{planner_display}] ⚠️ No blueprint was generated (attempt {replan_count}/{max_replans}).")
         store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
         if replan_count >= max_replans:
             store.log(issue_id, None, "planner", "replan_limit_reached", {
                 "attempts": replan_count,
             }, summary=f"Re-plan limit reached after {replan_count} attempts")
-            print(f"[{planner_display}] ERROR: Re-plan limit reached. Aborting.")
+            print(f"[{planner_display}] ❌ Re-plan limit reached. Aborting.")
             return {
                 "blueprint": [],
                 "next_node": "__end__",
@@ -707,7 +707,7 @@ def planner_plan(state: AgentState) -> dict:
         exploration_summary, issue_id, store, token_accum, planner_display,
     )
 
-    print(f"[{planner_display}] Planning complete: {len(blueprint)} tasks")
+    print(f"[{planner_display}] ✅ Planning complete: {len(blueprint)} tasks")
     store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
 
     return {
@@ -942,7 +942,7 @@ def planner_execution_plan(state: AgentState) -> dict:
     project_context = state.get("project_context", "")
 
     total = len(blueprint)
-    print(f"[{planner_display}] Generating execution plans for {total} tasks...")
+    print(f"[{planner_display}] 📝 Generating execution plans for {total} tasks...")
 
     summary_lines = [
         f"# Execution Plan — Issue #{issue_id}\n",
@@ -1007,7 +1007,7 @@ def planner_execution_plan(state: AgentState) -> dict:
     store.log(issue_id, None, "planner", "execution_plan_generated", {
         "task_count": total,
     }, summary=f"Generated per-task execution plans for {total} tasks")
-    print(f"[{planner_display}] Execution plans stored in DB. Summary at {docs_dir().name}/EXECUTION.md")
+    print(f"[{planner_display}] ✅ Execution plans stored. Summary → {docs_dir().name}/EXECUTION.md")
 
     return {
         "messages": state.get("messages", []) + ([last_response] if last_response else []),
@@ -1140,7 +1140,7 @@ def planner_validate(state: AgentState) -> dict:
     skills_text = _load_skills(store, skill_names) if skill_names else ""
 
     planner_display = get_role_name("planner").upper()
-    print(f"[{planner_display}] [{branch_id}] validating ({idx+1}/{total})...")
+    print(f"[{planner_display}] 🧪 [{branch_id}] validating ({idx+1}/{total})...")
 
     verify_prompt = (
         f"## Validation Task\n"
@@ -1190,7 +1190,7 @@ def planner_validate(state: AgentState) -> dict:
             "evidence": verdict_text[:1000],
         }, summary=f"PASS: [{branch_id}]")
 
-        print(f"[{planner_display}] [{branch_id}] — PASS")
+        print(f"[{planner_display}] ✅ [{branch_id}] — PASS")
 
         blueprint_md = store.export_blueprint_md(issue_id)
         _write_doc("BLUEPRINT.md", blueprint_md)
@@ -1202,7 +1202,7 @@ def planner_validate(state: AgentState) -> dict:
             )
 
         if is_done:
-            print(f"\n[{planner_display}] All {total} tasks passed.")
+            print(f"\n[{planner_display}] 🎉 All {total} tasks passed!")
 
         return {
             "current_task_idx": next_idx,
@@ -1226,7 +1226,7 @@ def planner_validate(state: AgentState) -> dict:
         store.log(issue_id, branch_id, "planner", "max_retries_exceeded", {
             "attempts": new_iteration,
         }, summary=f"Max retries hit for [{branch_id}]")
-        print(f"[{planner_display}] [{branch_id}] — FAIL (attempt {new_iteration}/{max_retries}, escalating)")
+        print(f"[{planner_display}] ❌ [{branch_id}] — FAIL (attempt {new_iteration}/{max_retries}, escalating)")
         return {
             "iteration_count": new_iteration,
             "review_feedback": f"Max retries ({max_retries}) exceeded. Feedback:\n{verdict_text}",
@@ -1234,7 +1234,7 @@ def planner_validate(state: AgentState) -> dict:
             "next_node": "__end__",
         }
 
-    print(f"[{planner_display}] [{branch_id}] — FAIL (attempt {new_iteration}/{max_retries}, retrying)")
+    print(f"[{planner_display}] 🔄 [{branch_id}] — FAIL (attempt {new_iteration}/{max_retries}, retrying)")
     return {
         "iteration_count": new_iteration,
         "review_feedback": verdict_text,

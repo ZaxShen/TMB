@@ -141,9 +141,9 @@ def executor(state: AgentState) -> dict:
     planner_display = get_role_name("planner")
     planner_validate_display = get_role_name("planner")
     if is_retry:
-        print(f"[{executor_display}] [{branch_id}] {total} tasks — retrying: {description[:60]}")
+        print(f"[{executor_display}] 🔄 [{branch_id}] {total} tasks — retrying: {description[:60]}")
     else:
-        print(f"[{executor_display}] [{branch_id}] {total} tasks — starting: {description[:60]}")
+        print(f"[{executor_display}] 🔧 [{branch_id}] {total} tasks — starting: {description[:60]}")
 
     store.update_task_status(issue_id, branch_id, "in_progress", increment_attempts=True)
     task_title = task.get("title") or description[:80]
@@ -263,13 +263,13 @@ def executor(state: AgentState) -> dict:
         store.log(issue_id, branch_id, "executor", "task_escalated", {
             "reason": execution_log[:1000],
         }, summary=f"Escalated: {task_title}")
-        print(f"[{executor_display}] [{branch_id}] — ESCALATED to {planner_display}")
+        print(f"[{executor_display}] ⚠️ [{branch_id}] — ESCALATED to {planner_display}")
     else:
         store.log(issue_id, branch_id, "executor", "task_executed", {
             "output": execution_log[:2000],
             "tool_calls": len(tool_outputs),
         }, summary=f"Executed: {task_title} ({len(tool_outputs)} tool calls)")
-        print(f"[{executor_display}] [{branch_id}] — execution complete, sending to {planner_validate_display}")
+        print(f"[{executor_display}] ✅ [{branch_id}] — execution complete, sending to {planner_validate_display}")
 
     return {
         "execution_log": execution_log,

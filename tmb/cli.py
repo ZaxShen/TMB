@@ -768,11 +768,11 @@ Minimize time and token cost without sacrificing quality:
 
 ## Part C — Style Reference
 
-Use the tone and structure of the `it-company` sample below as your STYLE reference. \
+Use the tone and structure of the `software-engineering` sample below as your STYLE reference. \
 Notice how it assigns a concrete professional persona, uses direct language, and gives \
 the executor clear boundaries. Apply this same professional, opinionated tone — but \
 with the FULL feature set from the base prompts (validation, skill provisioning, \
-skill_request, SQLite execution plans) which the it-company sample lacks.
+skill_request, SQLite execution plans).
 
 <style_reference_planner>
 {style_reference_planner}
@@ -788,7 +788,7 @@ skill_request, SQLite execution plans) which the it-company sample lacks.
 
 These are the CANONICAL base prompts with the complete TMB feature set. Your generated \
 prompts must include every feature present here. Do NOT downgrade to the simpler \
-it-company version — the base prompts are the source of truth for what the framework \
+software-engineering version — the base prompts are the source of truth for what the framework \
 supports.
 
 <base_planner>
@@ -845,17 +845,17 @@ def _generate_prompts(purpose: str) -> bool:
     base_planner = base_planner_path.read_text()
     base_executor = base_executor_path.read_text()
 
-    # Load it-company as style reference
-    style_dir = PROMPTS_DIR / "samples" / "it-company"
+    # Load software-engineering as style reference
+    style_dir = PROMPTS_DIR / "samples" / "software-engineering"
     style_planner = (style_dir / "planner.md").read_text() if (style_dir / "planner.md").exists() else ""
     style_executor = (style_dir / "executor.md").read_text() if (style_dir / "executor.md").exists() else ""
 
-    # Load domain-specific samples as few-shot examples (exclude it-company — already used as style ref)
+    # Load domain-specific samples as few-shot examples (exclude software-engineering — already used as style ref)
     samples_dir = PROMPTS_DIR / "samples"
     few_shot_parts = []
     if samples_dir.exists():
         for sample_dir in sorted(samples_dir.iterdir()):
-            if not sample_dir.is_dir() or sample_dir.name == "it-company":
+            if not sample_dir.is_dir() or sample_dir.name == "software-engineering":
                 continue
             planner_path = sample_dir / "planner.md"
             executor_path = sample_dir / "executor.md"
@@ -883,7 +883,7 @@ def _generate_prompts(purpose: str) -> bool:
     # Call LLM
     try:
         llm = get_llm("planner")
-        print("  Generating tailored prompts", end="", flush=True)
+        print("    Generating tailored prompts", end="", flush=True)
 
         response = llm.invoke(meta_prompt)
         content = response.content
@@ -893,15 +893,15 @@ def _generate_prompts(purpose: str) -> bool:
                 for block in content
             )
 
-        print(" done.")
+        print(" done. 🧠")
     except Exception as e:
-        print(f"\n  [warn] Prompt generation failed: {e}")
+        print(f"\n    [warn] Prompt generation failed: {e}")
         return False
 
     # Parse output — expect two documents separated by ===PROMPT_SEPARATOR===
     separator = "===PROMPT_SEPARATOR==="
     if separator not in content:
-        print("  [warn] LLM output missing separator — falling back to defaults.")
+        print("    [warn] LLM output missing separator — falling back to defaults.")
         return False
 
     parts = content.split(separator, 1)
@@ -909,7 +909,7 @@ def _generate_prompts(purpose: str) -> bool:
     executor_text = parts[1].strip()
 
     if len(planner_text) < 200 or len(executor_text) < 200:
-        print("  [warn] Generated prompts too short — falling back to defaults.")
+        print("    [warn] Generated prompts too short — falling back to defaults.")
         return False
 
     # Write to user prompts dir
@@ -919,8 +919,8 @@ def _generate_prompts(purpose: str) -> bool:
     (out_dir / "planner.md").write_text(planner_text)
     (out_dir / "executor.md").write_text(executor_text)
 
-    print(f"  Wrote custom planner prompt → .tmb/prompts/planner.md")
-    print(f"  Wrote custom executor prompt → .tmb/prompts/executor.md")
+    print(f"    Custom planner prompt → .tmb/prompts/planner.md ✅")
+    print(f"    Custom executor prompt → .tmb/prompts/executor.md ✅")
     return True
 
 
@@ -931,17 +931,18 @@ def setup():
     """Interactive setup — writes .tmb/config/project.yaml and .env."""
     from pathlib import Path
 
-    print("[TMB] Setup")
-    print("=" * 40)
+    print()
+    print("  🤙  T R U S T   M Y   B R O  🤙")
+    print("  ─────────────────────────────────")
+    print("  Yo, let's get this project set up.")
     print()
 
     ensure_dirs()
     project_root = get_project_root()
     detected_name = project_root.name
 
-    name = input(f"Project name [{detected_name}]: ").strip() or detected_name
-    test_cmd = input("Test command [pytest]: ").strip() or "pytest"
-    max_retries = input("Max retries per task [3]: ").strip() or "3"
+    name = input(f"  What's this project called? [{detected_name}]: ").strip() or detected_name
+    max_retries = input("  Max retries per task [3]: ").strip() or "3"
 
     # ── LLM Provider (moved before purpose — needed for prompt generation) ──
     _PROVIDER_MENU = [
@@ -952,73 +953,75 @@ def setup():
         ("5", "Mistral",            "MISTRAL_API_KEY",   "mistral",    "tmb[mistral]"),
         ("6", "DeepSeek",           "DEEPSEEK_API_KEY",  "deepseek",   "tmb[deepseek]"),
         ("7", "Ollama (local)",     None,                "ollama",     "tmb[ollama]"),
-        ("s", "Skip",               None,                None,         None),
+        ("s", "Skip for now bro",   None,                None,         None),
     ]
 
     env_path = project_root / ".env"
     llm_configured = env_path.exists()
     if llm_configured:
-        print(f"  .env already exists at {env_path} — skipping LLM config.")
+        print(f"  .env already exists — nice, brain's already wired up. 🧠")
     else:
         print()
-        print("Which LLM provider will you use?")
+        print("  Which LLM is gonna be your bro's brain?")
         for key, label, _, _, _ in _PROVIDER_MENU:
-            print(f"  {key}) {label}")
-        choice = input("Choice [1]: ").strip() or "1"
+            print(f"    {key}) {label}")
+        choice = input("  Choice [1]: ").strip() or "1"
 
         selected = next((m for m in _PROVIDER_MENU if m[0] == choice), None)
         env_lines = []
         if selected and selected[0] != "s":
             _, label, env_var, provider_name, extra_pkg = selected
             if env_var:
-                api_key = input(f"  {env_var}: ").strip()
+                api_key = input(f"    {env_var}: ").strip()
                 if api_key:
                     env_lines.append(f"{env_var}={api_key}")
                     llm_configured = True
             if extra_pkg:
-                print(f"  Note: install the provider package with:  uv add {extra_pkg}")
+                print(f"    Heads up — install the provider:  uv add {extra_pkg}")
 
         if env_lines:
             env_path.write_text("\n".join(env_lines) + "\n")
-            print(f"  Wrote {env_path}")
+            print(f"    Wrote {env_path} — brain connected. 🔌")
             # Reload .env so get_llm() can find the key
             from dotenv import load_dotenv
             load_dotenv(env_path, override=True)
         elif choice != "s":
-            print("  No API key entered — set it in .env before running.")
+            print("    No API key entered — set it in .env before running, bro.")
 
-    # ── Role Naming ──
+    # ── Project Template ──
     print()
-    print("Role naming — choose a preset or keep defaults:")
-    print("  1) Generic  (Project Owner → Planner → Executor)")
-    print("  2) IT Company  (Chief Architect → Architect → SWE)")
-    print("  3) Custom  (enter your own names)")
-    role_choice = input("Choice [1]: ").strip() or "1"
+    print("  What kind of project are we building?")
+    print("    1) Generic — I'll figure it out (default)")
+    print("    2) Software Engineering — code, APIs, architecture")
+    print("    3) Data Analytics — SQL, A/B tests, ETL, reporting")
+    template_choice = input("  Choice [1]: ").strip() or "1"
 
     roles_cfg: dict = {}
-    if role_choice == "2":
+    if template_choice == "2":
         roles_cfg = {
-            "preset": "it-company",
+            "preset": "software-engineering",
             "owner": "Chief Architect",
             "planner": "Architect",
             "executor": "SWE",
         }
-    elif role_choice == "3":
-        roles_cfg["owner"] = input("  Human role name [Project Owner]: ").strip() or "Project Owner"
-        roles_cfg["planner"] = input("  Planner role name [Planner]: ").strip() or "Planner"
-        roles_cfg["executor"] = input("  Executor role name [Executor]: ").strip() or "Executor"
+    elif template_choice == "3":
+        roles_cfg = {
+            "preset": "data-analytics",
+            "owner": "Lead Analyst",
+            "planner": "Analytics Architect",
+            "executor": "Data Engineer",
+        }
 
     # ── Project Purpose & Prompt Generation ──
     print()
-    print("Describe your project's purpose so TMB can tailor its planning style.")
-    print("  Examples: 'A/B test analysis for matchmaking experiments'")
-    print("            'ETL pipeline for cleaning CSV sales data with DuckDB'")
-    print("            'REST API backend in FastAPI with PostgreSQL'")
-    purpose = input("Project purpose (Enter to skip): ").strip()
+    print("  Tell me what this project's about so I can think sharper for you.")
+    print("    Examples: 'A/B test analysis for matchmaking experiments'")
+    print("              'ETL pipeline for cleaning CSV sales data with DuckDB'")
+    print("              'REST API backend in FastAPI with PostgreSQL'")
+    purpose = input("  Project purpose (Enter to skip): ").strip()
 
     config = {
         "name": name,
-        "test_command": test_cmd,
         "max_retry_per_task": int(max_retries),
     }
     if roles_cfg:
@@ -1031,59 +1034,59 @@ def setup():
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(config_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
-    print(f"  Wrote {config_path}")
+    print(f"    Saved config → {config_path}")
 
     # Generate tailored prompts if purpose was provided and LLM is available
     if purpose and llm_configured:
         print()
-        print("=== Prompt Generation ===")
+        print("  === Cooking up custom prompts... 🧪 ===")
         generated = _generate_prompts(purpose)
         if not generated:
-            print("  Using default prompts. You can regenerate later with: tmb setup")
+            print("    No worries, using defaults. Re-run `tmb setup` anytime to retry.")
     elif purpose:
-        print("  [info] No LLM configured — using default prompts.")
-        print("  After setting up your API key, re-run `tmb setup` to generate custom prompts.")
+        print("    No LLM configured yet — using default prompts.")
+        print("    Hook up an API key and re-run `tmb setup` to get custom ones.")
 
     goals_path = docs_dir() / "GOALS.md"
     if not goals_path.exists():
         goals_path.parent.mkdir(parents=True, exist_ok=True)
         goals_path.write_text(
             "# Goals\n\n"
-            "Write your goals below. The Planner will read this file and discuss with you.\n\n"
+            "Write your goals below, bro. Your Planner will read this and chat with you about it.\n\n"
             "---\n\n"
         )
-        print(f"  Created {goals_path}")
+        print(f"    Created {goals_path}")
 
     # ── Web Search ────────────────────────────────────────────
     print()
-    print("=== Web Search ===")
+    print("  === Web Search ===")
     print()
-    print("  TMB can search the web during planning.")
-    print("  Tavily (tavily.com) gives the best results — free tier: 1000 searches/month.")
-    print("  Without a key, DuckDuckGo is used as a free fallback.")
+    print("    Your bro can Google stuff while planning.")
+    print("    Tavily (tavily.com) gives the best results — free tier: 1K searches/month.")
+    print("    Without a key, DuckDuckGo is used as fallback. Still works, just less sharp.")
     print()
-    tavily_key = input("  TAVILY_API_KEY (Enter to skip): ").strip()
+    tavily_key = input("    TAVILY_API_KEY (Enter to skip): ").strip()
     if tavily_key:
         existing_env = env_path.read_text() if env_path.exists() else ""
         if "TAVILY_API_KEY" not in existing_env:
             with open(env_path, "a") as f:
                 f.write(f"\nTAVILY_API_KEY={tavily_key}\n")
-            print("  Added Tavily key to .env")
+            print("    Added Tavily key to .env — search game strong. 🔍")
     else:
-        print("  Skipped — DuckDuckGo fallback will be used for web search.")
+        print("    Skipped — DuckDuckGo fallback it is.")
 
     # ── MCP Connections ──────────────────────────────────────
     print()
-    print("=== MCP Connections (optional) ===")
+    print("  === MCP Connections (optional) ===")
     print()
-    print("  TMB can connect to external services via MCP.")
+    print("    Your bro can talk to external services via MCP.")
     print()
-    print("  [1] Notion    — read/create pages, search workspace")
-    print("  [2] GitHub    — issues, PRs, code search")
-    print("  [3] Slack     — send messages, read channels")
-    print("  [s] Skip")
+    print("    [1] Notion    — read/create pages, search workspace")
+    print("    [2] GitHub    — issues, PRs, code search")
+    print("    [3] Slack     — send messages, read channels")
+    print("    [s] Skip")
     print()
-    mcp_choice = input("  Select (comma-separated, e.g. 1,2) [s]: ").strip().lower() or "s"
+    mcp_choice = input("    Select (comma-separated, e.g. 1,2) [s]: ").strip().lower() or "s"
 
     if mcp_choice != "s":
         mcp_servers = {}
@@ -1093,7 +1096,7 @@ def setup():
         choices = [c.strip() for c in mcp_choice.split(",")]
 
         if "1" in choices:
-            token = input("  Notion API token: ").strip()
+            token = input("    Notion API token: ").strip()
             if token:
                 mcp_servers["notion"] = {
                     "command": "npx",
@@ -1105,7 +1108,7 @@ def setup():
                     new_env_lines.append(f"NOTION_TOKEN={token}")
 
         if "2" in choices:
-            token = input("  GitHub token: ").strip()
+            token = input("    GitHub token: ").strip()
             if token:
                 mcp_servers["github"] = {
                     "command": "npx",
@@ -1117,7 +1120,7 @@ def setup():
                     new_env_lines.append(f"GITHUB_TOKEN={token}")
 
         if "3" in choices:
-            token = input("  Slack Bot token: ").strip()
+            token = input("    Slack Bot token: ").strip()
             if token:
                 mcp_servers["slack"] = {
                     "command": "npx",
@@ -1136,19 +1139,19 @@ def setup():
             existing_servers.update(mcp_servers)
             mcp_data["servers"] = existing_servers
             mcp_config_path.write_text(yaml.dump(mcp_data, default_flow_style=False, sort_keys=False))
-            print(f"  Wrote {mcp_config_path}")
+            print(f"    Wrote {mcp_config_path}")
 
         if new_env_lines:
             with open(env_path, "a") as f:
                 f.write("\n" + "\n".join(new_env_lines) + "\n")
-            print(f"  Updated .env with MCP tokens")
+            print(f"    Updated .env with MCP tokens")
 
     # ── Project-level pyproject.toml ─────────────────────────
     project_toml = project_root / "pyproject.toml"
     if not project_toml.exists():
         print()
-        print("No pyproject.toml found at project root.")
-        create = input("  Create one with TMB as a dependency? (yes/no) [yes]: ").strip().lower()
+        print("  No pyproject.toml found at project root.")
+        create = input("    Create one with TMB as a dependency? (yes/no) [yes]: ").strip().lower()
         if create in ("", "yes", "y"):
             tmb_rel = TMB_ROOT.resolve().relative_to(project_root.resolve())
             toml_content = (
@@ -1161,14 +1164,18 @@ def setup():
                 f'[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n'
             )
             project_toml.write_text(toml_content)
-            print(f"  Wrote {project_toml}")
-            print(f"  Run `uv sync` at {project_root} to install.")
+            print(f"    Wrote {project_toml}")
+            print(f"    Run `uv sync` at {project_root} to install.")
 
-    print()
-    print("[TMB] Setup complete.")
     dd = docs_dir().name
-    print(f"  1. Write your goals in {dd}/GOALS.md")
-    print("  2. Run: uv run tmb")
+    print()
+    print("  ─────────────────────────────────")
+    print("  🤙 Setup complete, bro!")
+    print()
+    print(f"  Next steps:")
+    print(f"    1. Write your goals in {dd}/GOALS.md")
+    print(f"    2. Run: uv run tmb")
+    print(f"    3. Trust the process. Trust your bro. 🫡")
     print()
 
 
@@ -1316,7 +1323,7 @@ def chat():
 def run():
     """Phase-aware entry point: resumes an open issue or starts fresh."""
     if _is_first_run():
-        print("[TMB] First run detected — running setup.\n")
+        print("[TMB] First time? Let's get you set up, bro.\n")
         setup()
 
     ensure_dirs()

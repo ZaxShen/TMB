@@ -1,5 +1,4 @@
 name: my-project
-test_command: pytest
 max_retry_per_task: 3
 
 # root_dir — override the auto-detected project root.
@@ -14,7 +13,7 @@ max_retry_per_task: 3
 # Uncomment and customize to match your team's terminology.
 # Default generic names: Project Owner, Planner, Executor, Validator
 # roles:
-#   preset: it-company          # loads prompts from prompts/samples/it-company/
+#   preset: software-engineering    # loads prompts from prompts/samples/software-engineering/
 #   owner: Chief Architect
 #   planner: Architect
 #   executor: SWE

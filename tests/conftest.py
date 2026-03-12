@@ -24,7 +24,7 @@ def tmp_project(tmp_path):
     docs_dir.mkdir()
 
     (cfg_dir / "project.yaml").write_text(
-        "name: test-project\ntest_command: pytest\nmax_retry_per_task: 3\n"
+        "name: test-project\nmax_retry_per_task: 3\n"
     )
 
     return tmp_path

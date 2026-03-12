@@ -294,7 +294,6 @@ TMB tries each in order. You only create overrides for what you want to change.
 
 ```yaml
 name: my-project
-test_command: pytest
 max_retry_per_task: 3
 
 # root_dir — auto-detected by default:

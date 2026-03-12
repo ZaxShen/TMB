@@ -55,7 +55,7 @@ def project_dir(tmp_path):
     skills_dir.mkdir(parents=True)
 
     (cfg_dir / "project.yaml").write_text(
-        "name: test-project\ntest_command: pytest\nmax_retry_per_task: 3\n"
+        "name: test-project\nmax_retry_per_task: 3\n"
     )
 
     (docs_dir / "GOALS.md").write_text("# Goals\nCreate hello.txt with 'Hello World'\n")

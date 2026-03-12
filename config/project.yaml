@@ -1,0 +1,8 @@
+name: yikyak
+test_command: pytest
+max_retry_per_task: 3
+roles:
+  preset: it-company
+  owner: Chief Architect
+  planner: Architect
+  executor: SWE

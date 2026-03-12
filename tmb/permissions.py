@@ -1,0 +1,207 @@
+"""Permission enforcement for agent file access.
+
+Four layers:
+
+1. Docs write allowlist — agents may only write specific files inside
+   the bro/ directory (bypassed in evolve mode).
+
+2. Project blacklist — agents can NEVER access paths matching patterns
+   in config/project.yaml → blacklist[]. Applies to all nodes.
+   In evolve mode, the ``TMB/**`` pattern is lifted while all other
+   patterns (secrets, .env, *.pem, etc.) remain enforced.
+
+3. Node-level access — certain docs are restricted to specific nodes.
+   High-level docs (GOALS, DISCUSSION, BLUEPRINT, FLOWCHART) are planner-only.
+   EXECUTION.md is readable by executor.
+
+4. Evolve context — a ``contextvars``-based toggle that temporarily lifts
+   the TMB/** blacklist and write allowlist so the Planner can modify
+   any TMB source file during a guarded self-evolution flow.
+"""
+
+from __future__ import annotations
+
+import contextvars
+import re
+from contextlib import contextmanager
+from fnmatch import fnmatch
+from pathlib import Path
+
+from tmb.config import load_project_config
+from tmb.paths import TMB_ROOT, docs_dir
+
+
+# ── Evolve-mode context ─────────────────────────────────────
+
+_evolve_mode = contextvars.ContextVar("evolve_mode", default=False)
+
+
+@contextmanager
+def evolve_context():
+    """Temporarily lift the TMB/** blacklist and write allowlist
+    for a guarded self-evolution session."""
+    token = _evolve_mode.set(True)
+    try:
+        yield
+    finally:
+        _evolve_mode.reset(token)
+
+
+def is_evolve_mode() -> bool:
+    return _evolve_mode.get()
+
+
+# ── Docs write allowlist ─────────────────────────────────────
+
+_WRITABLE_DOC_NAMES = {
+    "DISCUSSION.md",
+    "BLUEPRINT.md",
+    "FLOWCHART.md",
+    "EXECUTION.md",
+    "EVOLUTION.md",
+}
+
+
+def assert_tmb_write(path: Path):
+    """Raise if the path is not in the docs write allowlist.
+    Bypassed entirely when evolve mode is active."""
+    if _evolve_mode.get():
+        return
+    resolved = path.resolve()
+    dd = docs_dir().resolve()
+    if resolved.parent == dd and resolved.name in _WRITABLE_DOC_NAMES:
+        return
+    raise PermissionError(
+        f"Write blocked: {path} is not in the docs write allowlist. "
+        f"Allowed: {', '.join(_WRITABLE_DOC_NAMES)}"
+    )
+
+
+# ── Node-level access control ──────────────────────────────
+
+_NODE_RESTRICTED_NAMES: dict[str, set[str]] = {
+    "GOALS.md": {"planner", "gatekeeper"},
+    "DISCUSSION.md": {"planner"},
+    "BLUEPRINT.md": {"planner", "owner"},
+    "FLOWCHART.md": {"planner", "owner"},
+    "EXECUTION.md": {"planner", "executor"},
+    "EVOLUTION.md": {"planner"},
+}
+
+
+def assert_node_access(file_path: str, node_name: str):
+    """Raise if this node is not allowed to access the file.
+    Only checks node-restricted doc names — unrestricted paths pass through.
+    Bypassed entirely when evolve mode is active."""
+    if _evolve_mode.get():
+        return
+    fname = Path(file_path).name
+    allowed_nodes = _NODE_RESTRICTED_NAMES.get(fname)
+    if allowed_nodes is not None:
+        if node_name not in allowed_nodes:
+            raise PermissionError(
+                f"Access denied: '{file_path}' is restricted to {allowed_nodes}. "
+                f"Node '{node_name}' cannot access this file."
+            )
+
+
+# ── Project blacklist ───────────────────────────────────────
+
+_TMB_BLACKLIST_PATTERN = "TMB/**"
+
+
+def _load_blacklist() -> list[str]:
+    cfg = load_project_config()
+    patterns = cfg.get("blacklist", [])
+    if _evolve_mode.get():
+        patterns = [p for p in patterns if p != _TMB_BLACKLIST_PATTERN]
+    return patterns
+
+
+def is_blacklisted(file_path: str) -> bool:
+    """Check if a relative path matches any blacklist pattern."""
+    patterns = _load_blacklist()
+    # Strip leading "./" prefix but preserve dotfile names (e.g. .env)
+    normalized = file_path
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    for pattern in patterns:
+        if fnmatch(normalized, pattern):
+            return True
+        if fnmatch(Path(normalized).name, pattern):
+            return True
+    return False
+
+
+def assert_not_blacklisted(file_path: str):
+    """Raise if the path matches a blacklist pattern."""
+    if is_blacklisted(file_path):
+        raise PermissionError(
+            f"Access blocked: '{file_path}' matches a blacklist pattern. "
+            f"This file is protected and cannot be accessed by agents."
+        )
+
+
+def _extract_paths(line: str) -> list[str]:
+    """Extract plausible file paths from a line of shell output.
+
+    Handles quoted paths, URL-encoded chars, and normalizes before matching.
+    """
+    import urllib.parse
+    candidates = []
+    for token in line.split():
+        cleaned = token.strip("'\"(),;:`")
+        cleaned = urllib.parse.unquote(cleaned)
+        if "/" in cleaned or cleaned.startswith("."):
+            candidates.append(cleaned)
+    return candidates
+
+
+# Base64 pattern: 20+ chars of [A-Za-z0-9+/] ending with optional padding
+_B64_RE = re.compile(r"[A-Za-z0-9+/]{20,}={0,2}")
+
+
+def _contains_blacklisted_b64(line: str, patterns: list[str]) -> bool:
+    """Check if any base64-encoded string in the line decodes to a blacklisted path."""
+    import base64
+    for match in _B64_RE.finditer(line):
+        try:
+            decoded = base64.b64decode(match.group(), validate=True).decode("utf-8", errors="ignore")
+        except Exception:
+            continue
+        for pattern in patterns:
+            if fnmatch(decoded, pattern) or fnmatch(Path(decoded).name, pattern):
+                return True
+    return False
+
+
+def filter_blacklisted_output(text: str, project_root: str) -> str:
+    """Scrub lines that reference blacklisted file paths from shell/search output.
+
+    Checks plain-text paths, URL-encoded paths, and base64-encoded paths.
+    """
+    if not text:
+        return text
+    patterns = _load_blacklist()
+    if not patterns:
+        return text
+
+    lines = text.splitlines()
+    filtered = []
+    for line in lines:
+        is_blocked = False
+        paths = _extract_paths(line)
+        for path_str in paths:
+            for pattern in patterns:
+                if fnmatch(path_str, pattern) or fnmatch(Path(path_str).name, pattern):
+                    is_blocked = True
+                    break
+            if is_blocked:
+                break
+        if not is_blocked:
+            is_blocked = _contains_blacklisted_b64(line, patterns)
+        if is_blocked:
+            filtered.append("[REDACTED — blacklisted path]")
+        else:
+            filtered.append(line)
+    return "\n".join(filtered)

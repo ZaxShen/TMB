@@ -1,292 +1,179 @@
-# AIDE: AI Direction & Execution
+# TMB — Trust My Bot
 
-> Minimum best practice workflow for human-AI collaboration on high-impact work.
-
-**AIDE** stands for **AI Direction & Execution** - a lightweight framework that keeps humans in control while leveraging AI capabilities for complex, high-stakes tasks.
+> trust me bro, it works.
 
 ---
 
-## Why AIDE?
+## Why "Trust Me Bro"?
 
-**The Problem**: Agentic AI is great for research and analysis, but high-impact work requires careful control. One bad decision in code, infrastructure, legal docs, or financial analysis can cascade into serious consequences.
+You've used AI coding assistants. You've typed "build X" and watched them hallucinate file paths, skip edge cases, and produce code that looks right but breaks on real data. You can't trust a single agent with a blank canvas and hope for the best.
 
-**The Solution**: AIDE uses approval gates and sequential execution - slower than autonomous AI, but predictable, auditable, and safe for work that matters.
+TMB doesn't ask you to hope. It earns trust through structure:
 
-### AIDE vs. Agentic AI
+```
+  YOU decide WHAT to build          Agents figure out HOW
+  ────────────────────────          ────────────────────
+  Write goals in plain English  →   Planner explores your codebase first
+  Answer clarifying questions   →   Planner challenges your assumptions
+  Review the blueprint          →   You approve before anything executes
+  Walk away                     →   Executor builds, Planner validates each step
+                                    Failed? Auto-retry with new solutions from multi-agent collaboration
+                                    Still failed? Escalate back to you
+```
 
-| Approach | Best For | Risk Level |
-|----------|----------|------------|
-| **Agentic AI** | Research, data analysis, content generation, brainstorming | Low impact, reversible |
-| **AIDE** | Code, infrastructure, legal docs, financial analysis, compliance, medical | High impact, careful control needed |
+The key insight: **you stay at the system-design level**. You never argue about the minior issues. You define the *what* and the *why*. The agents handle the *how* — and they check each other's work.
 
-**Trade-off**: AIDE sacrifices speed for safety and transparency. For high-stakes work, this is a feature, not a bug.
+### The trust contract, specifically
+
+**1. Nothing runs without your approval.** The Planner produces a blueprint (task breakdown) that you read and approve before a single line of code is written.
+
+**2. Agents can't see what they shouldn't.** The Executor only sees its own task — never your goals, discussion history, or the full blueprint. This isn't just about security; it prevents the LLM from getting distracted by irrelevant context and hallucinating connections.
+
+**3. Every task is validated.** After the Executor finishes, the Planner (which holds full project context) independently validates the output against success criteria — running tests, inspecting files, checking results. It's a built-in code review that never gets lazy.
+
+**4. Everything is recorded.** Every discussion, decision, tool call, and validation result is persisted in SQLite. Run `tmb report 3` six months later and reconstruct exactly what happened, why, and what the agents saw.
+
+**5. You can interrupt anytime.** Close your laptop mid-task. Run `uv run tmb` again — it picks up exactly where it left off. State lives in the database, not in memory.
 
 ---
 
-## Quick Start
+## What You Need to Know
 
-### 1. Get AIDE
+TMB works through two files in the `bro/` folder. That's your only interaction point.
 
-**Option A: Git Submodule** (Recommended)
+### 1. Write your goals
 
-```bash
-# Init
-cd your-project/
-git submodule add https://github.com/ZaxShen/AIDE.git
-git submodule update --init --recursive
-
-# Pull
-cd your-project/AIDE
-git fetch
-git pull
-```
-
-**Option B: Direct Copy**
-
-```bash
-cd your-project/
-git clone https://github.com/ZaxShen/AIDE.git
-# Copy files you need, delete .git/
-```
-
-### 2. Create Your Tasks
-
-Copy required part from [DEMO_TASKS.md](DEMO_TASKS.md) to `TASKS.md` and write your tasks, for example:
+Open `bro/GOALS.md` and describe what you want done in plain language:
 
 ```markdown
-## v0.0.1
+# Goals
 
-### 1. Upgrade Python
-
-Evaluate the dependencies and see which latest Python version we can upgrade to for better performance.
-
-### 2. Update README
-
-The README has outdated info. Update it.
+Build a matching algorithm that pairs users by school and gender preference.
+Prioritize maximizing the number of matched users over match quality.
+Output results to output/matchings.csv.
 ```
 
-**Don't overthink it** - write rough drafts. AI will ask questions.
+No special syntax required. Write like you're explaining to a colleague.
 
-### 3. Update .gitignore
+### 2. Run TMB
 
-Add to your project's `.gitignore` to exclude AIDE files from version control:
-
-```gitignore
-# AIDE framework (if using submodule, only ignore logs)
-AIDE/logs/
-AIDE/TASKS.md
-
-# Or if direct copy (ignore AIDE demo/docs, keep only what you need)
-AIDE/DEMO_TASKS.md
-AIDE/AI_TODO.md
-AIDE/AI_COLLABORATION_GUIDE.md
+```bash
+uv run tmb
 ```
 
-**Recommended**: Commit `AIDE/AIDE.md` and `AIDE/README.md` so team members get the framework. Only ignore logs and your specific `TASKS.md`.
+TMB reads your goals, then the Planner will ask you clarifying questions in `bro/DISCUSSION.md`. Open that file, write your answers below the marker, save, and press Enter in the terminal.
 
-### 4. Start Working with AI
+When the Planner has enough clarity, it produces a plan for your review. Approve it, and TMB executes — task by task, with automatic validation.
 
-Tell your AI assistant:
+### 3. That's it
 
-```
-"Read [AIDE/AIDE.md](AIDE.md), then start task 1 from [AIDE/TASKS.md](TASKS.md)"
-```
+Everything else happens automatically:
 
-**What happens:**
-
-1. AI reads the framework rules
-2. AI analyzes your task and asks clarifying questions
-3. AI proposes approach with options
-4. You approve
-5. AI executes and logs everything to `AIDE/logs/`
-6. You review changes and logs
-7. You say "next task" or request changes
+- `bro/BLUEPRINT.md` — the task breakdown (generated for your review)
+- `bro/FLOWCHART.md` — project architecture overview (generated when needed)
+- `bro/EXECUTION.md` — execution summary (generated)
 
 ---
 
-## The Three Laws of AIDE
+## Setup
 
-AIDE is built on three core principles (see [AIDE.md](AIDE.md) for full details):
+**Prerequisites**: [uv](https://docs.astral.sh/uv/) and an LLM API key (Anthropic, OpenAI, Google, Groq, Mistral, DeepSeek — or Ollama for local models).
 
-### 1. Communication Before Action
+**New project:**
 
-AI must understand before executing, and challenge before accepting.
+```bash
+cd your-project/
+git clone https://github.com/ZaxShen/TMB.git
+./TMB/install
+uv run tmb
+```
 
-### 2. Sequential Execution with Human Control
+**Joining an existing project** (someone already set up TMB):
 
-AI must complete one task at a time, with approval gates between tasks.
+```bash
+cd your-project/
+./TMB/install
+uv run tmb
+```
 
-### 3. Complete Transparency
+The install script creates `pyproject.toml` (if needed) and installs dependencies. The first time you run `uv run tmb`, TMB walks you through naming your project, choosing an LLM provider, and setting your API key — then continues straight into the workflow.
 
-AI must document all actions, decisions, and reasoning.
-
----
-
-## File Structure
+After setup your project looks like this:
 
 ```
 your-project/
-├── AIDE/                    # Framework (submodule or direct copy)
-│   ├── AIDE.md              # Rules for AI (technical spec)
-│   ├── TASKS.md             # Your tasks (copy format from DEMO_TASKS.md)
-│   ├── DEMO_TASKS.md        # Example tasks showing good/bad formats
-│   ├── README.md            # This file (for humans)
-│   ├── LICENSE              # MIT License
-│   └── logs/
-│       └── v0.0.1_claude.log
-├── your-code/
+├── bro/              ← you interact here (GOALS.md, DISCUSSION.md)
+├── .tmb/             ← runtime state (automatic, hidden)
+├── TMB/              ← framework (don't touch)
+├── .env              ← your API key
 └── ...
+```
+
+> **Important**: Always run commands from your **project root** (the parent of `TMB/`), not from inside `TMB/`.
+
+To update TMB later: `cd TMB && git pull origin dev && cd .. && ./TMB/install`
+
+---
+
+## Quick Commands
+
+
+| Command                          | What it does                                                 |
+| -------------------------------- | ------------------------------------------------------------ |
+| `uv run tmb`                     | Full workflow — reads your goals, discusses, plans, executes |
+| `uv run tmb "fix the login bug"` | Quick task — skips discussion, auto-approves the plan        |
+| `uv run tmb chat`                | Interactive chat with the planner (read-only exploration)    |
+| `uv run tmb scan`                | Scan project for TMB context (file registry, git history)    |
+| `uv run tmb log`                 | Show recent issues                                           |
+| `uv run tmb log 3`               | Show details for issue #3                                    |
+| `uv run tmb report 3`            | Export a full markdown report for issue #3                   |
+| `uv run tmb tokens`              | Show token usage across all issues                           |
+| `uv run tmb tokens 3`            | Show token usage for issue #3                                |
+| `uv run tmb setup`               | Re-run setup (change LLM provider, role names, etc.)         |
+| `uv run tmb evolve "..."`        | Self-modify TMB's own code (guarded, git-snapshotted)        |
+| `uv run tmb serve`               | Expose TMB as an MCP server (for Claude Desktop, Cursor)     |
+
+### MCP — External Integrations
+
+Need Notion, GitHub, Slack, or any other service? No problem — Trust Me Bro, your agents can connect to anything via [MCP](https://modelcontextprotocol.io/). Configure in `.tmb/config/mcp.yaml`. See [ARCHITECTURE.md § MCP Integration](ARCHITECTURE.md#mcp-integration) for details.
+
+---
+
+## How the Conversation Works
+
+```
+You write GOALS.md
+       |
+       v
+Planner reads goals, explores your codebase
+       |
+       v
+Planner asks questions --> DISCUSSION.md
+       |
+       v
+You answer in DISCUSSION.md, press Enter
+       |
+       v
+(repeat until Planner says "TRUST ME BRO, LET'S BUILD")
+       |
+       v
+Planner produces BLUEPRINT.md (+ FLOWCHART.md if needed)
+       |
+       v
+You review and approve
+       |
+       v
+TMB executes, validates each task, reports results
 ```
 
 ---
 
-## Real Examples
+## Technical Details
 
-### Example 1: Software Development
-
-**Task**: Upgrade Python version for backend (v1.0.0)
-
-**What happened**:
-
-1. **Human**: "Start task 1: Upgrade Python"
-2. **AI**: "I'll check dependencies on Python 3.13 and 3.14..."
-3. **AI**: "All deps work on 3.13. Recommend 3.13 (stable) over 3.14 (alpha). 15-20% faster. Proceed?"
-4. **Human**: "Proceed with 3.13"
-5. **AI**: *[Updates Dockerfiles, pyproject.toml, tests app]* "✅ Complete. Python 3.13.7 installed, all tests passing."
-6. **Human**: "Confirmed. Next task."
-
-**Result**: 5 tasks completed, zero breaking changes, complete audit trail, human in control throughout.
-
-### Example 2: Other High-Impact Use Cases
-
-- **Legal Contract Review**: AI analyzes contract → Flags risky clauses → Proposes redlines → Human approves each change
-- **Financial Model Updates**: AI updates spreadsheet formulas → Explains assumptions → Human verifies before publishing
-- **Infrastructure Changes**: AI proposes AWS config → Explains cost/security impact → Human approves before applying
-- **Compliance Documentation**: AI drafts policy updates → Cites regulations → Human reviews before official release
-- **Common pattern**: AI does analysis/drafting, human makes final decisions on anything with real-world impact.
-
----
-
-## Task Examples
-
-See [DEMO_TASKS.md](DEMO_TASKS.md) for realistic task formats (including common human mistakes that AI should catch)
-
-- **For humans**: This file simulates how real people write tasks - incomplete, sometimes wrong order, missing context. AI should challenge these and ask questions under [AIDE.md](AIDE.md).
-- **For AI**: These are realistic human task descriptions. Practice challenging them - ask questions, spot issues, propose better approaches before executing.
-
----
-
-## What Makes AIDE Different?
-
-### vs. Other AI Frameworks
-
-Most frameworks assume "more autonomy = better." AIDE recognizes that for high-impact work, human control is essential.
-
-**AIDE encourages AI to:**
-
-- Question your assumptions
-- Challenge bad ideas
-- Propose better alternatives
-- Ask before executing
-
----
-
-## Best Practices
-
-### For Humans
-
-**Do:**
-
-- Write rough task descriptions - AI will clarify
-- Include context when relevant ("Update Python with all compatibilty")
-- Mark destructive operations ("Verify before deleting")
-- Ask for options ("Give me choices before doing it")
-- Let AI challenge your ideas
-
-**Don't:**
-
-- Overthink task descriptions
-- Skip reading logs
-- Rush approvals without review
-
-### For AI Assistants
-
-See [AIDE.md](AIDE.md) for full technical specification.
-
----
-
-## Integration
-
-### With Other Tools
-
-- **AIDE + GitHub Copilot AGENTS.md**: AGENTS.md describes your codebase architecture; AIDE manages task execution with approval gates
-- **AIDE + Cursor [.cursorrules](https://docs.cursor.com/context/rules-for-ai)**: Use .cursorrules for code style rules, AIDE for project tasks
-- **AIDE + Your IDE**: Works with any AI assistant (Claude Code, Cursor, GitHub Copilot, ChatGPT, etc.)
-
-### Multiple AI Assistants
-
-Each AI gets its own log:
-
-- `logs/v0.0.1_claude.log`
-- `logs/v0.0.1_gpt4.log`
-
-Compare approaches, learn from different AI reasoning styles.
-
----
-
-## Troubleshooting
-
-**"AI is doing too much at once"**
-→ Remind: "One task at a time, wait for approval before proceeding"
-
-**"AI isn't challenging my ideas"**
-→ Point to [AIDE.md First Law](AIDE.md#first-law-communication-before-action): "Never blindly agree - critical thinking required"
-
-**"AI isn't logging"**
-→ Check AIDE/logs/ directory exists, remind AI to follow logging format in [AIDE.md](AIDE.md#log-structure)
-
-**"I want faster iteration"**
-→ Batch approve subtasks: "Complete steps 1-3 then report" - but keep approval gates between major tasks
-
----
-
-## Contributing
-
-This framework is open source and evolving. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-**Quick ways to help:**
-
-- 🐛 [Report issues](https://github.com/ZaxShen/AIDE/issues/new?template=bug_report.md): What worked? What didn't?
-- 💡 [Suggest improvements](https://github.com/ZaxShen/AIDE/issues/new?template=feature_request.md): Better workflows, clearer docs
-- 📝 **Share examples**: Your task templates, real-world results
-- ⭐ **Star if useful**: Help others discover AIDE
-
----
+For architecture, configuration, permissions, skills, MCP integration, and database schema, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## License
 
-MIT License - See [LICENSE](LICENSE)
+MIT License — See [LICENSE](LICENSE)
 
 **Author**: Zax S ([@ZaxShen](https://github.com/ZaxShen))
-
-**Repository**: https://github.com/ZaxShen/AIDE
-
----
-
-## Version
-
-**v0.0.1** (2025-10-01)
-
-- Three Laws of AIDE established
-- Sequential workflow with approval gates
-- Enhanced logging format (ANALYSIS → APPROVAL → EXECUTION → REASONING)
-- Framework optimized for code development (vs. agentic AI for research)
-
----
-
-## Project Files
-
-- [AIDE.md](AIDE.md) - Technical specification for AI assistants
-- [DEMO_TASKS.md](DEMO_TASKS.md) - Example tasks showing good/bad formats
-- [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution guidelines
-- [logs/EXAMPLE_v1.0.0_claude.log](logs/EXAMPLE_v0.0.1_claude.log) - Sample activity log

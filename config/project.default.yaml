@@ -1,0 +1,32 @@
+name: my-project
+max_retry_per_task: 3
+
+# root_dir — override the auto-detected project root.
+# Leave unset (recommended) for auto-detection:
+#   - `uv run tmb` from project root → uses CWD
+#   - `cd TMB && uv run main.py`     → uses parent of TMB/
+# Explicit examples:
+#   root_dir: ..            # relative to TMB/ directory
+#   root_dir: /abs/path     # absolute path
+
+# Role display names — shown in CLI, logs, and SQLite.
+# Uncomment and customize to match your team's terminology.
+# Default generic names: Project Owner, Planner, Executor, Validator
+# roles:
+#   preset: software-engineering    # loads prompts from prompts/samples/software-engineering/
+#   owner: Chief Architect
+#   planner: Architect
+#   executor: SWE
+
+# Blacklist — agents can NEVER read, write, or search these paths.
+# Glob patterns relative to project root. Checked on every tool call.
+blacklist:
+  - ".env"
+  - ".env.*"
+  - "**/.env"
+  - "**/secrets/**"
+  - "**/credentials/**"
+  - "**/*.pem"
+  - "**/*.key"
+  - "**/*secret*"
+  - "TMB/**"                # agents cannot touch the TMB framework itself

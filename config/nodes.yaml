@@ -1,0 +1,34 @@
+planner:
+  model:
+    provider: anthropic
+    name: claude-opus-4-6
+    temperature: 0.3
+  tools:
+    - file_inspect
+    - search
+    - web_search
+    - skill_create
+
+executor:
+  model:
+    provider: anthropic
+    name: claude-sonnet-4-6
+    temperature: 0
+  tools:
+    - shell
+    - file_read
+    - file_write
+    - file_inspect
+    - search
+    - skill_request
+
+evolve:
+  model:
+    provider: anthropic
+    name: claude-opus-4-6
+    temperature: 0.3
+  tools:
+    - file_read
+    - file_write
+    - search
+    - shell

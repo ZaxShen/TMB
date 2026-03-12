@@ -1,0 +1,31 @@
+# MCP Server Configuration
+#
+# Define external MCP servers that TMB agents can use.
+# Env vars support ${VAR} syntax — resolved from .env or environment.
+#
+# Transport options:
+#   stdio  — command + args (default, most common)
+#   http   — url (SSE/Streamable HTTP)
+#
+# Example:
+#
+# servers:
+#   notion:
+#     command: npx
+#     args: ["-y", "@notionhq/notion-mcp-server"]
+#     env:
+#       NOTION_TOKEN: ${NOTION_TOKEN}
+#     agents: [planner]
+#
+#   github:
+#     command: npx
+#     args: ["-y", "@modelcontextprotocol/server-github"]
+#     env:
+#       GITHUB_TOKEN: ${GITHUB_TOKEN}
+#     agents: [planner, executor]
+#
+#   slack:
+#     url: http://localhost:3001/mcp
+#     agents: [planner]
+
+servers: {}

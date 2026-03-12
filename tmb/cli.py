@@ -25,7 +25,7 @@ from pathlib import Path
 import yaml
 
 from tmb.config import load_project_config, get_project_root, get_role_name
-from tmb.paths import TMB_ROOT, docs_dir, runtime_dir, user_cfg_dir, ensure_dirs
+from tmb.paths import TMB_ROOT, PROMPTS_DIR, docs_dir, runtime_dir, user_cfg_dir, user_prompts_dir, ensure_dirs
 from tmb.store import Store
 
 
@@ -660,6 +660,270 @@ def _resume(store: Store, issue: dict):
     _run_execution(store, issue_id, goals_md, ctx, discussion_md, blueprint, start_idx)
 
 
+# ── Prompt Generation ────────────────────────────────────────
+
+
+_GENERATE_META_PROMPT = """\
+You are a prompt engineer for TMB (Trust My Bot), an AI agent framework that \
+maximizes project quality through systematic reasoning.
+
+The user is setting up a new project with the following purpose:
+---
+{purpose}
+---
+
+Your task: generate TWO system prompts tailored to this project purpose.
+
+1. **Planner prompt** — guides an AI planner that explores the codebase, discusses \
+requirements with the human, creates blueprints, and validates execution.
+2. **Executor prompt** — guides an AI executor that follows the planner's blueprint \
+and executes tasks step by step.
+
+---
+
+## Part A — Workflow Framework Contract (MANDATORY — do NOT break or skip)
+
+TMB follows a strict multi-phase workflow. The prompts you generate MUST preserve \
+every phase listed below. Removing, merging, or reordering these phases will break \
+the framework.
+
+### Planner Prompt — Required Sections (in order)
+
+The generated Planner prompt must contain ALL of the following sections in this order. \
+You may ADD domain-specific sections, but you must NEVER remove or skip a required one.
+
+| #  | Section Title                    | Purpose — what it controls in the workflow                  |
+|----|----------------------------------|-------------------------------------------------------------|
+| 1  | Title + role intro               | Sets the persona. Use {{role_planner}}, {{role_owner}}, {{role_executor}} template vars. |
+| 2  | ## Tools                         | Declares available tools: `file_inspect`, `search`, `skill_create`, + `shell` during validation. |
+| 3  | ## Systematic Reasoning Process  | NEW section you insert — the 4-phase reasoning rubric (see Part B below). |
+| 4  | ## Domain Expertise              | NEW section you insert — domain-specific mental models and vocabulary for this project type. |
+| 5  | ## Responsibilities              | The 8-step duty cycle. MUST include ALL of: (1) Explore codebase, (2) Discuss requirements, (3) Identify bugs, (4) Produce Blueprint, (5) Optionally produce Flowchart, (6) Produce Execution Plan, (7) Validate each task, (8) Handle escalations. |
+| 6  | ## Validation                    | QA mode: run verification, render verdict as JSON `{{"verdict": "PASS"/"FAIL", "evidence": "...", "failure_details": "..."}}`, provide actionable feedback on FAIL. |
+| 7  | ## README Requirement            | Every blueprint's last task writes or updates README.md. |
+| 8  | ## Constraints                   | Atomic/idempotent tasks, JSON schema output, bro/ reserved for workflow docs only. |
+| 9  | ## Blueprint Schema              | Exact JSON schema: branch_id, description, tools_required, skills_required, success_criteria. |
+| 10 | ## Skills                        | Three subsections: Proactive Skill Provisioning, Handling Skill Requests, Skill Assignment. |
+| 11 | ## Branch ID Convention          | Hierarchical string IDs: "1", "1.1", "1.1.1". Semantic relationships. |
+
+### Executor Prompt — Required Sections (in order)
+
+| #  | Section Title                    | Purpose                                                     |
+|----|----------------------------------|-------------------------------------------------------------|
+| 1  | Title + role intro               | Sets the persona. Use {{role_executor}}, {{role_planner}} template vars. |
+| 2  | ## Responsibilities              | 4-step cycle: Read task → Execute → Log output → Escalate if blocked. |
+| 3  | ## Skills                        | Read Reference Skills before executing. Use `skill_request` for missing skills. Cannot create skills. |
+| 4  | ## File Reading Strategy          | file_inspect first, file_read with line ranges, context budget awareness. |
+| 5  | ## Constraints                   | Don't question planner, don't skip steps, don't access GOALS/DISCUSSION/BLUEPRINT, bro/ reserved. |
+| 6  | ## Output Format                 | Structured JSON log: task_id, status (completed/failed/escalate), actions[], summary, escalation_reason. |
+
+You may ADD domain-specific subsections (e.g., "## SQL Execution Guidelines", \
+"## Statistical Testing Patterns") but they go BETWEEN the required sections — \
+never replacing them.
+
+---
+
+## Part B — Systematic Reasoning Rubric (insert as section #3 in Planner)
+
+TMB's value proposition is structured thinking that maximizes quality and minimizes \
+wasted effort. The Planner prompt you generate MUST embed this reasoning framework \
+as a first-class section titled "## Systematic Reasoning Process". Tailor the examples \
+to the project domain, but preserve the 4-phase structure:
+
+### Phase 1: Requirement Alignment
+Surface and resolve ambiguity BEFORE planning:
+- Separate what the {{role_owner}} stated explicitly from what is implied or assumed.
+- Rank open questions by impact — resolve high-impact unknowns first.
+- Restate the objective in precise, falsifiable terms (e.g., "You want X that \
+  satisfies Y, measured by Z") to confirm shared understanding.
+- Flag scope risks early: what could balloon, what should be deferred, what is the \
+  minimum viable deliverable.
+
+### Phase 2: Solution Exploration
+Before committing to a plan, reason through alternatives:
+- Generate 2-3 candidate approaches for any non-trivial decision.
+- For each approach, evaluate: (a) how it works, (b) strengths, (c) weaknesses, \
+  (d) risk profile.
+- Select the approach that best balances quality, speed, and maintainability.
+- Document the rationale — so the {{role_owner}} can audit the decision and future \
+  re-plans start from an informed baseline.
+
+### Phase 3: Quality Maximization
+Proactively design for correctness, not just completion:
+- Define validation criteria BEFORE execution — what does "done right" look like?
+- Identify the highest-risk tasks and front-load them or add extra verification steps.
+- Anticipate failure modes at each step. Add guardrails or fallback paths where the \
+  cost of failure is high.
+- Apply domain-specific quality checks appropriate to this project type.
+
+### Phase 4: Efficiency Optimization
+Minimize time and token cost without sacrificing quality:
+- Order tasks to maximize information gain early (e.g., profile data before queries, \
+  read configs before designing architecture).
+- Identify parallelizable work and batch where possible.
+- Prefer simple approaches that meet success criteria over over-engineered solutions.
+- Reuse existing code, patterns, and skills instead of building from scratch.
+
+---
+
+## Part C — Style Reference
+
+Use the tone and structure of the `it-company` sample below as your STYLE reference. \
+Notice how it assigns a concrete professional persona, uses direct language, and gives \
+the executor clear boundaries. Apply this same professional, opinionated tone — but \
+with the FULL feature set from the base prompts (validation, skill provisioning, \
+skill_request, SQLite execution plans) which the it-company sample lacks.
+
+<style_reference_planner>
+{style_reference_planner}
+</style_reference_planner>
+
+<style_reference_executor>
+{style_reference_executor}
+</style_reference_executor>
+
+---
+
+## Part D — Base Prompts (canonical feature set)
+
+These are the CANONICAL base prompts with the complete TMB feature set. Your generated \
+prompts must include every feature present here. Do NOT downgrade to the simpler \
+it-company version — the base prompts are the source of truth for what the framework \
+supports.
+
+<base_planner>
+{base_planner}
+</base_planner>
+
+<base_executor>
+{base_executor}
+</base_executor>
+
+---
+
+## Part E — Domain Examples
+
+Study how these domain-specialized samples add expertise sections, specific constraints, \
+and tailored blueprint examples. Apply the same pattern to the user's project purpose.
+
+{few_shot_examples}
+
+---
+
+## Output Format
+
+Return EXACTLY two markdown documents separated by this delimiter on its own line:
+===PROMPT_SEPARATOR===
+
+First document: the Planner prompt (with ALL required sections from Part A + the \
+Systematic Reasoning Process from Part B + Domain Expertise tailored to the purpose).
+Second document: the Executor prompt (with ALL required sections from Part A).
+
+Both must use {{role_planner}}, {{role_executor}}, and {{role_owner}} template variables \
+(NOT hardcoded role names). Keep the bro/ reserved directory rule.
+"""
+
+
+def _generate_prompts(purpose: str) -> bool:
+    """Use the LLM to generate tailored planner & executor prompts.
+
+    Returns True if prompts were generated successfully, False otherwise.
+    """
+    import sys
+
+    try:
+        from tmb.config import get_llm
+    except Exception:
+        return False
+
+    # Load base templates (canonical feature set)
+    base_planner_path = PROMPTS_DIR / "planner.md"
+    base_executor_path = PROMPTS_DIR / "executor.md"
+    if not base_planner_path.exists() or not base_executor_path.exists():
+        return False
+
+    base_planner = base_planner_path.read_text()
+    base_executor = base_executor_path.read_text()
+
+    # Load it-company as style reference
+    style_dir = PROMPTS_DIR / "samples" / "it-company"
+    style_planner = (style_dir / "planner.md").read_text() if (style_dir / "planner.md").exists() else ""
+    style_executor = (style_dir / "executor.md").read_text() if (style_dir / "executor.md").exists() else ""
+
+    # Load domain-specific samples as few-shot examples (exclude it-company — already used as style ref)
+    samples_dir = PROMPTS_DIR / "samples"
+    few_shot_parts = []
+    if samples_dir.exists():
+        for sample_dir in sorted(samples_dir.iterdir()):
+            if not sample_dir.is_dir() or sample_dir.name == "it-company":
+                continue
+            planner_path = sample_dir / "planner.md"
+            executor_path = sample_dir / "executor.md"
+            if planner_path.exists():
+                few_shot_parts.append(
+                    f"### Example: {sample_dir.name}\n\n"
+                    f"<example_planner>\n{planner_path.read_text()}\n</example_planner>"
+                )
+            if executor_path.exists():
+                few_shot_parts.append(
+                    f"<example_executor>\n{executor_path.read_text()}\n</example_executor>"
+                )
+
+    few_shot_examples = "\n\n".join(few_shot_parts) if few_shot_parts else "(no examples available)"
+
+    meta_prompt = _GENERATE_META_PROMPT.format(
+        purpose=purpose,
+        base_planner=base_planner,
+        base_executor=base_executor,
+        style_reference_planner=style_planner,
+        style_reference_executor=style_executor,
+        few_shot_examples=few_shot_examples,
+    )
+
+    # Call LLM
+    try:
+        llm = get_llm("planner")
+        print("  Generating tailored prompts", end="", flush=True)
+
+        response = llm.invoke(meta_prompt)
+        content = response.content
+        if isinstance(content, list):
+            content = "\n".join(
+                block.get("text", "") if isinstance(block, dict) else str(block)
+                for block in content
+            )
+
+        print(" done.")
+    except Exception as e:
+        print(f"\n  [warn] Prompt generation failed: {e}")
+        return False
+
+    # Parse output — expect two documents separated by ===PROMPT_SEPARATOR===
+    separator = "===PROMPT_SEPARATOR==="
+    if separator not in content:
+        print("  [warn] LLM output missing separator — falling back to defaults.")
+        return False
+
+    parts = content.split(separator, 1)
+    planner_text = parts[0].strip()
+    executor_text = parts[1].strip()
+
+    if len(planner_text) < 200 or len(executor_text) < 200:
+        print("  [warn] Generated prompts too short — falling back to defaults.")
+        return False
+
+    # Write to user prompts dir
+    out_dir = user_prompts_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    (out_dir / "planner.md").write_text(planner_text)
+    (out_dir / "executor.md").write_text(executor_text)
+
+    print(f"  Wrote custom planner prompt → .tmb/prompts/planner.md")
+    print(f"  Wrote custom executor prompt → .tmb/prompts/executor.md")
+    return True
+
+
 # ── CLI Commands ─────────────────────────────────────────────
 
 
@@ -679,6 +943,51 @@ def setup():
     test_cmd = input("Test command [pytest]: ").strip() or "pytest"
     max_retries = input("Max retries per task [3]: ").strip() or "3"
 
+    # ── LLM Provider (moved before purpose — needed for prompt generation) ──
+    _PROVIDER_MENU = [
+        ("1", "Anthropic (Claude)",  "ANTHROPIC_API_KEY", "anthropic",  None),
+        ("2", "OpenAI (GPT)",        "OPENAI_API_KEY",    "openai",     None),
+        ("3", "Google (Gemini)",     "GOOGLE_API_KEY",    "google",     "tmb[google]"),
+        ("4", "Groq",               "GROQ_API_KEY",      "groq",       "tmb[groq]"),
+        ("5", "Mistral",            "MISTRAL_API_KEY",   "mistral",    "tmb[mistral]"),
+        ("6", "DeepSeek",           "DEEPSEEK_API_KEY",  "deepseek",   "tmb[deepseek]"),
+        ("7", "Ollama (local)",     None,                "ollama",     "tmb[ollama]"),
+        ("s", "Skip",               None,                None,         None),
+    ]
+
+    env_path = project_root / ".env"
+    llm_configured = env_path.exists()
+    if llm_configured:
+        print(f"  .env already exists at {env_path} — skipping LLM config.")
+    else:
+        print()
+        print("Which LLM provider will you use?")
+        for key, label, _, _, _ in _PROVIDER_MENU:
+            print(f"  {key}) {label}")
+        choice = input("Choice [1]: ").strip() or "1"
+
+        selected = next((m for m in _PROVIDER_MENU if m[0] == choice), None)
+        env_lines = []
+        if selected and selected[0] != "s":
+            _, label, env_var, provider_name, extra_pkg = selected
+            if env_var:
+                api_key = input(f"  {env_var}: ").strip()
+                if api_key:
+                    env_lines.append(f"{env_var}={api_key}")
+                    llm_configured = True
+            if extra_pkg:
+                print(f"  Note: install the provider package with:  uv add {extra_pkg}")
+
+        if env_lines:
+            env_path.write_text("\n".join(env_lines) + "\n")
+            print(f"  Wrote {env_path}")
+            # Reload .env so get_llm() can find the key
+            from dotenv import load_dotenv
+            load_dotenv(env_path, override=True)
+        elif choice != "s":
+            print("  No API key entered — set it in .env before running.")
+
+    # ── Role Naming ──
     print()
     print("Role naming — choose a preset or keep defaults:")
     print("  1) Generic  (Project Owner → Planner → Executor)")
@@ -699,6 +1008,14 @@ def setup():
         roles_cfg["planner"] = input("  Planner role name [Planner]: ").strip() or "Planner"
         roles_cfg["executor"] = input("  Executor role name [Executor]: ").strip() or "Executor"
 
+    # ── Project Purpose & Prompt Generation ──
+    print()
+    print("Describe your project's purpose so TMB can tailor its planning style.")
+    print("  Examples: 'A/B test analysis for matchmaking experiments'")
+    print("            'ETL pipeline for cleaning CSV sales data with DuckDB'")
+    print("            'REST API backend in FastAPI with PostgreSQL'")
+    purpose = input("Project purpose (Enter to skip): ").strip()
+
     config = {
         "name": name,
         "test_command": test_cmd,
@@ -706,12 +1023,26 @@ def setup():
     }
     if roles_cfg:
         config["roles"] = roles_cfg
+    if purpose:
+        config["purpose"] = purpose
 
+    # Write config early so _generate_prompts can load it
     config_path = user_cfg_dir() / "project.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(config_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
     print(f"  Wrote {config_path}")
+
+    # Generate tailored prompts if purpose was provided and LLM is available
+    if purpose and llm_configured:
+        print()
+        print("=== Prompt Generation ===")
+        generated = _generate_prompts(purpose)
+        if not generated:
+            print("  Using default prompts. You can regenerate later with: tmb setup")
+    elif purpose:
+        print("  [info] No LLM configured — using default prompts.")
+        print("  After setting up your API key, re-run `tmb setup` to generate custom prompts.")
 
     goals_path = docs_dir() / "GOALS.md"
     if not goals_path.exists():
@@ -722,44 +1053,6 @@ def setup():
             "---\n\n"
         )
         print(f"  Created {goals_path}")
-
-    _PROVIDER_MENU = [
-        ("1", "Anthropic (Claude)",  "ANTHROPIC_API_KEY", "anthropic",  None),
-        ("2", "OpenAI (GPT)",        "OPENAI_API_KEY",    "openai",     None),
-        ("3", "Google (Gemini)",     "GOOGLE_API_KEY",    "google",     "tmb[google]"),
-        ("4", "Groq",               "GROQ_API_KEY",      "groq",       "tmb[groq]"),
-        ("5", "Mistral",            "MISTRAL_API_KEY",   "mistral",    "tmb[mistral]"),
-        ("6", "DeepSeek",           "DEEPSEEK_API_KEY",  "deepseek",   "tmb[deepseek]"),
-        ("7", "Ollama (local)",     None,                "ollama",     "tmb[ollama]"),
-        ("s", "Skip",               None,                None,         None),
-    ]
-
-    env_path = project_root / ".env"
-    if env_path.exists():
-        print(f"  .env already exists at {env_path} — skipping.")
-    else:
-        print()
-        print("Which LLM provider will you use?")
-        for key, label, _, _, _ in _PROVIDER_MENU:
-            print(f"  {key}) {label}")
-        choice = input("Choice [1]: ").strip() or "1"
-
-        selected = next((m for m in _PROVIDER_MENU if m[0] == choice), None)
-        env_lines = []
-        if selected and selected[0] != "s":
-            _, label, env_var, provider_name, extra_pkg = selected
-            if env_var:
-                api_key = input(f"  {env_var}: ").strip()
-                if api_key:
-                    env_lines.append(f"{env_var}={api_key}")
-            if extra_pkg:
-                print(f"  Note: install the provider package with:  uv add {extra_pkg}")
-
-        if env_lines:
-            env_path.write_text("\n".join(env_lines) + "\n")
-            print(f"  Wrote {env_path}")
-        elif choice != "s":
-            print("  No API key entered — set it in .env before running.")
 
     # ── Web Search ────────────────────────────────────────────
     print()

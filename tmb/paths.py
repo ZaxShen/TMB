@@ -64,7 +64,12 @@ def user_skills_dir() -> Path:
     return runtime_dir() / "skills"
 
 
+def user_prompts_dir() -> Path:
+    """Auto-generated prompts tailored to the project's purpose."""
+    return runtime_dir() / "prompts"
+
+
 def ensure_dirs():
     """Create project-level directories on first run."""
-    for d in [docs_dir(), runtime_dir(), user_cfg_dir(), user_skills_dir()]:
+    for d in [docs_dir(), runtime_dir(), user_cfg_dir(), user_skills_dir(), user_prompts_dir()]:
         d.mkdir(parents=True, exist_ok=True)

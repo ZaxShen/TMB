@@ -75,8 +75,9 @@ def load_prompt(name: str) -> str:
     """Load a prompt file with preset and template variable support.
 
     Resolution order:
-      1. prompts/samples/<preset>/<name>.md  (if roles.preset is set)
-      2. prompts/<name>.md  (default)
+      1. <project>/.tmb/prompts/<name>.md  (auto-generated during setup)
+      2. prompts/samples/<preset>/<name>.md  (if roles.preset is set)
+      3. prompts/<name>.md  (generic default)
 
     Template variables like ``{role_planner}`` are replaced with display names
     from project.yaml → roles.
@@ -86,11 +87,19 @@ def load_prompt(name: str) -> str:
     preset = roles.get("preset")
 
     path = None
-    if preset:
+
+    # Priority 1: auto-generated prompts from setup
+    user_path = _detect_project_root() / ".tmb" / "prompts" / f"{name}.md"
+    if user_path.exists():
+        path = user_path
+
+    # Priority 2: static preset samples
+    if path is None and preset:
         preset_path = PROMPTS_DIR / "samples" / preset / f"{name}.md"
         if preset_path.exists():
             path = preset_path
 
+    # Priority 3: generic default
     if path is None:
         path = PROMPTS_DIR / f"{name}.md"
 

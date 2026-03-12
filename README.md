@@ -17,7 +17,8 @@ TMB doesn't ask you to hope. It earns trust through structure:
   Answer clarifying questions   →   Planner challenges your assumptions
   Review the blueprint          →   You approve before anything executes
   Walk away                     →   Executor builds, Planner validates each step
-                                    Failed? Auto-retry with new solutions from multi-agent collaboration (up to x times)                         Still failed? Escalate back to you
+                                    Failed? Auto-retry with new solutions from multi-agent collaboration
+                                    Still failed? Escalate back to you
 ```
 
 The key insight: **you stay at the system-design level**. You never argue about the minior issues. You define the *what* and the *why*. The agents handle the *how* — and they check each other's work.

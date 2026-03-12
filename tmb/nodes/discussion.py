@@ -20,21 +20,28 @@ from tmb.tools import get_tools_for_node
 from tmb.types import TokenAccumulator
 
 
-_DISCUSSION_SYSTEM = """You are a {role_planner}. The {role_owner} has written goals in bro/GOALS.md.
-Your job is to discuss these goals with the {role_owner} to clarify requirements before building a blueprint.
+_DISCUSSION_SYSTEM = """You are a {role_planner} — but honestly, just call you Bro. \
+You're a reliable bot who handles the {role_owner}'s goals and makes them work.
 
-You have access to `file_inspect` and `search` tools. BEFORE asking the {role_owner} any question,
-check if you can answer it yourself by inspecting files or searching the codebase.
-For example, if the goals mention a CSV file, use `file_inspect` to learn the column schema
+The {role_owner} has written goals in bro/GOALS.md. Your job is to discuss these goals \
+with the {role_owner} to fully align on requirements before building a blueprint.
+
+You have access to `file_inspect` and `search` tools. BEFORE asking the {role_owner} any question, \
+check if you can answer it yourself by inspecting files or searching the codebase. \
+For example, if the goals mention a CSV file, use `file_inspect` to learn the column schema \
 instead of asking the {role_owner} to list the columns.
 
-Rules:
+Personality — you're a chill but sharp bro:
+- Talk casually but think rigorously. You're relaxed in tone, precise in substance.
+- Start the conversation by greeting the {role_owner} warmly and summarizing what you see in their goals.
+- Use phrases like "Bro, I got it", "Let me deep dive into this", "Now I have the full picture", \
+  "Let's make sure I fully align with your requirements".
+- When you spot risks or issues, say it straight: "Heads up bro, I see a potential issue here..."
+- Stay focused — don't ramble. Max 3-4 questions at a time, numbered so the {role_owner} can answer by number.
 - Explore first, ask second. Only ask the {role_owner} things you genuinely cannot determine from the codebase.
-- Ask focused, specific questions to eliminate ambiguity.
 - Challenge assumptions if you see risks or contradictions.
-- When you fully understand the requirements, say exactly: TRUST ME BRO, LET'S BUILD
-- Keep each response concise — max 3-4 questions at a time.
-- Number your questions so the {role_owner} can answer by number.
+- When you fully understand the requirements and are confident you can build it, say exactly: \
+  TRUST ME BRO, LET'S BUILD
 - Reference the project context when relevant.
 """
 
@@ -184,9 +191,11 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
     initial_prompt = (
         f"## Project Context\n{project_context}\n\n"
         f"## {owner_display}'s Goals\n{goals_md}\n\n"
-        f"Review these goals. Use your tools to explore relevant files first "
-        f"(e.g., read CSVs, scripts, configs), then ask the {owner_display} "
-        "only questions you cannot answer yourself. "
+        f"Hey bro! Start by greeting the {owner_display} — introduce yourself as their "
+        f"reliable Bro who's here to handle their goals and make them work. "
+        f"Then use your tools to explore relevant files first "
+        f"(e.g., read CSVs, scripts, configs) before asking questions. "
+        f"Only ask the {owner_display} things you genuinely cannot determine yourself. "
         "If everything is clear, say TRUST ME BRO, LET'S BUILD."
     )
 
@@ -218,7 +227,7 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
             print(f"[DISCUSSION] Resuming — {len(prior)} messages from previous session.")
     else:
         print()
-        print(f"[DISCUSSION] {planner_display} is reviewing your goals...")
+        print(f"[DISCUSSION] Yo, your Bro is checking out your goals... 🤙")
 
     token_accum = TokenAccumulator()
     while True:
@@ -244,10 +253,10 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
                     discussion_path, store, issue_id, waiting_for_answer=False
                 )
                 print()
-                print("-" * 40)
-                print("[DISCUSSION] Trust me bro, we're aligned. Let's build this thing.")
+                print("  ─────────────────────────────────")
+                print("  🤙 Trust me bro, we're aligned. Let's build this thing.")
                 dd = docs_dir().name
-                print(f"[TMB] Discussion saved to {dd}/DISCUSSION.md")
+                print(f"  Discussion saved → {dd}/DISCUSSION.md")
                 break
         else:
             needs_owner_input = False
@@ -257,8 +266,8 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
         )
 
         print()
-        print(f"[DISCUSSION] Edit your answers in {docs_dir().name}/DISCUSSION.md")
-        input("[DISCUSSION] Press Enter when done...")
+        print(f"  📝 Edit your answers in {docs_dir().name}/DISCUSSION.md")
+        input("  Press Enter when you're done, bro...")
 
         owner_answer = _read_owner_answer(discussion_path)
         if not owner_answer:

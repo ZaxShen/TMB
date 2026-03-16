@@ -9,7 +9,11 @@ Graph nodes:
 from __future__ import annotations
 
 import json
+import logging
 import re
+import xml.etree.ElementTree as ET
+
+logger = logging.getLogger("tmb.planner")
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
@@ -59,7 +63,9 @@ def _estimate_context_chars(messages: list) -> int:
 
 def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = "",
                    token_accum: "TokenAccumulator | None" = None,
-                   max_context_chars: int = _PLANNER_CONTEXT_BUDGET_CHARS):
+                   max_context_chars: int = _PLANNER_CONTEXT_BUDGET_CHARS,
+                   audit_store=None, audit_issue_id=None, audit_branch_id=None,
+                   audit_from_node: str = "planner"):
     """Run a multi-turn tool loop, returning the final response.
 
     Shows live progress on a single line, overwritten after each tool call.
@@ -120,6 +126,14 @@ def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = 
                 except Exception as e:
                     result = f"[error] {e}"
                 result_str = str(result)
+                # Audit logging (when store is provided)
+                if audit_store is not None and audit_issue_id is not None:
+                    is_truncated = len(result_str) > 8000
+                    audit_store.log_audit(
+                        audit_issue_id, audit_branch_id, rnd, tc["name"],
+                        tc.get("args", {}), result_str, is_truncated=is_truncated,
+                        from_node=audit_from_node,
+                    )
                 if len(result_str) > 8000:
                     result_str = result_str[:8000] + "\n... (truncated)"
                 counts[tc["name"]] = counts.get(tc["name"], 0) + 1
@@ -135,23 +149,89 @@ def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = 
     return response, messages
 
 
-def _extract_json_array(raw: str) -> list:
-    """Extract a JSON array from LLM output that may contain preamble text."""
+def _parse_task_element(task_elem) -> dict:
+    """Parse a single <task> XML element into a dict."""
+    def _get_text(tag: str) -> str:
+        el = task_elem.find(tag)
+        return (el.text or "").strip() if el is not None else ""
+
+    def _get_list(tag: str) -> list:
+        raw_val = _get_text(tag)
+        return [item.strip() for item in raw_val.split(",") if item.strip()] if raw_val else []
+
+    return {
+        "branch_id": _get_text("branch_id"),
+        "description": _get_text("description"),
+        "tools_required": _get_list("tools_required"),
+        "skills_required": _get_list("skills_required"),
+        "success_criteria": _get_text("success_criteria"),
+    }
+
+
+def _extract_blueprint_xml(raw: str) -> list[dict]:
+    """Extract blueprint tasks from XML output.
+
+    Handles code fences, prose preamble, unescaped ampersands, and truncated output.
+    Raises ValueError with diagnostics on any parse failure.
+    """
     text = raw.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1].rsplit("```", 1)[0]
-        return json.loads(text)
-    if "```json" in text:
-        text = text.split("```json", 1)[1].rsplit("```", 1)[0]
-        return json.loads(text)
-    if "```" in text:
-        text = text.split("```", 1)[1].rsplit("```", 1)[0]
-        return json.loads(text)
-    first_bracket = text.find("[")
-    last_bracket = text.rfind("]")
-    if first_bracket != -1 and last_bracket > first_bracket:
-        return json.loads(text[first_bracket:last_bracket + 1])
-    return json.loads(text)
+
+    # Extract XML content from fences or find blueprint tags
+    xml_str = None
+    _used_fallback_wrap = False
+    fence_match = re.search(r"```(?:xml)?\n([\s\S]*?)\n```", text)
+    if fence_match:
+        xml_str = fence_match.group(1).strip()
+    else:
+        bp_match = re.search(r"<blueprint>[\s\S]*?</blueprint>", text)
+        if bp_match:
+            xml_str = bp_match.group(0)
+        else:
+            xml_str = "<blueprint>" + text + "</blueprint>"
+            _used_fallback_wrap = True
+
+    # Fix unescaped ampersands
+    xml_str = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;)', '&amp;', xml_str)
+
+    try:
+        root = ET.fromstring(xml_str)
+    except (ET.ParseError, ValueError) as exc:
+        original_error = str(exc)
+        logger.warning(
+            "Blueprint XML parse failed: %s | raw length: %d | first 500 chars: %s",
+            original_error, len(raw), raw[:500]
+        )
+        # Truncation recovery: extract complete <task>...</task> elements
+        task_matches = re.findall(r'<task>.*?</task>', xml_str, re.DOTALL)
+        if task_matches:
+            recovered_xml = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;)', '&amp;',
+                                   '<blueprint>' + ''.join(task_matches) + '</blueprint>')
+            try:
+                recovered_root = ET.fromstring(recovered_xml)
+                tasks = [_parse_task_element(t) for t in recovered_root.findall("task")]
+                logger.warning(
+                    "Recovered %d complete task(s) from truncated output (original parse failed: %s)",
+                    len(tasks), original_error
+                )
+                return tasks
+            except ET.ParseError:
+                pass  # Recovery also failed, fall through to raise
+        raise ValueError(
+            f"Blueprint XML parse failed: {exc} | raw length: {len(raw)} | first 500 chars: {raw[:500]}"
+        ) from exc
+
+    tasks = [_parse_task_element(task_elem) for task_elem in root.findall("task")]
+
+    if not tasks and _used_fallback_wrap:
+        logger.warning(
+            "Blueprint XML parse failed: no <task> elements found in fallback-wrapped input | raw length: %d | first 500 chars: %s",
+            len(raw), raw[:500]
+        )
+        raise ValueError(
+            f"Blueprint XML parse failed: no <task> elements found in fallback-wrapped input | "
+            f"raw length: {len(raw)} | first 500 chars: {raw[:500]}"
+        )
+    return tasks
 
 
 EXPLORE_INSTRUCTION = (
@@ -208,9 +288,13 @@ SKILL_PROVISION_INSTRUCTION = (
 
 BLUEPRINT_INSTRUCTION = (
     "Based on the goals, discussion, codebase exploration, and any feedback, "
-    "produce a Blueprint as a JSON array.\n\n"
-    "Each element must have: branch_id (str), description (str), tools_required (list[str]), "
-    "skills_required (list[str]), success_criteria (str).\n\n"
+    "produce a Blueprint in XML format.\n\n"
+    "Wrap all tasks in a `<blueprint>` root element. Each task is a `<task>` element with these children:\n"
+    "- `<branch_id>` (str)\n"
+    "- `<description>` (str)\n"
+    "- `<tools_required>` (comma-separated: shell,file_write,file_read,file_inspect,search)\n"
+    "- `<skills_required>` (comma-separated skill names, or empty)\n"
+    "- `<success_criteria>` (str)\n\n"
     "## CRITICAL: Keep Tasks Focused on Core Logic\n"
     "Each task must capture a meaningful **unit of logic or decision** — NOT mechanical steps.\n"
     "- WRONG: \"Load CSV\", \"Write output file\", \"Install dependencies\" — these are obvious boilerplate.\n"
@@ -218,19 +302,21 @@ BLUEPRINT_INSTRUCTION = (
     "Think of tasks like drawing a flowchart: you wouldn't draw a box for 'open the file'. "
     "Focus on the filters, algorithms, decision points, and validations that define the system.\n\n"
     "## Branch ID Convention\n"
-    "Branch IDs are **hierarchical strings** that encode semantic relationships:\n"
+    "Branch IDs are **hierarchical strings** scoped per-issue:\n"
     "- Root branches: \"1\", \"2\", \"3\"\n"
     "- Sub-branches: \"1.1\", \"1.2\" (children of branch 1)\n"
     "- Deeper: \"1.1.1\" (child of branch 1.1)\n\n"
+    "**IMPORTANT:** Branch IDs are unique within each issue. Different issues can reuse the same IDs.\n"
+    "When you see the EXISTING TASK TREE, note the [Issue #N] prefix — only avoid collisions within the CURRENT issue.\n\n"
     "If an EXISTING TASK TREE is provided below, assign IDs that reflect relationships:\n"
-    "- New work extending existing branch \"2\" → use \"2.1\", \"2.2\"\n"
-    "- Completely new, unrelated work → use the next unused root ID\n\n"
-    "If NO existing tasks exist, start from \"1\".\n\n"
+    "- New work extending existing branch \"2\" on the current issue → use \"2.1\", \"2.2\"\n"
+    "- Completely new, unrelated work → use the next unused root ID for this issue\n\n"
+    "If NO existing tasks exist for the current issue, start from \"1\".\n\n"
     "## Skills\n"
     "If AVAILABLE SKILLS are listed below, assign relevant skill names to each task's "
-    "`skills_required` array. Only assign skills genuinely useful for the task. "
-    "If no skill fits, leave the array empty.\n\n"
-    "Return ONLY the JSON array, no other text."
+    "`skills_required` element. Only assign skills genuinely useful for the task. "
+    "If no skill fits, leave the element empty.\n\n"
+    "Return ONLY the XML blueprint, no other text."
 )
 
 FLOWCHART_INSTRUCTION = (
@@ -489,7 +575,11 @@ def planner_plan(state: AgentState) -> dict:
         ]
 
         print(f"[{planner_display}] 🧠 Provisioning skills for downstream agents...")
-        _run_tool_loop(llm_with_tools, provision_messages, tool_map, _MAX_EXPLORE_ROUNDS, label="skills", token_accum=token_accum)
+        _run_tool_loop(
+            llm_with_tools, provision_messages, tool_map, _MAX_EXPLORE_ROUNDS, label="skill-provisioning",
+            token_accum=token_accum,
+            audit_store=store, audit_issue_id=issue_id,
+        )
 
         new_skills = store.get_all_skills()
         created_count = len(new_skills) - len(available_skills)
@@ -611,9 +701,11 @@ def planner_plan(state: AgentState) -> dict:
     if exploration_summary:
         parts.append(f"## Codebase Exploration\n{exploration_summary}")
     if existing_tree:
-        tree_lines = [f"- **{t['branch_id']}**: {t['title']} [{t['status']}] (issue #{t['issue_id']}: {truncate(t['objective'], 60)})"
-                      for t in existing_tree]
-        parts.append(f"## Existing Task Tree\n" + "\n".join(tree_lines))
+        tree_lines = [
+            f"- **[Issue #{t['issue_id']}] {t['branch_id']}**: {t['title']} [{t['status']}]"
+            for t in existing_tree
+        ]
+        parts.append("## Existing Task Tree\n" + "\n".join(tree_lines))
     if available_skills:
         skill_lines = []
         for s in available_skills:
@@ -641,31 +733,43 @@ def planner_plan(state: AgentState) -> dict:
     ]
 
     print(f"[{planner_display}] 📋 Generating blueprint...")
-    response, messages = _run_tool_loop(llm_with_tools, messages, tool_map, 5, label="blueprint", token_accum=token_accum)
+    response, messages = _run_tool_loop(
+        llm_with_tools, messages, tool_map, 5, label="blueprint",
+        token_accum=token_accum,
+        audit_store=store, audit_issue_id=issue_id,
+    )
     raw = _normalize_content(response.content)
 
     blueprint = []
     try:
-        blueprint = _extract_json_array(raw)
-    except (json.JSONDecodeError, IndexError, ValueError):
-        pass
+        blueprint = _extract_blueprint_xml(raw)
+    except ValueError as exc:
+        logger.warning("First blueprint parse attempt failed: %s", exc)
 
     if not blueprint:
         messages.append(HumanMessage(content=(
             "You have finished exploring. Now output the blueprint.\n\n"
-            "Return ONLY a JSON array — no prose, no markdown fences, no explanation.\n"
-            "Each element: {\"branch_id\": str, \"description\": str, "
-            "\"tools_required\": [str], \"skills_required\": [str], \"success_criteria\": str}\n\n"
-            "Start with [ and end with ]."
+            "Return ONLY XML — no prose, no markdown fences, no explanation.\n"
+            "Use this format:\n"
+            "<blueprint>\n"
+            "  <task>\n"
+            "    <branch_id>1</branch_id>\n"
+            "    <description>...</description>\n"
+            "    <tools_required>shell,file_write</tools_required>\n"
+            "    <skills_required></skills_required>\n"
+            "    <success_criteria>...</success_criteria>\n"
+            "  </task>\n"
+            "</blueprint>"
         )))
         retry_resp = llm.invoke(messages)
         usage = extract_token_usage(retry_resp)
         token_accum.add(usage)
         raw = _normalize_content(retry_resp.content)
         try:
-            blueprint = _extract_json_array(raw)
-        except (json.JSONDecodeError, IndexError, ValueError):
-            print(f"[{planner_display}] ⚠️ Failed to parse blueprint JSON. Raw response ({len(raw)} chars):")
+            blueprint = _extract_blueprint_xml(raw)
+        except ValueError as exc:
+            logger.warning("Blueprint retry parse also failed: %s", exc)
+            print(f"[{planner_display}] ⚠️ Failed to parse blueprint XML. Raw response ({len(raw)} chars):")
             print(raw[:300])
             blueprint = []
 
@@ -991,6 +1095,7 @@ def planner_execution_plan(state: AgentState) -> dict:
         response, messages = _run_tool_loop(
             llm_with_tools, messages, tool_map, 5, label=f"task-{branch_id}",
             token_accum=token_accum,
+            audit_store=store, audit_issue_id=issue_id, audit_branch_id=branch_id,
         )
         plan_md = _normalize_content(response.content)
         last_response = response
@@ -1019,49 +1124,50 @@ def planner_execution_plan(state: AgentState) -> dict:
 # ── Validation helpers ────────────────────────────────────────
 
 
-def _extract_verdict(text: str) -> bool:
-    """Determine PASS/FAIL from validation output.
+def _extract_verdict_xml(text: str) -> bool:
+    """Determine PASS/FAIL from validation output using XML tags.
 
     Strategy (in priority order):
-      1. Parse JSON block and read the "verdict" field
-      2. Regex for "verdict": "PASS" / "FAIL" pattern
-      3. Word-boundary keyword match (avoids "password", "passthrough", etc.)
-      4. Default: FAIL (fail-closed)
+      1. XML <verdict> tag
+      2. Keyword fallback — last keyword wins
+      3. Fail-closed default: False
     """
-    # Tier 1: JSON code block
-    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if json_match:
-        try:
-            obj = json.loads(json_match.group(1))
-            v = str(obj.get("verdict", "")).upper()
-            if v in ("PASS", "FAIL"):
-                return v == "PASS"
-        except (json.JSONDecodeError, AttributeError):
-            pass
+    # Tier 1: XML <verdict> tag
+    xml_match = re.search(r"<verdict>\s*(PASS|FAIL)\s*</verdict>", text, re.IGNORECASE)
+    if xml_match:
+        return xml_match.group(1).upper() == "PASS"
 
-    # Tier 2: "verdict": "PASS" / "FAIL" field pattern
-    field_match = re.search(r'"verdict"\s*:\s*"(PASS|FAIL)"', text, re.IGNORECASE)
-    if field_match:
-        return field_match.group(1).upper() == "PASS"
-
-    # Tier 3: word-boundary keyword match (prevents "password" / "passthrough" / "bypass" false positives)
-    import logging
-    logger = logging.getLogger("tmb.planner")
-
+    # Tier 2: keyword fallback — last occurrence wins
     pass_match = re.search(r"\bPASS\b", text, re.IGNORECASE)
     fail_match = re.search(r"\bFAIL\b", text, re.IGNORECASE)
     if pass_match and not fail_match:
-        logger.warning("Verdict fell back to keyword match (PASS) — consider structured output")
-        return True
+        result = True
+        logger.warning(
+            "Verdict fell back to keyword match (%s) — no <verdict> tag found | first 200 chars: %s",
+            "PASS" if result else "FAIL", text[:200]
+        )
+        return result
     if fail_match and not pass_match:
-        logger.warning("Verdict fell back to keyword match (FAIL) — consider structured output")
-        return False
+        result = False
+        logger.warning(
+            "Verdict fell back to keyword match (%s) — no <verdict> tag found | first 200 chars: %s",
+            "PASS" if result else "FAIL", text[:200]
+        )
+        return result
     if pass_match and fail_match:
-        logger.warning("Verdict fell back to keyword match (both found) — consider structured output")
-        return pass_match.start() < fail_match.start()
+        # Last one wins
+        result = pass_match.start() > fail_match.start()
+        logger.warning(
+            "Verdict fell back to keyword match (%s) — no <verdict> tag found | first 200 chars: %s",
+            "PASS" if result else "FAIL", text[:200]
+        )
+        return result
 
-    # Tier 4: fail-closed default
-    logger.warning("No verdict could be extracted — defaulting to FAIL (fail-closed)")
+    # Tier 3: fail-closed default
+    logger.warning(
+        "No verdict extracted — defaulting to FAIL (fail-closed) | text length: %d | first 200 chars: %s",
+        len(text), text[:200]
+    )
     return False
 
 
@@ -1153,15 +1259,32 @@ def planner_validate(state: AgentState) -> dict:
     verify_prompt += (
         f"## Executor's Log\n{execution_log}\n\n"
         "## Instructions\n"
-        "1. Use `shell` to run any verification commands (tests, scripts, checks).\n"
-        "2. Use `file_inspect` or `search` to examine outputs if needed.\n"
-        "3. Compare actual results against the success criteria.\n"
-        "4. Render your verdict:\n\n"
-        "```json\n"
-        '{"verdict": "PASS" or "FAIL", "evidence": "...", "failure_details": "..."}\n'
-        "```\n\n"
-        "If FAIL: be specific about what went wrong so the Executor can fix it.\n"
-        "If PASS: briefly confirm what you verified."
+        "### Step 1: Scan the Executor's Log\n"
+        "Read the ENTIRE executor log above carefully. Look for:\n"
+        "- **Errors**: exceptions, tracebacks, non-zero exit codes, failed commands\n"
+        "- **Warnings**: deprecation notices, resource warnings, missing optional dependencies\n"
+        "- **Repeated failures**: the same error appearing multiple times (loop pattern)\n\n"
+        "If the executor's log contains unaddressed errors or warnings, FAIL the task — even if "
+        "the final output looks correct. The executor must handle warnings, not ignore them.\n\n"
+        "### Step 2: Discover and Run Tests\n"
+        "Detect the project's test framework by checking for these files:\n"
+        "- `pyproject.toml` or `setup.py` → try `python -m pytest` or `uv run pytest`\n"
+        "- `package.json` → try `npm test`\n"
+        "- `Cargo.toml` → try `cargo test`\n"
+        "- `go.mod` → try `go test ./...`\n"
+        "- `Makefile` with test target → try `make test`\n"
+        "- `build.gradle` or `pom.xml` → try `./gradlew test` or `mvn test`\n\n"
+        "Use `shell` to check which build files exist, then run the appropriate test command. "
+        "If no test framework is detected, skip this step.\n\n"
+        "### Step 3: Verify Success Criteria\n"
+        "Use `shell`, `file_inspect`, or `search` to verify each success criterion.\n\n"
+        "### Step 4: Render Verdict\n"
+        "Use XML tags:\n\n"
+        "<verdict>PASS</verdict> or <verdict>FAIL</verdict>\n"
+        "<evidence>what you verified, test results, and any warnings found</evidence>\n"
+        "<failure_details>specific actionable feedback if FAIL</failure_details>\n\n"
+        "FAIL if: errors in log, tests fail, unaddressed warnings, or success criteria not met.\n"
+        "PASS only if: log is clean, tests pass (if applicable), and all criteria met."
     )
 
     messages = [
@@ -1173,11 +1296,12 @@ def planner_validate(state: AgentState) -> dict:
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, 10, label=f"validate-{branch_id}",
         token_accum=token_accum,
+        audit_store=store, audit_issue_id=issue_id, audit_branch_id=branch_id,
     )
     store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
 
     verdict_text = _normalize_content(response.content)
-    is_pass = _extract_verdict(verdict_text)
+    is_pass = _extract_verdict_xml(verdict_text)
 
     _record_skill_outcomes(store, skill_names, is_pass)
 

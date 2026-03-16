@@ -388,16 +388,49 @@ def _print_token_summary(store: Store, issue_id: int):
     print(f"  {'total':20s}  {t['in']:>9,} in / {t['out']:>9,} out")
 
 
+def _cleanup_completed_issue(store: Store, issue_id: int, tasks: list[dict]):
+    """Reset GOALS.md and DISCUSSION.md after successful issue completion."""
+    dd = docs_dir()
+    dd.mkdir(parents=True, exist_ok=True)
+
+    # Print completion summary with verification hints
+    criteria = [t["success_criteria"] for t in tasks if t.get("success_criteria")]
+    print()
+    print(f"[TMB] Issue #{issue_id} completed — all {len(tasks)} task(s) passed.")
+    if criteria:
+        print("[TMB] Verify your results:")
+        for i, c in enumerate(criteria, 1):
+            print(f"  [{i}] {c}")
+
+    # Reset GOALS.md to clean template
+    goals_path = dd / "GOALS.md"
+    goals_path.write_text(
+        "# Goals\n\n"
+        f"<!-- Issue #{issue_id} completed successfully. -->\n\n"
+        "Write your goals below. The Planner will read this file and discuss with you.\n\n"
+        "---\n\n"
+    )
+
+    # Reset DISCUSSION.md
+    disc_path = dd / "DISCUSSION.md"
+    disc_path.write_text(
+        "# Discussion\n\n"
+        "(New discussion will appear here when you run tmb with new goals.)\n"
+    )
+
+
 def _finalize_issue(store: Store, issue_id: int):
     """Check task statuses and close the issue appropriately."""
     tasks = store.get_tasks(issue_id)
     if not tasks:
         store.close_issue(issue_id, "completed")
+        _cleanup_completed_issue(store, issue_id, [])
         return
 
     all_done = all(t["status"] == "completed" for t in tasks)
     if all_done:
         store.close_issue(issue_id, "completed")
+        _cleanup_completed_issue(store, issue_id, tasks)
     else:
         stuck = [t for t in tasks if t["status"] in ("failed", "escalated")]
         pending = [t for t in tasks if t["status"] in ("pending", "in_progress")]
@@ -484,28 +517,27 @@ def _run_execution(
 # ── Fresh Start ──────────────────────────────────────────────
 
 
-def _maybe_suggest_scan(store: Store, project_root):
-    """Hint user to run 'tmb scan' if the project has source files but no scan data."""
-    if store.file_registry_count() > 0:
+def _auto_sync_registry(store: Store, project_root):
+    """Fast file-registry sync — keeps bro aware of the latest project structure."""
+    from tmb.scanner import sync_file_registry
+
+    count = sync_file_registry(Path(project_root), store)
+    if count == 0:
         return
-    root = Path(project_root)
-    # Look for real source files — not TMB-scaffolded config at the root
-    _tmb_scaffolded = {"pyproject.toml", "uv.lock", ".python-version"}
-    _skip_dirs = {".git", ".venv", "venv", "node_modules", "__pycache__", ".tmb", "bro", "TMB"}
-    has_source = False
-    for child in root.iterdir():
-        if child.name.startswith(".") or child.name in _skip_dirs:
-            continue
-        if child.is_file() and child.name not in _tmb_scaffolded:
-            has_source = True
-            break
-        if child.is_dir():
-            # Check for any source files one level down
-            if any(f.is_file() for f in child.iterdir() if not f.name.startswith(".")):
-                has_source = True
-                break
-    if has_source:
-        print("[TMB] 💡 Existing project detected. Run 'uv run tmb scan' for better planning context.\n")
+
+    changed = store.get_changed_files()
+    if changed:
+        added = sum(1 for f in changed if f["change_type"] == "added")
+        modified = sum(1 for f in changed if f["change_type"] == "modified")
+        parts = []
+        if added:
+            parts.append(f"+{added}")
+        if modified:
+            parts.append(f"~{modified}")
+        delta = ", ".join(parts) if parts else "no changes"
+        print(f"[TMB] 📂 File registry synced ({count} files, {delta})")
+    else:
+        print(f"[TMB] 📂 File registry synced ({count} files)")
 
 
 def _fresh_start(store: Store):
@@ -513,7 +545,7 @@ def _fresh_start(store: Store):
     project_cfg = load_project_config()
     project_root = get_project_root()
 
-    _maybe_suggest_scan(store, project_root)
+    _auto_sync_registry(store, project_root)
 
     goals_md = _read_goals_md()
     objective = _derive_objective(goals_md)
@@ -581,6 +613,8 @@ def _resume(store: Store, issue: dict):
     goals_md = issue["goals_md"]
     project_cfg = load_project_config()
     project_root = get_project_root()
+
+    _auto_sync_registry(store, project_root)
 
     print(f"[TMB] ⏩ Resuming issue #{issue_id}: {issue['objective']}")
     print(f"[TMB] Project: {project_cfg['name']}  |  Root: {project_root}")

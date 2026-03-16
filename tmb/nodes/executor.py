@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import re
+
+logger = logging.getLogger("tmb.executor")
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
@@ -74,21 +78,36 @@ def _load_skills(store: Store, skill_names: list[str]) -> str:
 
 
 def _detect_escalation(content) -> bool:
-    """Detect escalation signal from the LLM's final response only (not tool output).
+    """Detect escalation signal using XML tags, with keyword fallback.
 
-    Checks in priority order:
-      1. JSON block with "status": "escalate"
-      2. Word-boundary regex \\bescalate\\b (avoids matching inside quoted tool output)
+    Priority order:
+      1. <status>escalate</status> XML tag
+      2. Word-boundary keyword \\bescalate\\b
+      3. Default: False
     """
     text = _normalize_content(content)
-    # Tier 1: structured JSON signal
-    json_match = re.search(r"\{[^}]*\"status\"\s*:\s*\"escalate\"[^}]*\}", text, re.IGNORECASE)
-    if json_match:
+    # Tier 1: XML <status> tag
+    if re.search(r"<status>\s*escalate\s*</status>", text, re.IGNORECASE):
         return True
-    # Tier 2: word-boundary keyword in LLM prose
+    # Tier 2: word-boundary keyword
     if re.search(r"\bescalate\b", text, re.IGNORECASE):
+        logger.info(
+            "Escalation detected via keyword fallback (no <status> tag) | first 200 chars: %s",
+            text[:200]
+        )
         return True
     return False
+
+
+def _output_hash(output: str) -> str:
+    """Compute a normalized hash of tool output for repeat detection.
+
+    Strips whitespace and common timestamp patterns to catch semantically
+    identical errors that differ only in timing.
+    """
+    normalized = re.sub(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}', '<TS>', output.strip())
+    normalized = re.sub(r'\s+', ' ', normalized)
+    return hashlib.md5(normalized.encode()).hexdigest()[:12]
 
 
 def executor(state: AgentState) -> dict:
@@ -187,6 +206,13 @@ def executor(state: AgentState) -> dict:
     token_accum = TokenAccumulator()
     budget_exceeded = False
 
+    # Repeated output detection
+    _output_hashes: dict[str, dict[str, int]] = {}  # tool_name -> {hash -> count}
+    _total_repeats = 0
+    _MAX_REPEATS_PER_TOOL = 3
+    _MAX_TOTAL_REPEATS = 5
+    _repeat_forced_stop = False
+
     for _round in range(_MAX_TOOL_ROUNDS):
         ctx_chars = _estimate_context_chars(messages)
         if ctx_chars > _CONTEXT_BUDGET_CHARS:
@@ -221,10 +247,23 @@ def executor(state: AgentState) -> dict:
                     result = f"[error] {e}"
                 result_str = str(result)
 
+                # Repeated output detection
+                out_hash = _output_hash(result_str)
+                tool_hashes = _output_hashes.setdefault(tc["name"], {})
+                tool_hashes[out_hash] = tool_hashes.get(out_hash, 0) + 1
+
+                if tool_hashes[out_hash] >= _MAX_REPEATS_PER_TOOL:
+                    _total_repeats += 1
+                    logger.warning(
+                        "Repeated output for %s (hash=%s, count=%d, total_repeats=%d)",
+                        tc["name"], out_hash, tool_hashes[out_hash], _total_repeats
+                    )
+
                 is_truncated = len(result_str) > _MAX_TOOL_OUTPUT_CHARS
-                store.log_tool_call(
+                store.log_audit(
                     issue_id, branch_id, _round, tc["name"],
                     tc.get("args", {}), result_str, is_truncated=is_truncated,
+                    from_node="executor",
                 )
 
                 if is_truncated:
@@ -245,6 +284,31 @@ def executor(state: AgentState) -> dict:
                     tool_call_id=tc["id"],
                 ))
 
+        # Force-stop on excessive repeated outputs
+        if _total_repeats >= _MAX_TOTAL_REPEATS:
+            _repeat_forced_stop = True
+            messages.append(HumanMessage(
+                content=(
+                    f"[system] Detected {_total_repeats} repeated identical outputs across tools. "
+                    "You appear to be stuck in a loop. Stop using tools and return your structured log now. "
+                    "Report what you attempted and why it's failing."
+                )
+            ))
+            response = llm_with_tools.invoke(messages)
+            messages.append(response)
+            usage = extract_token_usage(response)
+            token_accum.add(usage)
+            logger.warning("Forced stop: %d total repeated outputs", _total_repeats)
+            break
+        elif _total_repeats > 0:
+            # Inject a nudge to change approach
+            messages.append(HumanMessage(
+                content=(
+                    f"[system] Warning: {_total_repeats} tool call(s) returned identical output to previous calls. "
+                    "Try a different approach rather than repeating the same command."
+                )
+            ))
+
     store.log_tokens(issue_id, "executor", token_accum.input_tokens, token_accum.output_tokens)
 
     if budget_exceeded:
@@ -252,6 +316,12 @@ def executor(state: AgentState) -> dict:
             "chars": _estimate_context_chars(messages),
             "rounds_used": _round + 1,
         }, summary=f"Context budget hit after {_round + 1} rounds")
+
+    if _repeat_forced_stop:
+        store.log(issue_id, branch_id, "executor", "repeated_output_forced_stop", {
+            "total_repeats": _total_repeats,
+            "rounds_used": _round + 1,
+        }, summary=f"Forced stop: {_total_repeats} repeated outputs after {_round + 1} rounds")
 
     execution_log = _normalize_content(response.content)
     if tool_outputs:

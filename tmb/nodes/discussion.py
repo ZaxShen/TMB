@@ -11,6 +11,8 @@ The discussion is stored in SQLite (permanent) and bro/DISCUSSION.md (current).
 
 from __future__ import annotations
 
+import re
+
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
 from tmb.config import get_llm, get_role_name, get_project_root, load_nodes_config, extract_token_usage
@@ -108,10 +110,24 @@ def _read_owner_answer(path) -> str:
     return answer
 
 
+def _has_questions(message: str) -> bool:
+    """Detect if a planner message contains questions for the owner."""
+    # Numbered questions: "1." or "1)" at start of line
+    if re.search(r'^\s*\d+[.)]\s', message, re.MULTILINE):
+        return True
+    # Question marks (at least one)
+    if '?' in message:
+        return True
+    return False
+
+
+_MAX_AUTO_PROCEED = 3
 _MAX_TOOL_ROUNDS = 10
 
 
-def _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum: "TokenAccumulator | None" = None):
+def _run_discussion_tool_loop(llm_with_tools, messages, tool_map,
+                              token_accum: "TokenAccumulator | None" = None,
+                              audit_store=None, audit_issue_id=None):
     """Let the planner use tools (file_inspect, search) before responding to the owner."""
     import sys
     import time
@@ -130,7 +146,7 @@ def _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum: "
             sys.stdout.write(f"\r{line}...{'':20}")
             sys.stdout.flush()
 
-    for _ in range(_MAX_TOOL_ROUNDS):
+    for _rnd in range(_MAX_TOOL_ROUNDS):
         if counts:
             _print_progress()
         response = llm_with_tools.invoke(messages)
@@ -151,6 +167,14 @@ def _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum: "
                 except Exception as e:
                     result = f"[error] {e}"
                 result_str = str(result)
+                # Audit logging
+                if audit_store is not None and audit_issue_id is not None:
+                    is_truncated = len(result_str) > 8000
+                    audit_store.log_audit(
+                        audit_issue_id, None, _rnd, tc["name"],
+                        tc.get("args", {}), result_str, is_truncated=is_truncated,
+                        from_node="discussion",
+                    )
                 if len(result_str) > 8000:
                     result_str = result_str[:8000] + "\n... (truncated)"
                 counts[tc["name"]] = counts.get(tc["name"], 0) + 1
@@ -231,9 +255,13 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
         print(f"[DISCUSSION] Yo, your Bro is checking out your goals... 🤙")
 
     token_accum = TokenAccumulator()
+    auto_proceed_count = 0
     while True:
         if not needs_owner_input:
-            response, messages = _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum=token_accum)
+            response, messages = _run_discussion_tool_loop(
+                llm_with_tools, messages, tool_map, token_accum=token_accum,
+                audit_store=store, audit_issue_id=issue_id,
+            )
             planner_msg = response.content
             if isinstance(planner_msg, list):
                 planner_msg = "\n".join(
@@ -259,6 +287,25 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
                 dd = docs_dir().name
                 print(f"  Discussion saved → {dd}/DISCUSSION.md")
                 break
+
+            # Check if the planner asked questions
+            if not _has_questions(planner_msg):
+                # No questions — auto-proceed instead of blocking
+                auto_proceed_count += 1
+                if auto_proceed_count >= _MAX_AUTO_PROCEED:
+                    # Safety: force the planner to commit after too many rounds with no questions
+                    print()
+                    print(f"  [DISCUSSION] Auto-proceeded {_MAX_AUTO_PROCEED} times — forcing alignment.")
+                    auto_response = "Please finalize your analysis and say TRUST ME BRO, LET'S BUILD."
+                else:
+                    print(f"  [DISCUSSION] No questions — proceeding automatically.")
+                    auto_response = "No questions to answer. Proceed with your best judgment."
+
+                store.add_discussion(issue_id, "owner", auto_response)
+                messages.append(HumanMessage(content=auto_response))
+                continue  # Skip user prompt, go back to LLM
+
+            auto_proceed_count = 0  # Reset on user interaction
         else:
             needs_owner_input = False
 
@@ -267,7 +314,7 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
         )
 
         print()
-        print(f"  📝 Edit your answers in {docs_dir().name}/DISCUSSION.md")
+        print(f"  Edit your answers in {docs_dir().name}/DISCUSSION.md")
         input("  Press Enter when you're done, bro...")
 
         owner_answer = _read_owner_answer(discussion_path)

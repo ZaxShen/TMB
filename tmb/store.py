@@ -8,7 +8,7 @@ Tables:
   skills          — Curated + agent-created skill metadata
   skill_requests  — Unfulfilled skill requests
   token_usage     — Per-invocation token counts
-  tool_calls      — Full tool invocation log (args + untruncated output)
+  audit           — Full audit log of tool invocations (args + untruncated output)
   file_registry   — Persistent map of discovered project files (zero-rescan upgrades)
 """
 
@@ -140,10 +140,11 @@ class Store:
                 created_at      TEXT    NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS tool_calls (
+            CREATE TABLE IF NOT EXISTS audit (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 issue_id        INTEGER NOT NULL REFERENCES issues(id),
                 branch_id       TEXT,
+                from_node       TEXT    NOT NULL DEFAULT 'executor',
                 round           INTEGER NOT NULL DEFAULT 0,
                 tool_name       TEXT    NOT NULL,
                 tool_args       TEXT    NOT NULL DEFAULT '{}',
@@ -238,6 +239,42 @@ class Store:
         ]:
             if col not in skill_cols:
                 self._conn.execute(f"ALTER TABLE skills ADD COLUMN {col} {spec}")
+
+        # file_registry: add change_type for git-aware tracking
+        fr_cols = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(file_registry)").fetchall()
+        }
+        if "change_type" not in fr_cols:
+            self._conn.execute(
+                "ALTER TABLE file_registry ADD COLUMN change_type TEXT NOT NULL DEFAULT 'unchanged'"
+            )
+
+        # tasks: unique branch_id per issue
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_issue_branch "
+            "ON tasks(issue_id, branch_id)"
+        )
+
+        # Rename tool_calls → audit (for existing databases)
+        existing_tables = {
+            row[0] for row in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "tool_calls" in existing_tables and "audit" not in existing_tables:
+            self._conn.execute("ALTER TABLE tool_calls RENAME TO audit")
+
+        # audit: add from_node column
+        if "audit" in existing_tables or "tool_calls" in existing_tables:
+            audit_cols = {
+                row[1]
+                for row in self._conn.execute("PRAGMA table_info(audit)").fetchall()
+            }
+            if "from_node" not in audit_cols:
+                self._conn.execute(
+                    "ALTER TABLE audit ADD COLUMN from_node TEXT NOT NULL DEFAULT 'executor'"
+                )
 
         self._conn.commit()
         self._seed_skills()
@@ -523,14 +560,32 @@ class Store:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_all_root_tasks(self) -> list[dict]:
-        """Project-wide overview of root-level tasks (no parent) — for Architect context."""
-        rows = self._conn.execute(
-            "SELECT t.branch_id, t.title, t.status, t.issue_id, i.objective "
-            "FROM tasks t JOIN issues i ON t.issue_id = i.id "
-            "WHERE t.parent_branch_id IS NULL "
-            "ORDER BY t.id",
-        ).fetchall()
+    def get_all_root_tasks(self, exclude_statuses: list[str] | None = None) -> list[dict]:
+        """Project-wide overview of root-level tasks (no parent) — for Architect context.
+
+        Args:
+            exclude_statuses: Issue statuses to exclude. Defaults to ["completed", "closed"].
+                              Pass an empty list to include all issues.
+        """
+        if exclude_statuses is None:
+            exclude_statuses = ["completed", "closed"]
+
+        if exclude_statuses:
+            placeholders = ",".join("?" for _ in exclude_statuses)
+            rows = self._conn.execute(
+                "SELECT t.branch_id, t.title, t.status, t.issue_id, i.objective, i.status AS issue_status "
+                "FROM tasks t JOIN issues i ON t.issue_id = i.id "
+                f"WHERE t.parent_branch_id IS NULL AND i.status NOT IN ({placeholders}) "
+                "ORDER BY t.id",
+                exclude_statuses,
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT t.branch_id, t.title, t.status, t.issue_id, i.objective, i.status AS issue_status "
+                "FROM tasks t JOIN issues i ON t.issue_id = i.id "
+                "WHERE t.parent_branch_id IS NULL "
+                "ORDER BY t.id",
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def delete_task_branch(self, prefix: str):
@@ -657,42 +712,42 @@ class Store:
         )
         self._conn.commit()
 
-    # ── Tool calls ─────────────────────────────────────────────
+    # ── Audit log ───────────────────────────────────────────────
 
-    def log_tool_call(self, issue_id: int, branch_id: str | None, round_num: int,
-                      tool_name: str, tool_args: dict, output: str,
-                      is_truncated: bool = False):
-        """Record a single tool invocation with its full (untruncated) output."""
+    def log_audit(self, issue_id: int, branch_id: str | None, round_num: int,
+                  tool_name: str, tool_args: dict, output: str,
+                  is_truncated: bool = False, from_node: str = "executor"):
+        """Record a tool invocation in the audit log."""
         self._conn.execute(
-            "INSERT INTO tool_calls (issue_id, branch_id, round, tool_name, tool_args, "
-            "output, output_chars, is_truncated, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (issue_id, branch_id, round_num, tool_name, json.dumps(tool_args),
+            "INSERT INTO audit (issue_id, branch_id, from_node, round, tool_name, tool_args, "
+            "output, output_chars, is_truncated, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (issue_id, branch_id, from_node, round_num, tool_name, json.dumps(tool_args),
              output, len(output), int(is_truncated), _now()),
         )
         self._conn.commit()
 
-    def get_tool_calls(self, issue_id: int, branch_id: str | None = None) -> list[dict]:
-        """Retrieve tool call log for debugging. Omits full output by default."""
+    def get_audit_log(self, issue_id: int, branch_id: str | None = None) -> list[dict]:
+        """Retrieve audit log for debugging. Omits full output by default."""
         if branch_id is not None:
             rows = self._conn.execute(
-                "SELECT id, issue_id, branch_id, round, tool_name, tool_args, "
+                "SELECT id, issue_id, branch_id, from_node, round, tool_name, tool_args, "
                 "output_chars, is_truncated, created_at "
-                "FROM tool_calls WHERE issue_id = ? AND branch_id = ? ORDER BY id",
+                "FROM audit WHERE issue_id = ? AND branch_id = ? ORDER BY id",
                 (issue_id, branch_id),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT id, issue_id, branch_id, round, tool_name, tool_args, "
+                "SELECT id, issue_id, branch_id, from_node, round, tool_name, tool_args, "
                 "output_chars, is_truncated, created_at "
-                "FROM tool_calls WHERE issue_id = ? ORDER BY id",
+                "FROM audit WHERE issue_id = ? ORDER BY id",
                 (issue_id,),
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_tool_call_output(self, tool_call_id: int) -> str | None:
-        """Retrieve the full untruncated output of a specific tool call."""
+    def get_audit_entry_output(self, audit_id: int) -> str | None:
+        """Retrieve the full untruncated output of a specific audit entry."""
         row = self._conn.execute(
-            "SELECT output FROM tool_calls WHERE id = ?", (tool_call_id,)
+            "SELECT output FROM audit WHERE id = ?", (audit_id,)
         ).fetchone()
         return row["output"] if row else None
 
@@ -967,18 +1022,18 @@ class Store:
 
     def upsert_file(self, rel_path: str, file_type: str = "unknown",
                     size_bytes: int = 0, last_hash: str = "",
-                    meta: dict | None = None):
+                    meta: dict | None = None, change_type: str = "unchanged"):
         """Insert or update a project file entry (zero-rescan upgrades)."""
         now = _now()
         meta_json = json.dumps(meta or {})
         self._conn.execute(
             "INSERT INTO file_registry (rel_path, file_type, size_bytes, last_hash, "
-            "discovered_at, updated_at, meta) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "discovered_at, updated_at, meta, change_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(rel_path) DO UPDATE SET "
             "file_type=excluded.file_type, size_bytes=excluded.size_bytes, "
             "last_hash=excluded.last_hash, updated_at=excluded.updated_at, "
-            "meta=excluded.meta",
-            (rel_path, file_type, size_bytes, last_hash, now, now, meta_json),
+            "meta=excluded.meta, change_type=excluded.change_type",
+            (rel_path, file_type, size_bytes, last_hash, now, now, meta_json, change_type),
         )
         self._conn.commit()
 
@@ -1010,6 +1065,20 @@ class Store:
     def file_registry_count(self) -> int:
         row = self._conn.execute("SELECT COUNT(*) FROM file_registry").fetchone()
         return row[0]
+
+    def get_changed_files(self) -> list[dict]:
+        """Return files whose change_type != 'unchanged'."""
+        rows = self._conn.execute(
+            "SELECT * FROM file_registry WHERE change_type != 'unchanged' ORDER BY rel_path"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def reset_change_types(self):
+        """Mark all files as 'unchanged' after the planner has consumed the diff."""
+        self._conn.execute(
+            "UPDATE file_registry SET change_type = 'unchanged' WHERE change_type != 'unchanged'"
+        )
+        self._conn.commit()
 
     # ── Project context (key-value) ────────────────────────
 

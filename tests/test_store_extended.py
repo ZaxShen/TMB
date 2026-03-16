@@ -200,30 +200,108 @@ def test_execution_plan_default_empty(store):
     assert store.get_task_execution_plan(issue_id, "1") == ""
 
 
-# ── Tool calls ────────────────────────────────────────────────
+# ── Audit ─────────────────────────────────────────────────────
 
-def test_tool_call_logging(store):
-    issue_id = store.create_issue("Tool call test")
+def test_audit_logging(store):
+    issue_id = store.create_issue("Audit test")
 
-    store.log_tool_call(
+    store.log_audit(
         issue_id, "1", round_num=1,
         tool_name="file_write",
-        tool_args='{"path": "hello.txt", "content": "hi"}',
+        tool_args={"path": "hello.txt", "content": "hi"},
         output="File written successfully",
         is_truncated=False,
+        from_node="executor",
     )
-    store.log_tool_call(
+    store.log_audit(
         issue_id, "1", round_num=2,
         tool_name="shell",
-        tool_args='{"command": "cat hello.txt"}',
+        tool_args={"command": "cat hello.txt"},
         output="hi",
         is_truncated=False,
+        from_node="executor",
     )
 
-    calls = store.get_tool_calls(issue_id, "1")
-    assert len(calls) == 2
-    assert calls[0]["tool_name"] == "file_write"
-    assert calls[1]["tool_name"] == "shell"
+    entries = store.get_audit_log(issue_id, "1")
+    assert len(entries) == 2
+    assert entries[0]["tool_name"] == "file_write"
+    assert entries[1]["tool_name"] == "shell"
+    assert entries[0]["from_node"] == "executor"
+
+
+# ── Audit table ───────────────────────────────────────────────
+
+def test_audit_from_node_column(store):
+    """Audit entries should record which node made the tool call."""
+    issue_id = store.create_issue("Multi-node audit test")
+
+    store.log_audit(
+        issue_id, None, round_num=0,
+        tool_name="file_inspect",
+        tool_args={"path": "src/main.py"},
+        output="200 lines of Python",
+        from_node="planner",
+    )
+    store.log_audit(
+        issue_id, "1", round_num=0,
+        tool_name="shell",
+        tool_args={"command": "python test.py"},
+        output="All tests pass",
+        from_node="executor",
+    )
+    store.log_audit(
+        issue_id, None, round_num=0,
+        tool_name="search",
+        tool_args={"query": "database"},
+        output="Found 3 files",
+        from_node="discussion",
+    )
+
+    entries = store.get_audit_log(issue_id)
+    assert len(entries) == 3
+
+    nodes = [e["from_node"] for e in entries]
+    assert "planner" in nodes
+    assert "executor" in nodes
+    assert "discussion" in nodes
+
+
+def test_audit_entry_output(store):
+    """get_audit_entry_output() should return the full untruncated output."""
+    issue_id = store.create_issue("Output test")
+
+    big_output = "x" * 50000
+    store.log_audit(
+        issue_id, "1", round_num=0,
+        tool_name="shell",
+        tool_args={"command": "big command"},
+        output=big_output,
+        is_truncated=True,
+        from_node="executor",
+    )
+
+    entries = store.get_audit_log(issue_id)
+    assert len(entries) == 1
+    assert entries[0]["is_truncated"] == 1
+
+    full_output = store.get_audit_entry_output(entries[0]["id"])
+    assert full_output == big_output
+    assert len(full_output) == 50000
+
+
+def test_audit_default_from_node(store):
+    """from_node should default to 'executor' if not specified."""
+    issue_id = store.create_issue("Default node test")
+
+    store.log_audit(
+        issue_id, "1", round_num=0,
+        tool_name="shell",
+        tool_args={},
+        output="ok",
+    )
+
+    entries = store.get_audit_log(issue_id)
+    assert entries[0]["from_node"] == "executor"
 
 
 # ── Skills ────────────────────────────────────────────────────
@@ -441,3 +519,199 @@ def test_close_issue_failed(store):
 
     issue = store.get_issue(id1)
     assert issue["status"] == "failed"
+
+
+# ── Branch ID uniqueness ─────────────────────────────────────
+
+def test_branch_id_unique_per_issue(store):
+    """Same branch_id on different issues should succeed."""
+    id1 = store.create_issue("Issue A")
+    id2 = store.create_issue("Issue B")
+
+    store.create_tasks(id1, [
+        {"branch_id": "1", "description": "Task A1", "tools_required": [],
+         "skills_required": [], "success_criteria": "done"},
+    ])
+    store.create_tasks(id2, [
+        {"branch_id": "1", "description": "Task B1", "tools_required": [],
+         "skills_required": [], "success_criteria": "done"},
+    ])
+
+    # Both should exist
+    assert store.get_task_row(id1, "1") is not None
+    assert store.get_task_row(id2, "1") is not None
+
+
+def test_branch_id_duplicate_same_issue_blocked(store):
+    """Duplicate branch_id on the same issue should raise IntegrityError."""
+    import sqlite3
+    issue_id = store.create_issue("Dup test")
+
+    store.create_tasks(issue_id, [
+        {"branch_id": "1", "description": "First", "tools_required": [],
+         "skills_required": [], "success_criteria": "done"},
+    ])
+
+    # Manually insert a duplicate — should fail due to unique index
+    with pytest.raises(sqlite3.IntegrityError):
+        store._conn.execute(
+            "INSERT INTO tasks (issue_id, branch_id, title, description, "
+            "tools_required, skills_required, success_criteria, status, created_at, updated_at) "
+            "VALUES (?, '1', 'dup', 'dup', '[]', '[]', 'done', 'pending', '2024-01-01', '2024-01-01')",
+            (issue_id,),
+        )
+
+
+def test_get_all_root_tasks_filters_completed_issues(store):
+    """Default get_all_root_tasks() should exclude completed/closed issues."""
+    id1 = store.create_issue("Old work")
+    store.create_tasks(id1, [
+        {"branch_id": "1", "description": "Old task", "tools_required": [],
+         "skills_required": [], "success_criteria": "done"},
+    ])
+    store.close_issue(id1, "completed")
+
+    id2 = store.create_issue("New work")
+    store.create_tasks(id2, [
+        {"branch_id": "1", "description": "New task", "tools_required": [],
+         "skills_required": [], "success_criteria": "done"},
+    ])
+
+    # Default: only open issue
+    result = store.get_all_root_tasks()
+    assert len(result) == 1
+    assert result[0]["issue_id"] == id2
+
+    # Explicit no filter: all issues
+    result_all = store.get_all_root_tasks(exclude_statuses=[])
+    assert len(result_all) == 2
+
+
+def test_get_all_root_tasks_includes_issue_status(store):
+    """Result should include issue_status field."""
+    issue_id = store.create_issue("Status test")
+    store.create_tasks(issue_id, [
+        {"branch_id": "1", "description": "Task", "tools_required": [],
+         "skills_required": [], "success_criteria": "done"},
+    ])
+
+    result = store.get_all_root_tasks()
+    assert len(result) == 1
+    assert "issue_status" in result[0]
+    assert result[0]["issue_status"] == "open"
+
+
+# ── Completion cleanup ────────────────────────────────────────
+
+def test_finalize_issue_cleans_goals_on_completion(store, tmp_path):
+    """_finalize_issue() should reset GOALS.md when all tasks are completed."""
+    from unittest.mock import patch
+
+    # Set up: create issue with completed tasks
+    issue_id = store.create_issue("Cleanup test")
+    store.create_tasks(issue_id, [
+        {"branch_id": "1", "description": "Task 1", "tools_required": [],
+         "skills_required": [], "success_criteria": "check output.txt"},
+        {"branch_id": "2", "description": "Task 2", "tools_required": [],
+         "skills_required": [], "success_criteria": "run tests"},
+    ])
+    store.update_task_status(issue_id, "1", "completed")
+    store.update_task_status(issue_id, "2", "completed")
+
+    # Create existing goals and discussion files
+    goals_path = tmp_path / "GOALS.md"
+    goals_path.write_text("# Goals\n\nOld stale goals here.\n")
+    disc_path = tmp_path / "DISCUSSION.md"
+    disc_path.write_text("# Discussion\n\nOld discussion content.\n")
+
+    with patch("tmb.cli.docs_dir", return_value=tmp_path):
+        from tmb.cli import _finalize_issue
+        _finalize_issue(store, issue_id)
+
+    # GOALS.md should be reset to template
+    goals_content = goals_path.read_text()
+    assert "Write your goals" in goals_content
+    assert f"Issue #{issue_id} completed" in goals_content
+    assert "Old stale goals" not in goals_content
+
+    # DISCUSSION.md should be reset
+    disc_content = disc_path.read_text()
+    assert "New discussion will appear here" in disc_content
+    assert "Old discussion content" not in disc_content
+
+    # Issue should be closed
+    issue = store.get_issue(issue_id)
+    assert issue["status"] == "completed"
+
+
+def test_finalize_issue_no_cleanup_on_failure(store, tmp_path):
+    """_finalize_issue() should NOT reset GOALS.md when tasks failed."""
+    from unittest.mock import patch
+
+    issue_id = store.create_issue("Fail test")
+    store.create_tasks(issue_id, [
+        {"branch_id": "1", "description": "Task 1", "tools_required": [],
+         "skills_required": [], "success_criteria": "done"},
+    ])
+    store.update_task_status(issue_id, "1", "failed")
+
+    goals_path = tmp_path / "GOALS.md"
+    goals_path.write_text("# Goals\n\nKeep these goals.\n")
+
+    with patch("tmb.cli.docs_dir", return_value=tmp_path):
+        from tmb.cli import _finalize_issue
+        _finalize_issue(store, issue_id)
+
+    # GOALS.md should NOT be touched
+    goals_content = goals_path.read_text()
+    assert "Keep these goals" in goals_content
+
+    # Issue should still be open (not completed)
+    issue = store.get_issue(issue_id)
+    assert issue["status"] != "completed"
+
+
+def test_finalize_issue_no_tasks_still_cleans(store, tmp_path):
+    """_finalize_issue() with no tasks should still clean up GOALS.md."""
+    from unittest.mock import patch
+
+    issue_id = store.create_issue("Empty test")
+
+    goals_path = tmp_path / "GOALS.md"
+    goals_path.write_text("# Goals\n\nStale.\n")
+    disc_path = tmp_path / "DISCUSSION.md"
+    disc_path.write_text("# Discussion\n\nStale.\n")
+
+    with patch("tmb.cli.docs_dir", return_value=tmp_path):
+        from tmb.cli import _finalize_issue
+        _finalize_issue(store, issue_id)
+
+    # Should be cleaned since issue was completed
+    goals_content = goals_path.read_text()
+    assert "Write your goals" in goals_content
+
+
+def test_cleanup_goals_template_is_stripped_by_read(tmp_path):
+    """The template written by cleanup should be treated as empty by _read_goals_md()."""
+    import re
+
+    # Simulate what _cleanup_completed_issue writes
+    template = (
+        "# Goals\n\n"
+        "<!-- Issue #42 completed successfully. -->\n\n"
+        "Write your goals below. The Planner will read this file and discuss with you.\n\n"
+        "---\n\n"
+    )
+
+    # Simulate what _read_goals_md does
+    goals_raw = template.strip()
+    goals_md = re.sub(r"<!--.*?-->", "", goals_raw, flags=re.DOTALL).strip()
+    goals_md = re.sub(
+        r"^# Goals\s*\n+Write your goals.*?---\s*",
+        "",
+        goals_md,
+        flags=re.DOTALL,
+    ).strip()
+
+    # Should be empty — the template is fully stripped
+    assert goals_md == "", f"Template not stripped clean: {goals_md!r}"

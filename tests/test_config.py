@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
+import pytest
 
 
 def test_load_yaml(tmp_path):
@@ -71,3 +72,95 @@ def test_get_role_name_custom():
         assert get_role_name("planner") == "Architect"
         assert get_role_name("executor") == "SWE"
         assert get_role_name("owner") == "Project Owner"
+
+
+class TestGetLlmOllama:
+    """Tests for get_llm() with the Ollama provider."""
+
+    @staticmethod
+    def _make_nodes_config(provider="ollama", model="llama3.2",
+                            temperature=0.3, base_url=None):
+        """Build a minimal nodes config for testing."""
+        model_cfg = {"provider": provider, "name": model, "temperature": temperature}
+        if base_url:
+            model_cfg["base_url"] = base_url
+        return {"planner": {"model": model_cfg, "tools": []}}
+
+    def test_ollama_instantiation(self):
+        """get_llm with ollama should import langchain_ollama and call ChatOllama."""
+        mock_cls = MagicMock()
+        mock_module = MagicMock()
+        mock_module.ChatOllama = mock_cls
+
+        config = self._make_nodes_config()
+
+        with (
+            patch("tmb.config.load_nodes_config", return_value=config),
+            patch("importlib.import_module", return_value=mock_module) as mock_import,
+        ):
+            from tmb.config import get_llm
+            result = get_llm("planner")
+
+        mock_import.assert_called_with("langchain_ollama")
+        mock_cls.assert_called_once_with(model="llama3.2", temperature=0.3)
+        assert result == mock_cls.return_value
+
+    def test_ollama_with_base_url(self):
+        """base_url should be passed through to ChatOllama."""
+        mock_cls = MagicMock()
+        mock_module = MagicMock()
+        mock_module.ChatOllama = mock_cls
+
+        config = self._make_nodes_config(base_url="http://localhost:11434")
+
+        with (
+            patch("tmb.config.load_nodes_config", return_value=config),
+            patch("importlib.import_module", return_value=mock_module),
+        ):
+            from tmb.config import get_llm
+            get_llm("planner")
+
+        mock_cls.assert_called_once_with(
+            model="llama3.2", temperature=0.3, base_url="http://localhost:11434"
+        )
+
+    def test_ollama_no_api_key_required(self):
+        """Ollama has env_var=None — should work without any API key set."""
+        mock_cls = MagicMock()
+        mock_module = MagicMock()
+        mock_module.ChatOllama = mock_cls
+
+        config = self._make_nodes_config()
+
+        # Ensure no Ollama-related env vars are set
+        with (
+            patch("tmb.config.load_nodes_config", return_value=config),
+            patch("importlib.import_module", return_value=mock_module),
+            patch.dict("os.environ", {}, clear=False),
+        ):
+            from tmb.config import get_llm
+            # Should not raise — no API key needed
+            result = get_llm("planner")
+
+        assert result is not None
+
+    def test_ollama_missing_package(self):
+        """Missing langchain-ollama should raise ImportError with install hint."""
+        config = self._make_nodes_config()
+
+        with (
+            patch("tmb.config.load_nodes_config", return_value=config),
+            patch("importlib.import_module", side_effect=ImportError("No module")),
+        ):
+            from tmb.config import get_llm
+            with pytest.raises(ImportError, match="langchain-ollama"):
+                get_llm("planner")
+
+    def test_unknown_provider_raises(self):
+        """Unknown provider should raise ValueError with supported list."""
+        config = self._make_nodes_config(provider="nonexistent")
+
+        with patch("tmb.config.load_nodes_config", return_value=config):
+            from tmb.config import get_llm
+            with pytest.raises(ValueError, match="nonexistent"):
+                get_llm("planner")

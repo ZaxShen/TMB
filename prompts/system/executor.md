@@ -39,21 +39,11 @@ If you need a skill that wasn't provided (e.g., you encounter an unfamiliar file
 
 ## Output Format
 
-Return a structured log of what you did:
+Return a structured log of what you did using XML tags:
 
-```json
-{
-  "task_id": 1,
-  "status": "completed" | "failed" | "escalate",
-  "actions": [
-    {
-      "tool": "shell",
-      "input": "...",
-      "output": "...",
-      "exit_code": 0
-    }
-  ],
-  "summary": "...",
-  "escalation_reason": null
-}
-```
+<status>completed</status> or <status>failed</status> or <status>escalate</status>
+<summary>Brief description of what was accomplished or what went wrong</summary>
+<escalation_reason>Only if status is escalate — explain why</escalation_reason>
+
+Include details of each action taken (tool used, input, output) in your response text.
+If you need to escalate, set `<status>escalate</status>` and provide the reason.

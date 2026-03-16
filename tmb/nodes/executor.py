@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+
+logger = logging.getLogger("tmb.executor")
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
@@ -74,19 +77,23 @@ def _load_skills(store: Store, skill_names: list[str]) -> str:
 
 
 def _detect_escalation(content) -> bool:
-    """Detect escalation signal from the LLM's final response only (not tool output).
+    """Detect escalation signal using XML tags, with keyword fallback.
 
-    Checks in priority order:
-      1. JSON block with "status": "escalate"
-      2. Word-boundary regex \\bescalate\\b (avoids matching inside quoted tool output)
+    Priority order:
+      1. <status>escalate</status> XML tag
+      2. Word-boundary keyword \\bescalate\\b
+      3. Default: False
     """
     text = _normalize_content(content)
-    # Tier 1: structured JSON signal
-    json_match = re.search(r"\{[^}]*\"status\"\s*:\s*\"escalate\"[^}]*\}", text, re.IGNORECASE)
-    if json_match:
+    # Tier 1: XML <status> tag
+    if re.search(r"<status>\s*escalate\s*</status>", text, re.IGNORECASE):
         return True
-    # Tier 2: word-boundary keyword in LLM prose
+    # Tier 2: word-boundary keyword
     if re.search(r"\bescalate\b", text, re.IGNORECASE):
+        logger.info(
+            "Escalation detected via keyword fallback (no <status> tag) | first 200 chars: %s",
+            text[:200]
+        )
         return True
     return False
 

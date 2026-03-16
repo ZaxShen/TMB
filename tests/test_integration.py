@@ -93,7 +93,7 @@ def test_executor_validate_pipeline(project_dir, db_store):
         "Created hello.txt with 'Hello World'. Task complete."
     )
     validate_response = _fake_ai_message(
-        '```json\n{"verdict": "PASS", "evidence": "hello.txt exists"}\n```'
+        '<verdict>PASS</verdict>\n<evidence>hello.txt exists</evidence>'
     )
 
     executor_llm = FakeLLM([executor_response])
@@ -181,11 +181,11 @@ def test_fail_retry_pass_pipeline(project_dir, db_store):
 
     executor_resp_1 = _fake_ai_message("Attempted fix.")
     fail_response = _fake_ai_message(
-        '```json\n{"verdict": "FAIL", "evidence": "tests still failing"}\n```'
+        '<verdict>FAIL</verdict>\n<evidence>tests still failing</evidence>'
     )
     executor_resp_2 = _fake_ai_message("Applied correct fix.")
     pass_response = _fake_ai_message(
-        '```json\n{"verdict": "PASS", "evidence": "all tests pass"}\n```'
+        '<verdict>PASS</verdict>\n<evidence>all tests pass</evidence>'
     )
 
     executor_responses = [executor_resp_1, executor_resp_2]

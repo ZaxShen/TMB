@@ -1,4 +1,4 @@
-"""Tests for structured escalation detection in executor."""
+"""Tests for XML-based escalation detection in executor."""
 
 from __future__ import annotations
 
@@ -10,16 +10,26 @@ def _detect_escalation(content) -> bool:
     return _detect_escalation(content)
 
 
-# ── Tier 1: structured JSON signal ───────────────────────────
+# ── Tier 1: XML status tag ───────────────────────────────────
 
-def test_json_status_escalate():
-    text = 'I cannot complete this task.\n{"status": "escalate", "reason": "missing API key"}'
+def test_xml_status_escalate():
+    text = "I cannot complete this task.\n<status>escalate</status>\n<escalation_reason>missing API key</escalation_reason>"
     assert _detect_escalation(text) is True
 
 
-def test_json_status_escalate_case_insensitive():
-    text = '{"status": "Escalate", "reason": "blocked by dependency"}'
+def test_xml_status_escalate_case_insensitive():
+    text = "<status>Escalate</status>"
     assert _detect_escalation(text) is True
+
+
+def test_xml_status_completed():
+    text = "<status>completed</status>\n<summary>Done</summary>"
+    assert _detect_escalation(text) is False
+
+
+def test_xml_status_failed():
+    text = "<status>failed</status>\n<summary>Could not finish</summary>"
+    assert _detect_escalation(text) is False
 
 
 # ── Tier 2: word-boundary keyword ────────────────────────────
@@ -34,7 +44,7 @@ def test_keyword_escalate_uppercase():
     assert _detect_escalation(text) is True
 
 
-# ── False positives from tool output ─────────────────────────
+# ── False positives ──────────────────────────────────────────
 
 def test_no_escalation_in_normal_output():
     text = "Task completed successfully. All files created."
@@ -45,19 +55,11 @@ def test_no_escalation_empty():
     assert _detect_escalation("") is False
 
 
-def test_escalated_past_tense_still_detected():
-    """The word 'escalated' contains 'escalate' + 'd'.
-    \\bescalate\\b does NOT match inside 'escalated' because the 'd' continues the word.
-    But \\bescalat(e|ed|ion)\\b patterns would. Our regex uses \\bescalate\\b which
-    checks word boundary AFTER the 'e' — 'd' is a word char so \\b doesn't match.
-    This means 'escalated' is NOT detected, which is acceptable behavior."""
+def test_escalated_past_tense_not_detected():
     text = "The previous task was escalated."
-    # \bescalate\b does NOT match 'escalated' — the 'd' after 'e' means no word boundary
     assert _detect_escalation(text) is False
 
 
 def test_tool_output_with_escalate_in_quoted_string():
-    """If escalate appears in the LLM's own text, it's still detected.
-    The key improvement is we only check response.content, not appended tool outputs."""
     text = "Set status to 'escalate' with reason: no write access."
     assert _detect_escalation(text) is True

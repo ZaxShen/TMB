@@ -97,8 +97,8 @@ def test_multi_task_pipeline(project_dir, db_store):
         _fake_ai_message("Created module_b.py."),
     ]
     val_responses = [
-        _fake_ai_message('```json\n{"verdict": "PASS", "evidence": "module_a.py exists"}\n```'),
-        _fake_ai_message('```json\n{"verdict": "PASS", "evidence": "module_b.py exists"}\n```'),
+        _fake_ai_message('<verdict>PASS</verdict>\n<evidence>module_a.py exists</evidence>'),
+        _fake_ai_message('<verdict>PASS</verdict>\n<evidence>module_b.py exists</evidence>'),
     ]
 
     exec_idx = {"i": 0}
@@ -176,7 +176,7 @@ def test_escalation_after_max_retries(project_dir, db_store):
     # Executor always produces output, validator always fails
     exec_resp = _fake_ai_message("Attempted the task.")
     fail_resp = _fake_ai_message(
-        '```json\n{"verdict": "FAIL", "evidence": "still broken"}\n```'
+        '<verdict>FAIL</verdict>\n<evidence>still broken</evidence>'
     )
 
     class FakeExecLLM:

@@ -200,30 +200,108 @@ def test_execution_plan_default_empty(store):
     assert store.get_task_execution_plan(issue_id, "1") == ""
 
 
-# ── Tool calls ────────────────────────────────────────────────
+# ── Audit ─────────────────────────────────────────────────────
 
-def test_tool_call_logging(store):
-    issue_id = store.create_issue("Tool call test")
+def test_audit_logging(store):
+    issue_id = store.create_issue("Audit test")
 
-    store.log_tool_call(
+    store.log_audit(
         issue_id, "1", round_num=1,
         tool_name="file_write",
-        tool_args='{"path": "hello.txt", "content": "hi"}',
+        tool_args={"path": "hello.txt", "content": "hi"},
         output="File written successfully",
         is_truncated=False,
+        from_node="executor",
     )
-    store.log_tool_call(
+    store.log_audit(
         issue_id, "1", round_num=2,
         tool_name="shell",
-        tool_args='{"command": "cat hello.txt"}',
+        tool_args={"command": "cat hello.txt"},
         output="hi",
         is_truncated=False,
+        from_node="executor",
     )
 
-    calls = store.get_tool_calls(issue_id, "1")
-    assert len(calls) == 2
-    assert calls[0]["tool_name"] == "file_write"
-    assert calls[1]["tool_name"] == "shell"
+    entries = store.get_audit_log(issue_id, "1")
+    assert len(entries) == 2
+    assert entries[0]["tool_name"] == "file_write"
+    assert entries[1]["tool_name"] == "shell"
+    assert entries[0]["from_node"] == "executor"
+
+
+# ── Audit table ───────────────────────────────────────────────
+
+def test_audit_from_node_column(store):
+    """Audit entries should record which node made the tool call."""
+    issue_id = store.create_issue("Multi-node audit test")
+
+    store.log_audit(
+        issue_id, None, round_num=0,
+        tool_name="file_inspect",
+        tool_args={"path": "src/main.py"},
+        output="200 lines of Python",
+        from_node="planner",
+    )
+    store.log_audit(
+        issue_id, "1", round_num=0,
+        tool_name="shell",
+        tool_args={"command": "python test.py"},
+        output="All tests pass",
+        from_node="executor",
+    )
+    store.log_audit(
+        issue_id, None, round_num=0,
+        tool_name="search",
+        tool_args={"query": "database"},
+        output="Found 3 files",
+        from_node="discussion",
+    )
+
+    entries = store.get_audit_log(issue_id)
+    assert len(entries) == 3
+
+    nodes = [e["from_node"] for e in entries]
+    assert "planner" in nodes
+    assert "executor" in nodes
+    assert "discussion" in nodes
+
+
+def test_audit_entry_output(store):
+    """get_audit_entry_output() should return the full untruncated output."""
+    issue_id = store.create_issue("Output test")
+
+    big_output = "x" * 50000
+    store.log_audit(
+        issue_id, "1", round_num=0,
+        tool_name="shell",
+        tool_args={"command": "big command"},
+        output=big_output,
+        is_truncated=True,
+        from_node="executor",
+    )
+
+    entries = store.get_audit_log(issue_id)
+    assert len(entries) == 1
+    assert entries[0]["is_truncated"] == 1
+
+    full_output = store.get_audit_entry_output(entries[0]["id"])
+    assert full_output == big_output
+    assert len(full_output) == 50000
+
+
+def test_audit_default_from_node(store):
+    """from_node should default to 'executor' if not specified."""
+    issue_id = store.create_issue("Default node test")
+
+    store.log_audit(
+        issue_id, "1", round_num=0,
+        tool_name="shell",
+        tool_args={},
+        output="ok",
+    )
+
+    entries = store.get_audit_log(issue_id)
+    assert entries[0]["from_node"] == "executor"
 
 
 # ── Skills ────────────────────────────────────────────────────

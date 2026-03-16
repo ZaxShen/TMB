@@ -8,7 +8,7 @@ Tables:
   skills          — Curated + agent-created skill metadata
   skill_requests  — Unfulfilled skill requests
   token_usage     — Per-invocation token counts
-  tool_calls      — Full tool invocation log (args + untruncated output)
+  audit           — Full audit log of tool invocations (args + untruncated output)
   file_registry   — Persistent map of discovered project files (zero-rescan upgrades)
 """
 
@@ -140,10 +140,11 @@ class Store:
                 created_at      TEXT    NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS tool_calls (
+            CREATE TABLE IF NOT EXISTS audit (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 issue_id        INTEGER NOT NULL REFERENCES issues(id),
                 branch_id       TEXT,
+                from_node       TEXT    NOT NULL DEFAULT 'executor',
                 round           INTEGER NOT NULL DEFAULT 0,
                 tool_name       TEXT    NOT NULL,
                 tool_args       TEXT    NOT NULL DEFAULT '{}',
@@ -254,6 +255,26 @@ class Store:
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_issue_branch "
             "ON tasks(issue_id, branch_id)"
         )
+
+        # Rename tool_calls → audit (for existing databases)
+        existing_tables = {
+            row[0] for row in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "tool_calls" in existing_tables and "audit" not in existing_tables:
+            self._conn.execute("ALTER TABLE tool_calls RENAME TO audit")
+
+        # audit: add from_node column
+        if "audit" in existing_tables or "tool_calls" in existing_tables:
+            audit_cols = {
+                row[1]
+                for row in self._conn.execute("PRAGMA table_info(audit)").fetchall()
+            }
+            if "from_node" not in audit_cols:
+                self._conn.execute(
+                    "ALTER TABLE audit ADD COLUMN from_node TEXT NOT NULL DEFAULT 'executor'"
+                )
 
         self._conn.commit()
         self._seed_skills()
@@ -691,42 +712,42 @@ class Store:
         )
         self._conn.commit()
 
-    # ── Tool calls ─────────────────────────────────────────────
+    # ── Audit log ───────────────────────────────────────────────
 
-    def log_tool_call(self, issue_id: int, branch_id: str | None, round_num: int,
-                      tool_name: str, tool_args: dict, output: str,
-                      is_truncated: bool = False):
-        """Record a single tool invocation with its full (untruncated) output."""
+    def log_audit(self, issue_id: int, branch_id: str | None, round_num: int,
+                  tool_name: str, tool_args: dict, output: str,
+                  is_truncated: bool = False, from_node: str = "executor"):
+        """Record a tool invocation in the audit log."""
         self._conn.execute(
-            "INSERT INTO tool_calls (issue_id, branch_id, round, tool_name, tool_args, "
-            "output, output_chars, is_truncated, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (issue_id, branch_id, round_num, tool_name, json.dumps(tool_args),
+            "INSERT INTO audit (issue_id, branch_id, from_node, round, tool_name, tool_args, "
+            "output, output_chars, is_truncated, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (issue_id, branch_id, from_node, round_num, tool_name, json.dumps(tool_args),
              output, len(output), int(is_truncated), _now()),
         )
         self._conn.commit()
 
-    def get_tool_calls(self, issue_id: int, branch_id: str | None = None) -> list[dict]:
-        """Retrieve tool call log for debugging. Omits full output by default."""
+    def get_audit_log(self, issue_id: int, branch_id: str | None = None) -> list[dict]:
+        """Retrieve audit log for debugging. Omits full output by default."""
         if branch_id is not None:
             rows = self._conn.execute(
-                "SELECT id, issue_id, branch_id, round, tool_name, tool_args, "
+                "SELECT id, issue_id, branch_id, from_node, round, tool_name, tool_args, "
                 "output_chars, is_truncated, created_at "
-                "FROM tool_calls WHERE issue_id = ? AND branch_id = ? ORDER BY id",
+                "FROM audit WHERE issue_id = ? AND branch_id = ? ORDER BY id",
                 (issue_id, branch_id),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT id, issue_id, branch_id, round, tool_name, tool_args, "
+                "SELECT id, issue_id, branch_id, from_node, round, tool_name, tool_args, "
                 "output_chars, is_truncated, created_at "
-                "FROM tool_calls WHERE issue_id = ? ORDER BY id",
+                "FROM audit WHERE issue_id = ? ORDER BY id",
                 (issue_id,),
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_tool_call_output(self, tool_call_id: int) -> str | None:
-        """Retrieve the full untruncated output of a specific tool call."""
+    def get_audit_entry_output(self, audit_id: int) -> str | None:
+        """Retrieve the full untruncated output of a specific audit entry."""
         row = self._conn.execute(
-            "SELECT output FROM tool_calls WHERE id = ?", (tool_call_id,)
+            "SELECT output FROM audit WHERE id = ?", (audit_id,)
         ).fetchone()
         return row["output"] if row else None
 

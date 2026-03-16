@@ -63,7 +63,9 @@ def _estimate_context_chars(messages: list) -> int:
 
 def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = "",
                    token_accum: "TokenAccumulator | None" = None,
-                   max_context_chars: int = _PLANNER_CONTEXT_BUDGET_CHARS):
+                   max_context_chars: int = _PLANNER_CONTEXT_BUDGET_CHARS,
+                   audit_store=None, audit_issue_id=None, audit_branch_id=None,
+                   audit_from_node: str = "planner"):
     """Run a multi-turn tool loop, returning the final response.
 
     Shows live progress on a single line, overwritten after each tool call.
@@ -124,6 +126,14 @@ def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = 
                 except Exception as e:
                     result = f"[error] {e}"
                 result_str = str(result)
+                # Audit logging (when store is provided)
+                if audit_store is not None and audit_issue_id is not None:
+                    is_truncated = len(result_str) > 8000
+                    audit_store.log_audit(
+                        audit_issue_id, audit_branch_id, rnd, tc["name"],
+                        tc.get("args", {}), result_str, is_truncated=is_truncated,
+                        from_node=audit_from_node,
+                    )
                 if len(result_str) > 8000:
                     result_str = result_str[:8000] + "\n... (truncated)"
                 counts[tc["name"]] = counts.get(tc["name"], 0) + 1
@@ -565,7 +575,11 @@ def planner_plan(state: AgentState) -> dict:
         ]
 
         print(f"[{planner_display}] 🧠 Provisioning skills for downstream agents...")
-        _run_tool_loop(llm_with_tools, provision_messages, tool_map, _MAX_EXPLORE_ROUNDS, label="skills", token_accum=token_accum)
+        _run_tool_loop(
+            llm_with_tools, provision_messages, tool_map, _MAX_EXPLORE_ROUNDS, label="skill-provisioning",
+            token_accum=token_accum,
+            audit_store=store, audit_issue_id=issue_id,
+        )
 
         new_skills = store.get_all_skills()
         created_count = len(new_skills) - len(available_skills)
@@ -719,7 +733,11 @@ def planner_plan(state: AgentState) -> dict:
     ]
 
     print(f"[{planner_display}] 📋 Generating blueprint...")
-    response, messages = _run_tool_loop(llm_with_tools, messages, tool_map, 5, label="blueprint", token_accum=token_accum)
+    response, messages = _run_tool_loop(
+        llm_with_tools, messages, tool_map, 5, label="blueprint",
+        token_accum=token_accum,
+        audit_store=store, audit_issue_id=issue_id,
+    )
     raw = _normalize_content(response.content)
 
     blueprint = []
@@ -1077,6 +1095,7 @@ def planner_execution_plan(state: AgentState) -> dict:
         response, messages = _run_tool_loop(
             llm_with_tools, messages, tool_map, 5, label=f"task-{branch_id}",
             token_accum=token_accum,
+            audit_store=store, audit_issue_id=issue_id, audit_branch_id=branch_id,
         )
         plan_md = _normalize_content(response.content)
         last_response = response
@@ -1240,15 +1259,32 @@ def planner_validate(state: AgentState) -> dict:
     verify_prompt += (
         f"## Executor's Log\n{execution_log}\n\n"
         "## Instructions\n"
-        "1. Use `shell` to run any verification commands (tests, scripts, checks).\n"
-        "2. Use `file_inspect` or `search` to examine outputs if needed.\n"
-        "3. Compare actual results against the success criteria.\n"
-        "4. Render your verdict using XML tags:\n\n"
+        "### Step 1: Scan the Executor's Log\n"
+        "Read the ENTIRE executor log above carefully. Look for:\n"
+        "- **Errors**: exceptions, tracebacks, non-zero exit codes, failed commands\n"
+        "- **Warnings**: deprecation notices, resource warnings, missing optional dependencies\n"
+        "- **Repeated failures**: the same error appearing multiple times (loop pattern)\n\n"
+        "If the executor's log contains unaddressed errors or warnings, FAIL the task — even if "
+        "the final output looks correct. The executor must handle warnings, not ignore them.\n\n"
+        "### Step 2: Discover and Run Tests\n"
+        "Detect the project's test framework by checking for these files:\n"
+        "- `pyproject.toml` or `setup.py` → try `python -m pytest` or `uv run pytest`\n"
+        "- `package.json` → try `npm test`\n"
+        "- `Cargo.toml` → try `cargo test`\n"
+        "- `go.mod` → try `go test ./...`\n"
+        "- `Makefile` with test target → try `make test`\n"
+        "- `build.gradle` or `pom.xml` → try `./gradlew test` or `mvn test`\n\n"
+        "Use `shell` to check which build files exist, then run the appropriate test command. "
+        "If no test framework is detected, skip this step.\n\n"
+        "### Step 3: Verify Success Criteria\n"
+        "Use `shell`, `file_inspect`, or `search` to verify each success criterion.\n\n"
+        "### Step 4: Render Verdict\n"
+        "Use XML tags:\n\n"
         "<verdict>PASS</verdict> or <verdict>FAIL</verdict>\n"
-        "<evidence>what you verified or what went wrong</evidence>\n"
+        "<evidence>what you verified, test results, and any warnings found</evidence>\n"
         "<failure_details>specific actionable feedback if FAIL</failure_details>\n\n"
-        "If FAIL: be specific about what went wrong so the Executor can fix it.\n"
-        "If PASS: briefly confirm what you verified."
+        "FAIL if: errors in log, tests fail, unaddressed warnings, or success criteria not met.\n"
+        "PASS only if: log is clean, tests pass (if applicable), and all criteria met."
     )
 
     messages = [
@@ -1260,6 +1296,7 @@ def planner_validate(state: AgentState) -> dict:
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, 10, label=f"validate-{branch_id}",
         token_accum=token_accum,
+        audit_store=store, audit_issue_id=issue_id, audit_branch_id=branch_id,
     )
     store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
 

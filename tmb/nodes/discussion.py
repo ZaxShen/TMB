@@ -125,7 +125,9 @@ _MAX_AUTO_PROCEED = 3
 _MAX_TOOL_ROUNDS = 10
 
 
-def _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum: "TokenAccumulator | None" = None):
+def _run_discussion_tool_loop(llm_with_tools, messages, tool_map,
+                              token_accum: "TokenAccumulator | None" = None,
+                              audit_store=None, audit_issue_id=None):
     """Let the planner use tools (file_inspect, search) before responding to the owner."""
     import sys
     import time
@@ -144,7 +146,7 @@ def _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum: "
             sys.stdout.write(f"\r{line}...{'':20}")
             sys.stdout.flush()
 
-    for _ in range(_MAX_TOOL_ROUNDS):
+    for _rnd in range(_MAX_TOOL_ROUNDS):
         if counts:
             _print_progress()
         response = llm_with_tools.invoke(messages)
@@ -165,6 +167,14 @@ def _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum: "
                 except Exception as e:
                     result = f"[error] {e}"
                 result_str = str(result)
+                # Audit logging
+                if audit_store is not None and audit_issue_id is not None:
+                    is_truncated = len(result_str) > 8000
+                    audit_store.log_audit(
+                        audit_issue_id, None, _rnd, tc["name"],
+                        tc.get("args", {}), result_str, is_truncated=is_truncated,
+                        from_node="discussion",
+                    )
                 if len(result_str) > 8000:
                     result_str = result_str[:8000] + "\n... (truncated)"
                 counts[tc["name"]] = counts.get(tc["name"], 0) + 1
@@ -248,7 +258,10 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
     auto_proceed_count = 0
     while True:
         if not needs_owner_input:
-            response, messages = _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum=token_accum)
+            response, messages = _run_discussion_tool_loop(
+                llm_with_tools, messages, tool_map, token_accum=token_accum,
+                audit_store=store, audit_issue_id=issue_id,
+            )
             planner_msg = response.content
             if isinstance(planner_msg, list):
                 planner_msg = "\n".join(

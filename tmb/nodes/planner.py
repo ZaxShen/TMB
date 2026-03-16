@@ -292,14 +292,16 @@ BLUEPRINT_INSTRUCTION = (
     "Think of tasks like drawing a flowchart: you wouldn't draw a box for 'open the file'. "
     "Focus on the filters, algorithms, decision points, and validations that define the system.\n\n"
     "## Branch ID Convention\n"
-    "Branch IDs are **hierarchical strings** that encode semantic relationships:\n"
+    "Branch IDs are **hierarchical strings** scoped per-issue:\n"
     "- Root branches: \"1\", \"2\", \"3\"\n"
     "- Sub-branches: \"1.1\", \"1.2\" (children of branch 1)\n"
     "- Deeper: \"1.1.1\" (child of branch 1.1)\n\n"
+    "**IMPORTANT:** Branch IDs are unique within each issue. Different issues can reuse the same IDs.\n"
+    "When you see the EXISTING TASK TREE, note the [Issue #N] prefix — only avoid collisions within the CURRENT issue.\n\n"
     "If an EXISTING TASK TREE is provided below, assign IDs that reflect relationships:\n"
-    "- New work extending existing branch \"2\" → use \"2.1\", \"2.2\"\n"
-    "- Completely new, unrelated work → use the next unused root ID\n\n"
-    "If NO existing tasks exist, start from \"1\".\n\n"
+    "- New work extending existing branch \"2\" on the current issue → use \"2.1\", \"2.2\"\n"
+    "- Completely new, unrelated work → use the next unused root ID for this issue\n\n"
+    "If NO existing tasks exist for the current issue, start from \"1\".\n\n"
     "## Skills\n"
     "If AVAILABLE SKILLS are listed below, assign relevant skill names to each task's "
     "`skills_required` element. Only assign skills genuinely useful for the task. "
@@ -685,9 +687,11 @@ def planner_plan(state: AgentState) -> dict:
     if exploration_summary:
         parts.append(f"## Codebase Exploration\n{exploration_summary}")
     if existing_tree:
-        tree_lines = [f"- **{t['branch_id']}**: {t['title']} [{t['status']}] (issue #{t['issue_id']}: {truncate(t['objective'], 60)})"
-                      for t in existing_tree]
-        parts.append(f"## Existing Task Tree\n" + "\n".join(tree_lines))
+        tree_lines = [
+            f"- **[Issue #{t['issue_id']}] {t['branch_id']}**: {t['title']} [{t['status']}]"
+            for t in existing_tree
+        ]
+        parts.append("## Existing Task Tree\n" + "\n".join(tree_lines))
     if available_skills:
         skill_lines = []
         for s in available_skills:

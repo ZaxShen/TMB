@@ -239,6 +239,22 @@ class Store:
             if col not in skill_cols:
                 self._conn.execute(f"ALTER TABLE skills ADD COLUMN {col} {spec}")
 
+        # file_registry: add change_type for git-aware tracking
+        fr_cols = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(file_registry)").fetchall()
+        }
+        if "change_type" not in fr_cols:
+            self._conn.execute(
+                "ALTER TABLE file_registry ADD COLUMN change_type TEXT NOT NULL DEFAULT 'unchanged'"
+            )
+
+        # tasks: unique branch_id per issue
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_issue_branch "
+            "ON tasks(issue_id, branch_id)"
+        )
+
         self._conn.commit()
         self._seed_skills()
 
@@ -523,14 +539,32 @@ class Store:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_all_root_tasks(self) -> list[dict]:
-        """Project-wide overview of root-level tasks (no parent) — for Architect context."""
-        rows = self._conn.execute(
-            "SELECT t.branch_id, t.title, t.status, t.issue_id, i.objective "
-            "FROM tasks t JOIN issues i ON t.issue_id = i.id "
-            "WHERE t.parent_branch_id IS NULL "
-            "ORDER BY t.id",
-        ).fetchall()
+    def get_all_root_tasks(self, exclude_statuses: list[str] | None = None) -> list[dict]:
+        """Project-wide overview of root-level tasks (no parent) — for Architect context.
+
+        Args:
+            exclude_statuses: Issue statuses to exclude. Defaults to ["completed", "closed"].
+                              Pass an empty list to include all issues.
+        """
+        if exclude_statuses is None:
+            exclude_statuses = ["completed", "closed"]
+
+        if exclude_statuses:
+            placeholders = ",".join("?" for _ in exclude_statuses)
+            rows = self._conn.execute(
+                "SELECT t.branch_id, t.title, t.status, t.issue_id, i.objective, i.status AS issue_status "
+                "FROM tasks t JOIN issues i ON t.issue_id = i.id "
+                f"WHERE t.parent_branch_id IS NULL AND i.status NOT IN ({placeholders}) "
+                "ORDER BY t.id",
+                exclude_statuses,
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT t.branch_id, t.title, t.status, t.issue_id, i.objective, i.status AS issue_status "
+                "FROM tasks t JOIN issues i ON t.issue_id = i.id "
+                "WHERE t.parent_branch_id IS NULL "
+                "ORDER BY t.id",
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def delete_task_branch(self, prefix: str):
@@ -967,18 +1001,18 @@ class Store:
 
     def upsert_file(self, rel_path: str, file_type: str = "unknown",
                     size_bytes: int = 0, last_hash: str = "",
-                    meta: dict | None = None):
+                    meta: dict | None = None, change_type: str = "unchanged"):
         """Insert or update a project file entry (zero-rescan upgrades)."""
         now = _now()
         meta_json = json.dumps(meta or {})
         self._conn.execute(
             "INSERT INTO file_registry (rel_path, file_type, size_bytes, last_hash, "
-            "discovered_at, updated_at, meta) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "discovered_at, updated_at, meta, change_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(rel_path) DO UPDATE SET "
             "file_type=excluded.file_type, size_bytes=excluded.size_bytes, "
             "last_hash=excluded.last_hash, updated_at=excluded.updated_at, "
-            "meta=excluded.meta",
-            (rel_path, file_type, size_bytes, last_hash, now, now, meta_json),
+            "meta=excluded.meta, change_type=excluded.change_type",
+            (rel_path, file_type, size_bytes, last_hash, now, now, meta_json, change_type),
         )
         self._conn.commit()
 
@@ -1010,6 +1044,20 @@ class Store:
     def file_registry_count(self) -> int:
         row = self._conn.execute("SELECT COUNT(*) FROM file_registry").fetchone()
         return row[0]
+
+    def get_changed_files(self) -> list[dict]:
+        """Return files whose change_type != 'unchanged'."""
+        rows = self._conn.execute(
+            "SELECT * FROM file_registry WHERE change_type != 'unchanged' ORDER BY rel_path"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def reset_change_types(self):
+        """Mark all files as 'unchanged' after the planner has consumed the diff."""
+        self._conn.execute(
+            "UPDATE file_registry SET change_type = 'unchanged' WHERE change_type != 'unchanged'"
+        )
+        self._conn.commit()
 
     # ── Project context (key-value) ────────────────────────
 

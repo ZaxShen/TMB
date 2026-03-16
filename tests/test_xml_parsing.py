@@ -395,3 +395,60 @@ class TestDetectEscalationXml:
             result = self._detect("I need to escalate this task.")
         assert result is True
         assert any("keyword fallback" in r.message for r in caplog.records)
+
+
+# ══════════════════════════════════════════════════════════════
+#  _has_questions — Discussion question detection
+# ══════════════════════════════════════════════════════════════
+
+class TestHasQuestions:
+    """Tests for discussion.py _has_questions()."""
+
+    @staticmethod
+    def _detect(msg: str) -> bool:
+        from tmb.nodes.discussion import _has_questions
+        return _has_questions(msg)
+
+    def test_numbered_question_dot(self):
+        """Numbered list with dots should be detected as questions."""
+        msg = "I analyzed the codebase. Here's what I found:\n\n1. What format should the output be?\n2. Should we keep backward compatibility?"
+        assert self._detect(msg) is True
+
+    def test_numbered_question_paren(self):
+        """Numbered list with parens should be detected as questions."""
+        msg = "Looking at the code:\n\n1) How should I handle errors?\n2) What's the target version?"
+        assert self._detect(msg) is True
+
+    def test_question_mark_inline(self):
+        """Inline question marks should be detected."""
+        msg = "I see the module structure. How should I handle the edge case where input is empty?"
+        assert self._detect(msg) is True
+
+    def test_no_questions_statement(self):
+        """Pure statements with no questions should return False."""
+        msg = "I analyzed the codebase and it looks straightforward. The module structure is clean and I can see the patterns to follow."
+        assert self._detect(msg) is False
+
+    def test_no_questions_action_plan(self):
+        """Action plan without questions should return False."""
+        msg = "Here is my plan:\n- Read the config file\n- Update the parser\n- Add tests\n\nI will proceed with this approach."
+        assert self._detect(msg) is False
+
+    def test_ready_signal_no_questions(self):
+        """TRUST ME BRO message (no questions) should return False."""
+        msg = "I fully understand the requirements. The goals are clear and I have a solid plan.\n\nTRUST ME BRO, LET'S BUILD"
+        assert self._detect(msg) is False
+
+    def test_mixed_statement_then_questions(self):
+        """Message starting with statement but ending with questions should detect."""
+        msg = "I checked the database schema and the API endpoints. Everything looks solid.\n\n1. Should we add rate limiting?\n2. What about authentication?"
+        assert self._detect(msg) is True
+
+    def test_empty_message(self):
+        """Empty message should return False."""
+        assert self._detect("") is False
+
+    def test_single_question_mark(self):
+        """Even a single question mark is enough."""
+        msg = "One thing though — should this be async?"
+        assert self._detect(msg) is True

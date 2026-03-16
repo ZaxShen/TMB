@@ -11,6 +11,8 @@ The discussion is stored in SQLite (permanent) and bro/DISCUSSION.md (current).
 
 from __future__ import annotations
 
+import re
+
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
 from tmb.config import get_llm, get_role_name, get_project_root, load_nodes_config, extract_token_usage
@@ -108,6 +110,18 @@ def _read_owner_answer(path) -> str:
     return answer
 
 
+def _has_questions(message: str) -> bool:
+    """Detect if a planner message contains questions for the owner."""
+    # Numbered questions: "1." or "1)" at start of line
+    if re.search(r'^\s*\d+[.)]\s', message, re.MULTILINE):
+        return True
+    # Question marks (at least one)
+    if '?' in message:
+        return True
+    return False
+
+
+_MAX_AUTO_PROCEED = 3
 _MAX_TOOL_ROUNDS = 10
 
 
@@ -231,6 +245,7 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
         print(f"[DISCUSSION] Yo, your Bro is checking out your goals... 🤙")
 
     token_accum = TokenAccumulator()
+    auto_proceed_count = 0
     while True:
         if not needs_owner_input:
             response, messages = _run_discussion_tool_loop(llm_with_tools, messages, tool_map, token_accum=token_accum)
@@ -259,6 +274,25 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
                 dd = docs_dir().name
                 print(f"  Discussion saved → {dd}/DISCUSSION.md")
                 break
+
+            # Check if the planner asked questions
+            if not _has_questions(planner_msg):
+                # No questions — auto-proceed instead of blocking
+                auto_proceed_count += 1
+                if auto_proceed_count >= _MAX_AUTO_PROCEED:
+                    # Safety: force the planner to commit after too many rounds with no questions
+                    print()
+                    print(f"  [DISCUSSION] Auto-proceeded {_MAX_AUTO_PROCEED} times — forcing alignment.")
+                    auto_response = "Please finalize your analysis and say TRUST ME BRO, LET'S BUILD."
+                else:
+                    print(f"  [DISCUSSION] No questions — proceeding automatically.")
+                    auto_response = "No questions to answer. Proceed with your best judgment."
+
+                store.add_discussion(issue_id, "owner", auto_response)
+                messages.append(HumanMessage(content=auto_response))
+                continue  # Skip user prompt, go back to LLM
+
+            auto_proceed_count = 0  # Reset on user interaction
         else:
             needs_owner_input = False
 
@@ -267,7 +301,7 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
         )
 
         print()
-        print(f"  📝 Edit your answers in {docs_dir().name}/DISCUSSION.md")
+        print(f"  Edit your answers in {docs_dir().name}/DISCUSSION.md")
         input("  Press Enter when you're done, bro...")
 
         owner_answer = _read_owner_answer(discussion_path)

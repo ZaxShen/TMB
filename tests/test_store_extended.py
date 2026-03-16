@@ -90,6 +90,133 @@ def test_get_open_issue_none_when_all_closed(store):
     assert store.get_open_issue() is None
 
 
+# ── Resumable issues + Stale goals detection ─────────────────
+
+
+def test_get_resumable_issue_finds_in_progress(store):
+    """get_resumable_issue() should find in_progress issues (crashed runs)."""
+    issue_id = store.create_issue("Interrupted work", "goals text")
+    # Simulate claim_open_issue setting status to in_progress
+    store._conn.execute(
+        "UPDATE issues SET status = 'in_progress' WHERE id = ?", (issue_id,)
+    )
+    store._conn.commit()
+
+    result = store.get_resumable_issue()
+    assert result is not None
+    assert result["id"] == issue_id
+    assert result["status"] == "in_progress"
+
+
+def test_get_resumable_issue_prefers_most_recent(store):
+    """get_resumable_issue() returns the most recent open/in_progress issue."""
+    id1 = store.create_issue("Old work", "old goals")
+    id2 = store.create_issue("New work", "new goals")
+
+    result = store.get_resumable_issue()
+    assert result["id"] == id2
+
+
+def test_get_resumable_issue_none_when_all_completed(store):
+    """get_resumable_issue() returns None when all issues are completed."""
+    id1 = store.create_issue("Done work", "goals")
+    store.close_issue(id1, "completed")
+
+    assert store.get_resumable_issue() is None
+
+
+def test_create_issue_stores_goals_hash(store):
+    """create_issue() should compute and store MD5 of goals_md."""
+    import hashlib
+
+    goals = "Fix the login bug on the dashboard page"
+    issue_id = store.create_issue("Fix login", goals)
+    issue = store.get_issue(issue_id)
+
+    expected_hash = hashlib.md5(goals.encode()).hexdigest()
+    assert issue["goals_md_hash"] == expected_hash
+    assert len(issue["goals_md_hash"]) == 32
+
+
+def test_create_issue_empty_goals_empty_hash(store):
+    """create_issue() with empty goals should store empty hash."""
+    issue_id = store.create_issue("Quick task")
+    issue = store.get_issue(issue_id)
+    assert issue["goals_md_hash"] == ""
+
+
+def test_find_completed_by_goals_hash_exact_match(store):
+    """find_completed_by_goals_hash() should find a completed issue with matching goals."""
+    import hashlib
+
+    goals = "Refactor the authentication module"
+    issue_id = store.create_issue("Refactor auth", goals)
+    store.close_issue(issue_id, "completed")
+
+    goals_hash = hashlib.md5(goals.encode()).hexdigest()
+    result = store.find_completed_by_goals_hash(goals_hash)
+    assert result is not None
+    assert result["id"] == issue_id
+    assert result["status"] == "completed"
+
+
+def test_find_completed_by_goals_hash_no_match(store):
+    """find_completed_by_goals_hash() returns None when no issue matches."""
+    import hashlib
+
+    issue_id = store.create_issue("Some task", "original goals")
+    store.close_issue(issue_id, "completed")
+
+    different_hash = hashlib.md5(b"completely different goals").hexdigest()
+    assert store.find_completed_by_goals_hash(different_hash) is None
+
+
+def test_find_completed_by_goals_hash_ignores_open(store):
+    """find_completed_by_goals_hash() should only match completed/failed, not open."""
+    import hashlib
+
+    goals = "Build the API endpoint"
+    issue_id = store.create_issue("Build API", goals)
+    # Issue is still open — should NOT be found
+
+    goals_hash = hashlib.md5(goals.encode()).hexdigest()
+    assert store.find_completed_by_goals_hash(goals_hash) is None
+
+
+def test_find_completed_by_goals_hash_empty_hash(store):
+    """find_completed_by_goals_hash('') should return None (no false positives)."""
+    issue_id = store.create_issue("Task", "some goals")
+    store.close_issue(issue_id, "completed")
+
+    assert store.find_completed_by_goals_hash("") is None
+
+
+def test_get_recent_completed_issues(store):
+    """get_recent_completed_issues() returns completed/failed issues, most recent first."""
+    id1 = store.create_issue("Task A", "goals a")
+    store.close_issue(id1, "completed")
+
+    id2 = store.create_issue("Task B", "goals b")
+    store.close_issue(id2, "failed")
+
+    id3 = store.create_issue("Task C", "goals c")  # still open
+
+    results = store.get_recent_completed_issues(5)
+    assert len(results) == 2
+    assert results[0]["id"] == id2  # most recent first
+    assert results[1]["id"] == id1
+
+
+def test_get_recent_completed_issues_respects_limit(store):
+    """get_recent_completed_issues() should respect the limit parameter."""
+    for i in range(5):
+        iid = store.create_issue(f"Task {i}", f"goals {i}")
+        store.close_issue(iid, "completed")
+
+    results = store.get_recent_completed_issues(3)
+    assert len(results) == 3
+
+
 def test_get_first_actionable_task(store):
     issue_id = store.create_issue("Multi-task")
     blueprint = [

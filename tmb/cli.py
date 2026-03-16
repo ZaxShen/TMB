@@ -16,6 +16,8 @@ Usage:
 
 from __future__ import annotations
 
+import difflib
+import hashlib
 import json
 import re
 import subprocess
@@ -63,6 +65,58 @@ def _read_goals_md() -> str:
         sys.exit(1)
 
     return goals_md
+
+
+def _check_stale_goals(store: Store, goals_md: str) -> bool:
+    """Check if current goals match or closely resemble a completed issue.
+
+    Returns True if the user should NOT proceed (stale/duplicate goals detected).
+    Returns False if the user should proceed normally.
+    """
+    goals_hash = hashlib.md5(goals_md.encode()).hexdigest()
+
+    # Tier 1: Exact match via MD5 hash
+    exact = store.find_completed_by_goals_hash(goals_hash)
+    if exact:
+        print(f"\n[TMB] ✅ Issue #{exact['id']} already completed these goals.")
+        print(f"[TMB]    Status: {exact['status']}  |  {exact['objective']}")
+        print(f"[TMB]    To start new work, update GOALS.md with new goals.")
+        _cleanup_completed_issue(store, exact["id"], store.get_tasks(exact["id"]))
+        return True
+
+    # Tier 2: Near-match via similarity (length pre-filter + SequenceMatcher)
+    recent = store.get_recent_completed_issues(5)
+    if not recent:
+        return False
+
+    goals_len = len(goals_md)
+    for issue in recent:
+        prev_goals = issue.get("goals_md", "")
+        if not prev_goals:
+            continue
+
+        # Quick pre-filter: if char count differs by >50%, skip (clearly different)
+        prev_len = len(prev_goals)
+        if prev_len == 0:
+            continue
+        length_ratio = min(goals_len, prev_len) / max(goals_len, prev_len)
+        if length_ratio < 0.5:
+            continue
+
+        # SequenceMatcher for actual content similarity
+        ratio = difflib.SequenceMatcher(None, goals_md, prev_goals).ratio()
+        if ratio > 0.85:
+            pct = int(ratio * 100)
+            print(f"\n[TMB] ⚠️  These goals look {pct}% similar to completed issue #{issue['id']}.")
+            print(f"[TMB]    Issue #{issue['id']}: {issue['objective']}")
+            choice = input("  (c)ontinue with new issue / (u)pdate GOALS.md first? ").strip().lower()
+            if choice in ("u", "update"):
+                print("[TMB] Update GOALS.md with new goals, then run again.")
+                return True
+            # User chose to continue — don't check remaining issues
+            return False
+
+    return False
 
 
 def _derive_objective(goals_md: str) -> str:
@@ -1599,7 +1653,7 @@ def run():
 
     ensure_dirs()
     store = Store()
-    existing = store.get_open_issue()
+    existing = store.get_resumable_issue()
 
     if existing:
         goals_md = _read_goals_md()
@@ -1618,6 +1672,9 @@ def run():
     if existing:
         _resume(store, existing)
     else:
+        goals_md = _read_goals_md()
+        if _check_stale_goals(store, goals_md):
+            return
         _fresh_start(store)
 
 

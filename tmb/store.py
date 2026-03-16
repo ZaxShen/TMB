@@ -14,6 +14,7 @@ Tables:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -55,6 +56,7 @@ class Store:
                 parent_issue_id   INTEGER REFERENCES issues(id),
                 objective         TEXT    NOT NULL,
                 goals_md          TEXT    NOT NULL DEFAULT '',
+                goals_md_hash     TEXT    NOT NULL DEFAULT '',
                 status            TEXT    NOT NULL DEFAULT 'open',
                 current_task_id   INTEGER REFERENCES tasks(id),
                 created_at        TEXT    NOT NULL,
@@ -210,6 +212,10 @@ class Store:
         }
         if "parent_issue_id" not in issue_cols:
             self._conn.execute("ALTER TABLE issues ADD COLUMN parent_issue_id INTEGER")
+        if "goals_md_hash" not in issue_cols:
+            self._conn.execute(
+                "ALTER TABLE issues ADD COLUMN goals_md_hash TEXT NOT NULL DEFAULT ''"
+            )
 
         ledger_cols = {
             row[1]
@@ -329,10 +335,11 @@ class Store:
 
     def create_issue(self, objective: str, goals_md: str = "", parent_issue_id: int | None = None) -> int:
         now = _now()
+        goals_hash = hashlib.md5(goals_md.encode()).hexdigest() if goals_md else ""
         cur = self._conn.execute(
-            "INSERT INTO issues (objective, goals_md, parent_issue_id, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, 'open', ?, ?)",
-            (objective, goals_md, parent_issue_id, now, now),
+            "INSERT INTO issues (objective, goals_md, goals_md_hash, parent_issue_id, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'open', ?, ?)",
+            (objective, goals_md, goals_hash, parent_issue_id, now, now),
         )
         self._conn.commit()
         issue_id = cur.lastrowid
@@ -360,11 +367,38 @@ class Store:
         row = self._conn.execute("SELECT * FROM issues WHERE id = ?", (issue_id,)).fetchone()
         return dict(row) if row else None
 
-    def get_open_issue(self) -> dict | None:
+    def get_resumable_issue(self) -> dict | None:
+        """Find the most recent open or in-progress issue."""
         row = self._conn.execute(
-            "SELECT * FROM issues WHERE status = 'open' ORDER BY id DESC LIMIT 1"
+            "SELECT * FROM issues WHERE status IN ('open', 'in_progress') "
+            "ORDER BY id DESC LIMIT 1"
         ).fetchone()
         return dict(row) if row else None
+
+    def get_open_issue(self) -> dict | None:
+        """Deprecated: use get_resumable_issue(). Kept for backward compat."""
+        return self.get_resumable_issue()
+
+    def find_completed_by_goals_hash(self, goals_hash: str) -> dict | None:
+        """Find the most recent completed/failed issue with matching goals hash."""
+        if not goals_hash:
+            return None
+        row = self._conn.execute(
+            "SELECT * FROM issues WHERE goals_md_hash = ? "
+            "AND status IN ('completed', 'failed') "
+            "ORDER BY id DESC LIMIT 1",
+            (goals_hash,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_recent_completed_issues(self, limit: int = 5) -> list[dict]:
+        """Return recent completed/failed issues for similarity checking."""
+        rows = self._conn.execute(
+            "SELECT * FROM issues WHERE status IN ('completed', 'failed') "
+            "ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def claim_open_issue(self) -> dict | None:
         """Atomically find and claim the latest open issue (race-safe).

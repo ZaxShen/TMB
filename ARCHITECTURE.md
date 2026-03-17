@@ -7,6 +7,7 @@
 
 ## Table of Contents
 
+- [Developer Setup](#developer-setup)
 - [Why This Architecture](#why-this-architecture)
 - [Workflow](#workflow)
 - [How Trust Is Enforced (Technical Detail)](#how-trust-is-enforced-technical-detail)
@@ -20,6 +21,55 @@
 - [MCP Integration](#mcp-integration)
 - [Self-Evolution](#self-evolution)
 - [Design Principles](#design-principles)
+
+---
+
+## Developer Setup
+
+> Non-technical users: see [README.md](README.md) — just run `./bro`.
+
+This section is for developers who prefer `uv` directly, need optional providers, or contribute to TMB.
+
+### Prerequisites
+
+- [uv](https://docs.astral.sh/uv/) — auto-installed by `./TMB/install` if missing
+- Python 3.13+ — auto-installed by `uv` if missing
+- An LLM API key (see [Configuration](#configuration))
+
+### Install
+
+```bash
+cd your-project/
+git clone https://github.com/ZaxShen/TMB.git
+./TMB/install          # installs uv (if needed), creates venv, creates ./bro wrapper
+```
+
+### Commands
+
+The `./bro` wrapper (created by install) is equivalent to `uv run tmb`:
+
+| User command | Developer equivalent | What it does |
+|---|---|---|
+| `./bro` | `uv run tmb` | Full workflow — goals, discuss, plan, execute |
+| `./bro "fix the bug"` | `uv run tmb "fix the bug"` | Quick task — auto-approved |
+| `./bro chat` | `uv run tmb chat` | Interactive chat |
+| `./bro scan` | `uv run tmb scan` | Scan project files |
+| `./bro log` | `uv run tmb log` | Show recent issues |
+| `./bro log 3` | `uv run tmb log 3` | Issue details |
+| `./bro report 3` | `uv run tmb report 3` | Export markdown report |
+| `./bro tokens` | `uv run tmb tokens` | Token usage |
+| `./bro setup` | `uv run tmb setup` | Re-run setup |
+| `./bro evolve "..."` | `uv run tmb evolve "..."` | Self-evolution |
+| `./bro serve` | `uv run tmb serve` | MCP server (stdio) |
+| `./bro serve --http 8080` | `uv run tmb serve --http 8080` | MCP server (HTTP) |
+
+### Running Tests
+
+```bash
+cd TMB/
+uv run pytest tests/
+uv run ruff check tmb/
+```
 
 ---
 
@@ -403,7 +453,8 @@ Same for `executor.md`. Template variables `{role_owner}`, `{role_planner}`, `{r
 ## Project Structure
 
 ```
-your-project/                    # <- project root (run `uv run tmb` here)
+your-project/                    # <- project root (run `./bro` here)
+|-- bro                          # <- run this (./bro)
 |-- .venv/                       # <- shared venv (TMB deps + your deps)
 |-- pyproject.toml               # <- references TMB as path dependency
 |-- .env                         # <- API keys (gitignored)
@@ -480,8 +531,8 @@ MCP tools are auto-discovered at startup, converted to LangChain tools, and pref
 Expose TMB's store and workflow to external hosts (Claude Desktop, Cursor):
 
 ```bash
-tmb serve              # stdio (for Claude Desktop / Cursor)
-tmb serve --http 8080  # HTTP (for remote access)
+./bro serve              # stdio (for Claude Desktop / Cursor)
+./bro serve --http 8080  # HTTP (for remote access)
 ```
 
 **Exposed tools**: `tmb_list_issues`, `tmb_get_tasks`, `tmb_get_ledger`, `tmb_get_skills`, `tmb_query_branch`, `tmb_quick_task`, `tmb_export_report`
@@ -493,9 +544,8 @@ Claude Desktop config:
 {
   "mcpServers": {
     "tmb": {
-      "command": "uv",
-      "args": ["run", "tmb", "serve"],
-      "cwd": "/path/to/your-project"
+      "command": "/path/to/your-project/bro",
+      "args": ["serve"]
     }
   }
 }
@@ -512,7 +562,8 @@ The Planner can scaffold project-specific MCP servers using the `mcp_generate` t
 TMB can modify its own source code through a guarded flow:
 
 ```bash
-uv run tmb evolve "add a new CLI command to export tasks as CSV"
+./bro evolve "add a new CLI command to export tasks as CSV"
+# Developer equivalent: uv run tmb evolve "..."
 ```
 
 Safety gates:

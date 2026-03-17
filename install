@@ -7,6 +7,19 @@ TMB_REL="$(basename "$SCRIPT_DIR")"
 
 cd "$PROJECT_ROOT"
 
+# Ensure uv is available
+if ! command -v uv &> /dev/null; then
+    echo "[TMB] Installing uv (Python package manager)..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+    if ! command -v uv &> /dev/null; then
+        echo "[TMB] ERROR: Failed to install uv. Install manually: https://docs.astral.sh/uv/"
+        exit 1
+    fi
+    echo "[TMB] uv installed successfully."
+    echo
+fi
+
 echo "[TMB] Installing into $(basename "$PROJECT_ROOT")/"
 echo
 
@@ -37,6 +50,16 @@ fi
 uv sync 2>&1 | tail -1
 echo
 
-echo "[TMB] Ready. Next steps:"
-echo "  uv run tmb              # first run will walk you through setup"
+# Create bro wrapper script
+if [ ! -f "$PROJECT_ROOT/bro" ]; then
+    cat > "$PROJECT_ROOT/bro" <<'WRAPPER'
+#!/usr/bin/env bash
+exec "$(dirname "$0")/.venv/bin/tmb" "$@"
+WRAPPER
+    chmod +x "$PROJECT_ROOT/bro"
+    echo "  Created ./bro"
+fi
+
+echo "[TMB] Ready. Run:"
+echo "  ./bro                   # first run walks you through setup"
 echo

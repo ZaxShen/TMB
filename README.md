@@ -33,7 +33,7 @@ The key insight: **you stay at the system-design level**. You never argue about 
 
 **4. Everything is recorded.** Every discussion, decision, tool call, and validation result is persisted in SQLite. Run `tmb report 3` six months later and reconstruct exactly what happened, why, and what the agents saw.
 
-**5. You can interrupt anytime.** Close your laptop mid-task. Run `uv run tmb` again — it picks up exactly where it left off. State lives in the database, not in memory.
+**5. You can interrupt anytime.** Close your laptop mid-task. Run `./bro` again — it picks up exactly where it left off. State lives in the database, not in memory.
 
 ---
 
@@ -58,7 +58,7 @@ No special syntax required. Write like you're explaining to a colleague.
 ### 2. Run TMB
 
 ```bash
-uv run tmb
+./bro
 ```
 
 TMB reads your goals, then the Planner will ask you clarifying questions in `bro/DISCUSSION.md`. Open that file, write your answers below the marker, save, and press Enter in the terminal.
@@ -77,7 +77,7 @@ Everything else happens automatically:
 
 ## Setup
 
-**Prerequisites**: [uv](https://docs.astral.sh/uv/) and an LLM API key (Anthropic, OpenAI, Google, Groq, Mistral, DeepSeek — or Ollama for local models).
+**Prerequisites**: Python 3.13+ (the installer handles everything else) and an LLM API key (Anthropic, OpenAI, Google, Groq, Mistral, DeepSeek — or Ollama for local models).
 
 **New project:**
 
@@ -85,7 +85,7 @@ Everything else happens automatically:
 cd your-project/
 git clone https://github.com/ZaxShen/TMB.git
 ./TMB/install
-uv run tmb
+./bro
 ```
 
 **Joining an existing project** (someone already set up TMB):
@@ -93,15 +93,16 @@ uv run tmb
 ```bash
 cd your-project/
 ./TMB/install
-uv run tmb
+./bro
 ```
 
-The install script creates `pyproject.toml` (if needed) and installs dependencies. The first time you run `uv run tmb`, TMB walks you through naming your project, choosing an LLM provider, and setting your API key — then continues straight into the workflow.
+The install script handles everything — Python dependencies, package setup, and creating the `./bro` command. The first time you run `./bro`, TMB walks you through naming your project, choosing an LLM provider, and setting your API key — then continues straight into the workflow.
 
 After setup your project looks like this:
 
 ```
 your-project/
+├── bro               ← run this (./bro)
 ├── bro/              ← you interact here (GOALS.md, DISCUSSION.md)
 ├── .tmb/             ← runtime state (automatic, hidden)
 ├── TMB/              ← framework (don't touch)
@@ -113,29 +114,44 @@ your-project/
 
 To update TMB later: `cd TMB && git pull origin dev && cd .. && ./TMB/install`
 
+> **Developers**: `uv run tmb` also works if you prefer. See [ARCHITECTURE.md](ARCHITECTURE.md) for developer setup, optional providers, and technical details.
+
 ---
 
 ## Quick Commands
 
 
-| Command                          | What it does                                                 |
-| -------------------------------- | ------------------------------------------------------------ |
-| `uv run tmb`                     | Full workflow — reads your goals, discusses, plans, executes |
-| `uv run tmb "fix the login bug"` | Quick task — skips discussion, auto-approves the plan        |
-| `uv run tmb chat`                | Interactive chat with the planner (read-only exploration)    |
-| `uv run tmb scan`                | Scan project for TMB context (file registry, git history)    |
-| `uv run tmb log`                 | Show recent issues                                           |
-| `uv run tmb log 3`               | Show details for issue #3                                    |
-| `uv run tmb report 3`            | Export a full markdown report for issue #3                   |
-| `uv run tmb tokens`              | Show token usage across all issues                           |
-| `uv run tmb tokens 3`            | Show token usage for issue #3                                |
-| `uv run tmb setup`               | Re-run setup (change LLM provider, role names, etc.)         |
-| `uv run tmb evolve "..."`        | Self-modify TMB's own code (guarded, git-snapshotted)        |
-| `uv run tmb serve`               | Expose TMB as an MCP server (for Claude Desktop, Cursor)     |
+| Command                        | What it does                                                 |
+| ------------------------------ | ------------------------------------------------------------ |
+| `./bro`                        | Full workflow — reads your goals, discusses, plans, executes |
+| `./bro "fix the login bug"`    | Quick task — skips discussion, auto-approves the plan        |
+| `./bro chat`                   | Interactive chat with the planner (read-only exploration)    |
+| `./bro scan`                   | Scan project for TMB context (file registry, git history)    |
+| `./bro log`                    | Show recent issues                                           |
+| `./bro log 3`                  | Show details for issue #3                                    |
+| `./bro report 3`               | Export a full markdown report for issue #3                   |
+| `./bro tokens`                 | Show token usage across all issues                           |
+| `./bro tokens 3`               | Show token usage for issue #3                                |
+| `./bro setup`                  | Re-run setup (change LLM provider, role names, etc.)         |
+| `./bro evolve "..."`           | Self-modify TMB's own code (guarded, git-snapshotted)        |
+| `./bro serve`                  | Expose TMB as an MCP server (for Claude Desktop, Cursor)     |
 
 ### MCP — External Integrations
 
 Need Notion, GitHub, Slack, or any other service? No problem — Trust Me Bro, your agents can connect to anything via [MCP](https://modelcontextprotocol.io/). Configure in `.tmb/config/mcp.yaml`. See [ARCHITECTURE.md § MCP Integration](ARCHITECTURE.md#mcp-integration) for details.
+
+To use TMB as an MCP server in Claude Desktop or Cursor, add this to your MCP config:
+
+```json
+{
+  "mcpServers": {
+    "tmb": {
+      "command": "/path/to/your-project/bro",
+      "args": ["serve"]
+    }
+  }
+}
+```
 
 ---
 

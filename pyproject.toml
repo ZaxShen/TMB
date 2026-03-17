@@ -1,6 +1,6 @@
 [project]
 name = "trustmybot"
-version = "0.3.1"
+version = "0.3.2"
 description = "Multi-agent workflow engine for industrial-grade software projects: Project Owner → Planner → Executor → Validator."
 readme = "README.md"
 requires-python = ">=3.13"

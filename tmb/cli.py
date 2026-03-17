@@ -1949,11 +1949,41 @@ def chat():
                 break
 
 
+def _check_llm_config():
+    """Verify the LLM config will actually work before making any calls.
+
+    Catches the case where a user upgraded from an older version that didn't
+    write nodes.yaml during setup — they'd silently fall back to Anthropic
+    with no API key and crash.
+    """
+    import os
+    from tmb.config import load_nodes_config, _PROVIDERS
+
+    nodes_yaml = user_cfg_dir() / "nodes.yaml"
+    if nodes_yaml.exists():
+        return  # User has explicit config — trust it
+
+    # No nodes.yaml → using defaults (Anthropic). Check if that'll work.
+    try:
+        cfg = load_nodes_config()
+        provider = cfg.get("planner", {}).get("model", {}).get("provider", "anthropic")
+        _, _, env_var = _PROVIDERS.get(provider, (None, None, None))
+        if env_var and not os.environ.get(env_var):
+            print(f"[TMB] ⚠️  No LLM configured — no {env_var} found and no nodes.yaml.")
+            print(f"[TMB]    Run `bro setup` to pick your LLM provider.")
+            print()
+            setup()
+    except Exception:
+        pass
+
+
 def run():
     """Phase-aware entry point: resumes an open issue or starts fresh."""
     if _is_first_run():
         print("[TMB] First time? Let's get you set up, bro.\n")
         setup()
+
+    _check_llm_config()
 
     ensure_dirs()
     store = Store()
@@ -2122,6 +2152,7 @@ def main():
         else:
             run_server(transport="stdio")
     elif cmd not in _KNOWN_COMMANDS:
+        _check_llm_config()
         instruction = " ".join(sys.argv[1:])
         store = Store()
         _quick_task(store, instruction)

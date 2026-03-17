@@ -274,6 +274,17 @@ def _approve_blueprint(store: Store, issue_id: int) -> bool:
     return True
 
 
+def _maybe_suggest_scan(store: Store, project_root) -> None:
+    """Suggest running 'tmb scan' if the project hasn't been scanned yet."""
+    try:
+        count = store._conn.execute("SELECT COUNT(*) FROM file_registry").fetchone()[0]
+        if count == 0:
+            print("[TMB] 💡 Tip: run `bro scan` first for better results (scans your project for context).")
+    except Exception:
+        # Table might not exist yet — that's fine, skip silently
+        pass
+
+
 def _quick_task(store: Store, instruction: str):
     """Quick-task flow: same pipeline as full workflow, minus discussion and manual approval.
 
@@ -1984,7 +1995,7 @@ def tokens(issue_id: int | None = None):
     print()
 
 
-_KNOWN_COMMANDS = {"setup", "log", "report", "tokens", "serve", "evolve", "chat", "scan", "upgrade", "version", "help", "--help", "-h"}
+_KNOWN_COMMANDS = {"setup", "log", "report", "tokens", "serve", "evolve", "chat", "scan", "upgrade", "version", "help", "--help", "-h", "--version", "-v"}
 
 
 def main():
@@ -1993,6 +2004,15 @@ def main():
         return
 
     cmd = sys.argv[1]
+
+    if cmd in ("version", "--version", "-v"):
+        import importlib.metadata
+        try:
+            v = importlib.metadata.version("trustmybot")
+        except importlib.metadata.PackageNotFoundError:
+            v = "dev"
+        print(f"Trust Me Bro v{v}")
+        return
 
     if cmd == "setup":
         setup()
@@ -2020,13 +2040,6 @@ def main():
         scan()
     elif cmd == "upgrade":
         upgrade()
-    elif cmd == "version":
-        import importlib.metadata
-        try:
-            v = importlib.metadata.version("trustmybot")
-        except importlib.metadata.PackageNotFoundError:
-            v = "dev"
-        print(f"Trust Me Bro v{v}")
     elif cmd == "serve":
         from tmb.mcp.server import run_server
         if "--http" in sys.argv:

@@ -1745,61 +1745,60 @@ def upgrade():
     channel = _detect_install_channel()
 
     print()
-    print(f"  🤙 Upgrading Trust Me Bro ({channel})...")
+    print(f"  🤙 Trust Me Bro ({channel})")
     print(f"     Current version: {current}")
     print()
 
-    # Build the right uv command based on channel
+    # Dev channel: self-upgrade from git
     if channel == "dev":
-        uv_cmd = [
-            "uv", "tool", "install", "--upgrade", "--reinstall",
-            "--from", "git+https://github.com/ZaxShen/TMB@dev",
-            "trustmybot",
-        ]
-    else:
-        uv_cmd = ["uv", "tool", "upgrade", "trustmybot"]
-
-    try:
-        result = subprocess.run(
-            uv_cmd, capture_output=True, text=True, timeout=120,
-        )
-        if result.returncode == 0:
-            try:
-                new_version_line = [l for l in result.stdout.splitlines() if "trustmybot" in l.lower()]
-                if new_version_line:
-                    print(f"  {new_version_line[-1].strip()}")
-                else:
-                    print(result.stdout.strip() if result.stdout.strip() else "  ✅ Already on the latest version.")
-            except Exception:
-                print("  ✅ Upgrade complete.")
-            print()
-        else:
-            stderr = result.stderr.strip()
-            print(f"  ⚠️  Upgrade failed: {stderr}")
-            print()
-            print("  Try manually:")
-            if channel == "dev":
-                print('    uv tool install --upgrade --reinstall --from "git+https://github.com/ZaxShen/TMB@dev" trustmybot')
-            else:
-                print("    uv tool upgrade trustmybot")
-            print()
-    except FileNotFoundError:
-        print("  ⚠️  'uv' not found. Trying pip...")
+        print("  Upgrading from dev branch...")
+        print()
         try:
-            if channel == "dev":
-                pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade",
-                           "trustmybot @ git+https://github.com/ZaxShen/TMB@dev"]
-            else:
-                pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "trustmybot"]
             result = subprocess.run(
-                pip_cmd, capture_output=True, text=True, timeout=120,
+                ["uv", "tool", "install", "--upgrade", "--reinstall",
+                 "--from", "git+https://github.com/ZaxShen/TMB@dev",
+                 "trustmybot"],
+                capture_output=True, text=True, timeout=120,
             )
             if result.returncode == 0:
-                print("  ✅ Upgrade complete.")
+                try:
+                    new_version_line = [l for l in result.stdout.splitlines() if "trustmybot" in l.lower()]
+                    if new_version_line:
+                        print(f"  {new_version_line[-1].strip()}")
+                    else:
+                        print(result.stdout.strip() if result.stdout.strip() else "  ✅ Already on the latest version.")
+                except Exception:
+                    print("  ✅ Upgrade complete.")
             else:
-                print(f"  ❌ Upgrade failed: {result.stderr.strip()}")
-        except Exception as e:
-            print(f"  ❌ Upgrade failed: {e}")
+                print(f"  ⚠️  Upgrade failed: {result.stderr.strip()}")
+                print()
+                print("  Try manually:")
+                print('    uv tool install --upgrade --reinstall --from "git+https://github.com/ZaxShen/TMB@dev" trustmybot')
+        except FileNotFoundError:
+            print("  ⚠️  'uv' not found. Trying pip...")
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "--upgrade",
+                     "trustmybot @ git+https://github.com/ZaxShen/TMB@dev"],
+                    capture_output=True, text=True, timeout=120,
+                )
+                if result.returncode == 0:
+                    print("  ✅ Upgrade complete.")
+                else:
+                    print(f"  ❌ Upgrade failed: {result.stderr.strip()}")
+            except Exception as e:
+                print(f"  ❌ Upgrade failed: {e}")
+        print()
+
+    # Stable channel: show manual instructions
+    else:
+        print("  To upgrade, run one of these:")
+        print()
+        print("    uv tool upgrade trustmybot")
+        print()
+        print("  or:")
+        print()
+        print("    pip install --upgrade trustmybot")
         print()
 
 

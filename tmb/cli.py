@@ -1496,7 +1496,38 @@ def setup():
                     env_lines.append(f"{env_var}={api_key}")
                     llm_configured = True
             if extra_pkg:
-                print(f"    Heads up — install the provider:  uv add {extra_pkg}")
+                _is_tool_install = not TMB_ROOT.resolve().is_relative_to(project_root.resolve())
+                if _is_tool_install:
+                    # Auto-install the provider package into the tool environment
+                    pip_pkg = extra_pkg.split("[")[1].rstrip("]")  # "tmb[ollama]" → "ollama"
+                    lang_pkg = f"langchain-{pip_pkg}"
+                    print(f"    Installing {lang_pkg}...")
+                    channel = _detect_install_channel()
+                    if channel == "dev":
+                        from_src = "git+https://github.com/ZaxShen/TMB@dev"
+                    else:
+                        from_src = "trustmybot"
+                    try:
+                        result = subprocess.run(
+                            ["uv", "tool", "install", "--upgrade", "--reinstall",
+                             "--from", from_src, "trustmybot",
+                             "--with", lang_pkg],
+                            capture_output=True, text=True, timeout=180,
+                        )
+                        if result.returncode == 0:
+                            print(f"    ✅ {lang_pkg} installed.")
+                        else:
+                            # Fallback: try pip install directly
+                            subprocess.run(
+                                [sys.executable, "-m", "pip", "install", lang_pkg],
+                                capture_output=True, text=True, timeout=120,
+                            )
+                            print(f"    ✅ {lang_pkg} installed (via pip).")
+                    except Exception:
+                        print(f"    ⚠️  Couldn't auto-install {lang_pkg}.")
+                        print(f"    Install manually: pip install {lang_pkg}")
+                else:
+                    print(f"    Heads up — install the provider:  uv add {extra_pkg}")
 
         if env_lines:
             env_path.write_text("\n".join(env_lines) + "\n")
@@ -1800,17 +1831,21 @@ def upgrade():
                 ["uv", "tool", "install", "--upgrade", "--reinstall",
                  "--from", "git+https://github.com/ZaxShen/TMB@dev",
                  "trustmybot"],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, timeout=180,
             )
             if result.returncode == 0:
-                try:
-                    new_version_line = [l for l in result.stdout.splitlines() if "trustmybot" in l.lower()]
-                    if new_version_line:
-                        print(f"  {new_version_line[-1].strip()}")
-                    else:
-                        print(result.stdout.strip() if result.stdout.strip() else "  ✅ Already on the latest version.")
-                except Exception:
+                # Get the new version from a fresh process (our importlib cache is stale)
+                new_ver = subprocess.run(
+                    ["bro", "--version"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                new_version = new_ver.stdout.strip() if new_ver.returncode == 0 else None
+                if new_version:
+                    print(f"  ✅ {new_version}")
+                else:
                     print("  ✅ Upgrade complete.")
+                if current != "unknown" and new_version and current in new_version:
+                    print(f"     (already on latest)")
             else:
                 print(f"  ⚠️  Upgrade failed: {result.stderr.strip()}")
                 print()

@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ── Channel ──────────────────────────────────────────────
+# "stable" = PyPI release   (main branch)
+# "dev"    = latest dev      (dev branch, installed from git)
+CHANNEL="dev"
+
 echo
-echo "  🤙  Installing Trust My Bot..."
+echo "  🤙  Installing Trust My Bot ($CHANNEL)..."
 echo
 
 # 1. Install uv if missing
@@ -20,8 +25,13 @@ if ! command -v uv &> /dev/null; then
 fi
 
 # 2. Install trustmybot globally
-echo "  Installing trustmybot..."
-uv tool install --upgrade trustmybot 2>&1 | tail -3
+if [ "$CHANNEL" = "dev" ]; then
+    echo "  Installing trustmybot (dev branch)..."
+    uv tool install --upgrade --reinstall --from "git+https://github.com/ZaxShen/TMB@dev" trustmybot 2>&1 | tail -3
+else
+    echo "  Installing trustmybot (stable)..."
+    uv tool install --upgrade trustmybot 2>&1 | tail -3
+fi
 echo
 
 echo "  ✅ Done! Run 'bot' in your project directory:"
@@ -31,4 +41,5 @@ echo "     bot                    # first run walks you through setup"
 echo "     bot \"fix the login\"    # quick task"
 echo
 echo "  Alias: 'bro' also works."
+echo "  Upgrade anytime: bro upgrade"
 echo

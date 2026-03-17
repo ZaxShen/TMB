@@ -82,8 +82,10 @@ Everything else happens automatically:
 **Install** (one command):
 
 ```bash
-curl -LsSf https://raw.githubusercontent.com/ZaxShen/TMB/dev/get-bro.sh | sh
+curl -LsSf https://raw.githubusercontent.com/ZaxShen/TMB/main/get-bro.sh | sh
 ```
+
+> **Bleeding edge?** Install from dev: `curl -LsSf https://raw.githubusercontent.com/ZaxShen/TMB/dev/get-bro.sh | sh`
 
 **Start:**
 

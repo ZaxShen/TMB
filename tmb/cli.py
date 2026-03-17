@@ -1709,8 +1709,31 @@ def _human_bytes(n: int) -> str:
     return f"{n:.1f}TB"
 
 
+def _detect_install_channel() -> str:
+    """Detect whether TMB was installed from PyPI (stable) or git (dev).
+
+    Reads PEP 610 direct_url.json from the installed distribution:
+      - Git URL containing '@dev' → "dev"
+      - Anything else (PyPI, editable, unknown) → "stable"
+    """
+    import importlib.metadata
+
+    try:
+        dist = importlib.metadata.distribution("trustmybot")
+        raw = dist.read_text("direct_url.json")
+        if raw:
+            info = json.loads(raw)
+            url = info.get("url", "")
+            vcs = info.get("vcs_info", {})
+            if "github.com" in url and vcs.get("requested_revision") == "dev":
+                return "dev"
+    except Exception:
+        pass
+    return "stable"
+
+
 def upgrade():
-    """Upgrade TMB to the latest version."""
+    """Upgrade TMB to the latest version, respecting install channel."""
     import importlib.metadata
 
     # Show current version
@@ -1719,56 +1742,64 @@ def upgrade():
     except importlib.metadata.PackageNotFoundError:
         current = "unknown"
 
+    channel = _detect_install_channel()
+
     print()
-    print(f"  🤙 Upgrading Trust Me Bro...")
+    print(f"  🤙 Upgrading Trust Me Bro ({channel})...")
     print(f"     Current version: {current}")
     print()
 
-    # Run uv tool upgrade
+    # Build the right uv command based on channel
+    if channel == "dev":
+        uv_cmd = [
+            "uv", "tool", "install", "--upgrade", "--reinstall",
+            "--from", "git+https://github.com/ZaxShen/TMB@dev",
+            "trustmybot",
+        ]
+    else:
+        uv_cmd = ["uv", "tool", "upgrade", "trustmybot"]
+
     try:
         result = subprocess.run(
-            ["uv", "tool", "upgrade", "trustmybot"],
-            capture_output=True, text=True, timeout=120,
+            uv_cmd, capture_output=True, text=True, timeout=120,
         )
         if result.returncode == 0:
-            # Get new version
             try:
-                # Re-check — but since we're in the same process, importlib cache won't refresh.
-                # Parse it from uv output instead, or just tell them to check.
                 new_version_line = [l for l in result.stdout.splitlines() if "trustmybot" in l.lower()]
                 if new_version_line:
                     print(f"  {new_version_line[-1].strip()}")
                 else:
-                    print(result.stdout.strip() if result.stdout.strip() else "  Already on the latest version.")
+                    print(result.stdout.strip() if result.stdout.strip() else "  ✅ Already on the latest version.")
             except Exception:
                 print("  ✅ Upgrade complete.")
             print()
         else:
-            # uv not found or other error — try pip as fallback
             stderr = result.stderr.strip()
             print(f"  ⚠️  Upgrade failed: {stderr}")
             print()
             print("  Try manually:")
-            print("    uv tool upgrade trustmybot")
-            print("  or:")
-            print("    pip install --upgrade trustmybot")
+            if channel == "dev":
+                print('    uv tool install --upgrade --reinstall --from "git+https://github.com/ZaxShen/TMB@dev" trustmybot')
+            else:
+                print("    uv tool upgrade trustmybot")
             print()
     except FileNotFoundError:
-        # uv not available at all
         print("  ⚠️  'uv' not found. Trying pip...")
         try:
+            if channel == "dev":
+                pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade",
+                           "trustmybot @ git+https://github.com/ZaxShen/TMB@dev"]
+            else:
+                pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "trustmybot"]
             result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--upgrade", "trustmybot"],
-                capture_output=True, text=True, timeout=120,
+                pip_cmd, capture_output=True, text=True, timeout=120,
             )
             if result.returncode == 0:
                 print("  ✅ Upgrade complete.")
             else:
                 print(f"  ❌ Upgrade failed: {result.stderr.strip()}")
-                print("  Try manually: pip install --upgrade trustmybot")
         except Exception as e:
             print(f"  ❌ Upgrade failed: {e}")
-            print("  Try manually: pip install --upgrade trustmybot")
         print()
 
 

@@ -191,6 +191,30 @@ def test_find_completed_by_goals_hash_empty_hash(store):
     assert store.find_completed_by_goals_hash("") is None
 
 
+def test_pre_commit_hash_default_empty(store):
+    """New issues have empty pre_commit_hash."""
+    issue_id = store.create_issue("Test issue")
+    issue = store.get_issue(issue_id)
+    assert issue["pre_commit_hash"] == ""
+
+
+def test_set_pre_commit_hash(store):
+    """set_pre_commit_hash() stores and retrieves the hash."""
+    issue_id = store.create_issue("Test issue")
+    store.set_pre_commit_hash(issue_id, "abc1234")
+    issue = store.get_issue(issue_id)
+    assert issue["pre_commit_hash"] == "abc1234"
+
+
+def test_set_pre_commit_hash_updates_timestamp(store):
+    """set_pre_commit_hash() updates the updated_at timestamp."""
+    issue_id = store.create_issue("Test issue")
+    issue_before = store.get_issue(issue_id)
+    store.set_pre_commit_hash(issue_id, "def5678")
+    issue_after = store.get_issue(issue_id)
+    assert issue_after["updated_at"] >= issue_before["updated_at"]
+
+
 def test_get_recent_completed_issues(store):
     """get_recent_completed_issues() returns completed/failed issues, most recent first."""
     id1 = store.create_issue("Task A", "goals a")

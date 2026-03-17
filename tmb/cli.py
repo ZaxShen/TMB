@@ -208,6 +208,54 @@ def _show_blueprint(tasks: list[dict]):
         open_in_editor(blueprint_path)
 
 
+def _invoke_with_monitor(graph, state_or_none, config, store, issue_id):
+    """Run graph.invoke() with live dashboard monitoring.
+
+    Redirects node stdout to a buffer, polls SQLite from a background thread,
+    and renders the dashboard to the real terminal. Falls back to normal invoke
+    if not running in a terminal.
+    """
+    from tmb.monitor import is_terminal, run_monitor_loop
+
+    if not is_terminal():
+        if state_or_none is None:
+            return graph.invoke(None, config=config)
+        return graph.invoke(state_or_none, config=config)
+
+    import io
+    import threading
+    from tmb.paths import db_path
+
+    real_stdout = sys.stdout
+    captured = io.StringIO()
+    stop_event = threading.Event()
+
+    monitor_thread = threading.Thread(
+        target=run_monitor_loop,
+        args=(str(db_path()), issue_id, stop_event, real_stdout),
+        daemon=True,
+    )
+
+    try:
+        sys.stdout = captured
+        monitor_thread.start()
+        if state_or_none is None:
+            result = graph.invoke(None, config=config)
+        else:
+            result = graph.invoke(state_or_none, config=config)
+    finally:
+        stop_event.set()
+        sys.stdout = real_stdout
+        if monitor_thread.is_alive():
+            monitor_thread.join(timeout=3)
+
+    # Final render
+    from tmb.monitor import clear_and_render
+    clear_and_render(store, issue_id)
+
+    return result
+
+
 def _approve_blueprint(store: Store, issue_id: int) -> bool:
     owner_display = get_role_name("owner")
     approval = input(f"[{owner_display}] Approve this blueprint? (yes/no): ").strip().lower()
@@ -288,7 +336,7 @@ def _quick_task(store: Store, instruction: str):
     print("[TMB] ✅ Blueprint auto-approved (quick task)")
     print("-" * 40)
 
-    state = graph.invoke(None, config=thread)
+    state = _invoke_with_monitor(graph, None, thread, store, issue_id)
 
     _finalize_issue(store, issue_id)
 
@@ -610,7 +658,8 @@ def _run_execution(
     from tmb.engine import build_execution_graph
 
     graph = build_execution_graph()
-    graph.invoke(
+    _invoke_with_monitor(
+        graph,
         {
             "objective": goals_md,
             "project_context": project_context,
@@ -623,7 +672,10 @@ def _run_execution(
             "iteration_count": 0,
             "messages": [],
             "next_node": "",
-        }
+        },
+        None,
+        store,
+        issue_id,
     )
 
     _finalize_issue(store, issue_id)
@@ -722,7 +774,7 @@ def _fresh_start(store: Store):
     if not _approve_blueprint(store, issue_id):
         sys.exit(0)
 
-    state = graph.invoke(None, config=thread)
+    state = _invoke_with_monitor(graph, None, thread, store, issue_id)
 
     _finalize_issue(store, issue_id)
 
@@ -805,7 +857,7 @@ def _resume(store: Store, issue: dict):
         if not _approve_blueprint(store, issue_id):
             sys.exit(0)
 
-        state = graph.invoke(None, config=thread)
+        state = _invoke_with_monitor(graph, None, thread, store, issue_id)
         _finalize_issue(store, issue_id)
         return
 

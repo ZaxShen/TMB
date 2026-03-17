@@ -2132,7 +2132,7 @@ def tokens(issue_id: int | None = None):
     print()
 
 
-_KNOWN_COMMANDS = {"setup", "log", "report", "tokens", "serve", "evolve", "chat", "scan", "upgrade", "version", "help", "--help", "-h", "--version", "-v"}
+_KNOWN_COMMANDS = {"setup", "log", "report", "tokens", "serve", "evolve", "chat", "scan", "upgrade", "uninstall", "version", "help", "--help", "-h", "--version", "-v"}
 
 
 def main():
@@ -2177,6 +2177,15 @@ def main():
         scan()
     elif cmd == "upgrade":
         upgrade()
+    elif cmd == "uninstall":
+        print()
+        print("  To uninstall Trust Me Bro:")
+        print()
+        print("    uv tool uninstall trustmybot")
+        print()
+        print("  This removes the bro/bot/tmb commands.")
+        print("  Your project files (bro/, .tmb/, .env) are untouched.")
+        print()
     elif cmd == "serve":
         from tmb.mcp.server import run_server
         if "--http" in sys.argv:
@@ -2209,5 +2218,6 @@ def main():
         print("  tmb serve                          Start MCP server (stdio)")
         print("  tmb serve --http 8080              Start MCP server (HTTP)")
         print("  tmb upgrade                        Upgrade to latest version")
+        print("  tmb uninstall                      Uninstall instructions")
         print("  tmb version                        Show current version")
         sys.exit(1)

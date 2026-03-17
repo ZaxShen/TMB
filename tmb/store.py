@@ -57,6 +57,7 @@ class Store:
                 objective         TEXT    NOT NULL,
                 goals_md          TEXT    NOT NULL DEFAULT '',
                 goals_md_hash     TEXT    NOT NULL DEFAULT '',
+                pre_commit_hash   TEXT    NOT NULL DEFAULT '',
                 status            TEXT    NOT NULL DEFAULT 'open',
                 current_task_id   INTEGER REFERENCES tasks(id),
                 created_at        TEXT    NOT NULL,
@@ -215,6 +216,10 @@ class Store:
         if "goals_md_hash" not in issue_cols:
             self._conn.execute(
                 "ALTER TABLE issues ADD COLUMN goals_md_hash TEXT NOT NULL DEFAULT ''"
+            )
+        if "pre_commit_hash" not in issue_cols:
+            self._conn.execute(
+                "ALTER TABLE issues ADD COLUMN pre_commit_hash TEXT NOT NULL DEFAULT ''"
             )
 
         ledger_cols = {
@@ -399,6 +404,14 @@ class Store:
             (limit,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def set_pre_commit_hash(self, issue_id: int, commit_hash: str):
+        """Store the git commit hash from the pre-execution snapshot."""
+        self._conn.execute(
+            "UPDATE issues SET pre_commit_hash = ?, updated_at = ? WHERE id = ?",
+            (commit_hash, _now(), issue_id),
+        )
+        self._conn.commit()
 
     def claim_open_issue(self) -> dict | None:
         """Atomically find and claim the latest open issue (race-safe).

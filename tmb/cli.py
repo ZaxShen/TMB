@@ -47,8 +47,12 @@ def _read_goals_md() -> str:
             "---\n\n"
         )
         print(f"[TMB] 📝 Created {goals_path}")
-        print("       Write your goals there, then run again.")
-        sys.exit(1)
+        from tmb.ux import open_in_editor, wait_for_file_change
+        open_in_editor(goals_path)
+        print(f"[TMB] Write your goals in {goals_path.name}, then save the file.")
+        if not wait_for_file_change(goals_path):
+            print("[TMB] No changes detected. Write your goals and run again.")
+            sys.exit(1)
 
     goals_raw = goals_path.read_text().strip()
     goals_md = re.sub(r"<!--.*?-->", "", goals_raw, flags=re.DOTALL).strip()
@@ -60,9 +64,25 @@ def _read_goals_md() -> str:
     ).strip()
 
     if not goals_md:
-        print(f"[TMB] {goals_path} is empty or still has the template.")
-        print("       Write your goals there, then run again.")
-        sys.exit(1)
+        print(f"[TMB] {goals_path.name} is empty — opening for you to fill in.")
+        from tmb.ux import open_in_editor, wait_for_file_change
+        open_in_editor(goals_path)
+        print(f"[TMB] Write your goals in {goals_path.name}, then save the file.")
+        if not wait_for_file_change(goals_path):
+            print("[TMB] No changes detected. Write your goals and run again.")
+            sys.exit(1)
+        # Re-read after save
+        goals_raw = goals_path.read_text().strip()
+        goals_md = re.sub(r"<!--.*?-->", "", goals_raw, flags=re.DOTALL).strip()
+        goals_md = re.sub(
+            r"^# Goals\s*\n+Write your goals.*?---\s*",
+            "",
+            goals_md,
+            flags=re.DOTALL,
+        ).strip()
+        if not goals_md:
+            print("[TMB] Goals still empty after save. Write your goals and run again.")
+            sys.exit(1)
 
     return goals_md
 
@@ -181,6 +201,11 @@ def _show_blueprint(tasks: list[dict]):
         desc = t.get("title") or t.get("description", "")
         print(fit_line(f"  [{bid}]", desc))
     print()
+    # Auto-open blueprint for review
+    from tmb.ux import open_in_editor
+    blueprint_path = docs_dir() / "BLUEPRINT.md"
+    if blueprint_path.exists():
+        open_in_editor(blueprint_path)
 
 
 def _approve_blueprint(store: Store, issue_id: int) -> bool:
@@ -213,6 +238,14 @@ def _quick_task(store: Store, instruction: str):
 
     objective = instruction[:120].strip()
     issue_id = store.create_issue(objective, instruction)
+
+    # Git pre-snapshot for rollback
+    from tmb.git import ensure_repo, snapshot
+    project_root_path = Path(project_root) if not isinstance(project_root, Path) else project_root
+    ensure_repo(project_root_path)
+    pre_hash = snapshot(project_root_path, f"tmb: snapshot before Issue #{issue_id}")
+    if pre_hash:
+        store.set_pre_commit_hash(issue_id, pre_hash)
 
     print(f"[TMB] ⚡ Quick task — Issue #{issue_id}: {objective}")
     print(f"[TMB] Project: {project_cfg['name']}  |  Root: {project_root}")
@@ -473,18 +506,46 @@ def _cleanup_completed_issue(store: Store, issue_id: int, tasks: list[dict]):
     )
 
 
+def _auto_commit_completed(store: Store, issue_id: int, tasks: list[dict]):
+    """Auto-commit project state after successful issue completion."""
+    try:
+        from tmb.git import snapshot, get_diff_summary, build_commit_message
+        project_root = Path(get_project_root())
+
+        issue = store.get_issue(issue_id)
+        if not issue:
+            return
+
+        diff_summary = get_diff_summary(project_root)
+        msg = build_commit_message(
+            issue_id, issue["objective"], tasks, diff_summary
+        )
+        commit_hash = snapshot(project_root, msg)
+        if commit_hash:
+            store.log(
+                issue_id, None, "system", "auto_committed",
+                {"commit_hash": commit_hash},
+                summary=f"Auto-committed: {commit_hash}",
+            )
+            print(f"[TMB] Committed: {commit_hash}")
+    except Exception:
+        pass  # Auto-commit is best-effort — never block completion
+
+
 def _finalize_issue(store: Store, issue_id: int):
     """Check task statuses and close the issue appropriately."""
     tasks = store.get_tasks(issue_id)
     if not tasks:
         store.close_issue(issue_id, "completed")
         _cleanup_completed_issue(store, issue_id, [])
+        _auto_commit_completed(store, issue_id, [])
         return
 
     all_done = all(t["status"] == "completed" for t in tasks)
     if all_done:
         store.close_issue(issue_id, "completed")
         _cleanup_completed_issue(store, issue_id, tasks)
+        _auto_commit_completed(store, issue_id, tasks)
     else:
         stuck = [t for t in tasks if t["status"] in ("failed", "escalated")]
         pending = [t for t in tasks if t["status"] in ("pending", "in_progress")]
@@ -605,6 +666,14 @@ def _fresh_start(store: Store):
     objective = _derive_objective(goals_md)
     issue_id = store.create_issue(objective, goals_md)
 
+    # Git pre-snapshot for rollback
+    from tmb.git import ensure_repo, snapshot
+    project_root_path = Path(project_root) if not isinstance(project_root, Path) else project_root
+    ensure_repo(project_root_path)
+    pre_hash = snapshot(project_root_path, f"tmb: snapshot before Issue #{issue_id}")
+    if pre_hash:
+        store.set_pre_commit_hash(issue_id, pre_hash)
+
     print(f"[TMB] Issue #{issue_id}: {objective}")
     print(f"[TMB] Project: {project_cfg['name']}  |  Root: {project_root}")
 
@@ -669,6 +738,15 @@ def _resume(store: Store, issue: dict):
     project_root = get_project_root()
 
     _auto_sync_registry(store, project_root)
+
+    # Git pre-snapshot for rollback (only if not already snapshotted)
+    if not issue.get("pre_commit_hash"):
+        from tmb.git import ensure_repo, snapshot
+        project_root_path = Path(project_root) if not isinstance(project_root, Path) else project_root
+        ensure_repo(project_root_path)
+        pre_hash = snapshot(project_root_path, f"tmb: snapshot before Issue #{issue_id}")
+        if pre_hash:
+            store.set_pre_commit_hash(issue_id, pre_hash)
 
     print(f"[TMB] ⏩ Resuming issue #{issue_id}: {issue['objective']}")
     print(f"[TMB] Project: {project_cfg['name']}  |  Root: {project_root}")

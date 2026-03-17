@@ -314,8 +314,11 @@ def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: 
         )
 
         print()
-        print(f"  Edit your answers in {docs_dir().name}/DISCUSSION.md")
-        input("  Press Enter when you're done, bro...")
+        from tmb.ux import open_in_editor, wait_for_file_change
+        open_in_editor(discussion_path)
+        print(f"  Answer in {docs_dir().name}/DISCUSSION.md — save when done. (Ctrl+C to skip)")
+        if not wait_for_file_change(discussion_path):
+            print("  No changes detected — proceeding with defaults.")
 
         owner_answer = _read_owner_answer(discussion_path)
         if not owner_answer:

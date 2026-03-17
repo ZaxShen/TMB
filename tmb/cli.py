@@ -47,8 +47,12 @@ def _read_goals_md() -> str:
             "---\n\n"
         )
         print(f"[TMB] 📝 Created {goals_path}")
-        print("       Write your goals there, then run again.")
-        sys.exit(1)
+        from tmb.ux import open_in_editor, wait_for_file_change
+        open_in_editor(goals_path)
+        print(f"[TMB] Write your goals in {goals_path.name}, then save the file.")
+        if not wait_for_file_change(goals_path):
+            print("[TMB] No changes detected. Write your goals and run again.")
+            sys.exit(1)
 
     goals_raw = goals_path.read_text().strip()
     goals_md = re.sub(r"<!--.*?-->", "", goals_raw, flags=re.DOTALL).strip()
@@ -60,9 +64,25 @@ def _read_goals_md() -> str:
     ).strip()
 
     if not goals_md:
-        print(f"[TMB] {goals_path} is empty or still has the template.")
-        print("       Write your goals there, then run again.")
-        sys.exit(1)
+        print(f"[TMB] {goals_path.name} is empty — opening for you to fill in.")
+        from tmb.ux import open_in_editor, wait_for_file_change
+        open_in_editor(goals_path)
+        print(f"[TMB] Write your goals in {goals_path.name}, then save the file.")
+        if not wait_for_file_change(goals_path):
+            print("[TMB] No changes detected. Write your goals and run again.")
+            sys.exit(1)
+        # Re-read after save
+        goals_raw = goals_path.read_text().strip()
+        goals_md = re.sub(r"<!--.*?-->", "", goals_raw, flags=re.DOTALL).strip()
+        goals_md = re.sub(
+            r"^# Goals\s*\n+Write your goals.*?---\s*",
+            "",
+            goals_md,
+            flags=re.DOTALL,
+        ).strip()
+        if not goals_md:
+            print("[TMB] Goals still empty after save. Write your goals and run again.")
+            sys.exit(1)
 
     return goals_md
 
@@ -181,6 +201,11 @@ def _show_blueprint(tasks: list[dict]):
         desc = t.get("title") or t.get("description", "")
         print(fit_line(f"  [{bid}]", desc))
     print()
+    # Auto-open blueprint for review
+    from tmb.ux import open_in_editor
+    blueprint_path = docs_dir() / "BLUEPRINT.md"
+    if blueprint_path.exists():
+        open_in_editor(blueprint_path)
 
 
 def _approve_blueprint(store: Store, issue_id: int) -> bool:

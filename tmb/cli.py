@@ -1465,6 +1465,16 @@ def setup():
         ("s", "Skip for now bro",   None,                None,         None),
     ]
 
+    _PROVIDER_DEFAULTS = {
+        "anthropic": {"name": "claude-sonnet-4-6", "temperature": 0.3},
+        "openai":    {"name": "gpt-4o", "temperature": 0.3},
+        "google":    {"name": "gemini-2.0-flash", "temperature": 0.3},
+        "groq":      {"name": "llama-3.3-70b-versatile", "temperature": 0.3},
+        "mistral":   {"name": "mistral-large-latest", "temperature": 0.3},
+        "deepseek":  {"name": "deepseek-chat", "temperature": 0.3},
+        "ollama":    {"name": "llama3.2", "temperature": 0.3, "base_url": "http://localhost:11434"},
+    }
+
     env_path = project_root / ".env"
     llm_configured = env_path.exists()
     if llm_configured:
@@ -1496,6 +1506,38 @@ def setup():
             load_dotenv(env_path, override=True)
         elif choice != "s":
             print("    No API key entered — set it in .env before running, bro.")
+
+        # Write nodes.yaml with the selected provider
+        if selected and selected[0] != "s":
+            _, _label, _env_var, _provider_name, _extra_pkg = selected
+            if _provider_name and _provider_name in _PROVIDER_DEFAULTS:
+                defaults = _PROVIDER_DEFAULTS[_provider_name]
+                planner_model = {"provider": _provider_name, "name": defaults["name"], "temperature": 0.3}
+                executor_model = {"provider": _provider_name, "name": defaults["name"], "temperature": 0}
+                evolve_model = {"provider": _provider_name, "name": defaults["name"], "temperature": 0.3}
+                if "base_url" in defaults:
+                    planner_model["base_url"] = defaults["base_url"]
+                    executor_model["base_url"] = defaults["base_url"]
+                    evolve_model["base_url"] = defaults["base_url"]
+                nodes_cfg = {
+                    "planner": {
+                        "model": planner_model,
+                        "tools": ["file_inspect", "search", "web_search", "skill_create"],
+                    },
+                    "executor": {
+                        "model": executor_model,
+                        "tools": ["shell", "file_read", "file_write", "search", "skill_request"],
+                    },
+                    "evolve": {
+                        "model": evolve_model,
+                        "tools": ["file_read", "file_write", "search", "shell"],
+                    },
+                }
+                nodes_path = user_cfg_dir() / "nodes.yaml"
+                nodes_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(nodes_path, "w") as f:
+                    yaml.dump(nodes_cfg, f, default_flow_style=False, sort_keys=False)
+                print(f"    Saved LLM config → .tmb/config/nodes.yaml")
 
     # ── Project Snapshot ──
     snapshot = _quick_project_snapshot(project_root)

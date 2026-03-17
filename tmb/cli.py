@@ -1434,6 +1434,141 @@ def _inject_tmb_dependency(toml_path: Path, content: str, tmb_rel: Path | None) 
     print(f"    Run `uv sync` to install.")
 
 
+# ── Local model setup helpers ─────────────────────────────────────────────
+
+
+def _ollama_pull(model_name: str):
+    """Pull an Ollama model with live output."""
+    print(f"    Pulling {model_name}... (this may take a few minutes)")
+    try:
+        proc = subprocess.run(
+            ["ollama", "pull", model_name],
+            timeout=600,  # 10 min for large models
+        )
+        if proc.returncode == 0:
+            print(f"    ✅ {model_name} ready.")
+        else:
+            print(f"    ⚠️  Pull failed. Try manually: ollama pull {model_name}")
+    except FileNotFoundError:
+        print(f"    ⚠️  'ollama' command not found. Install: https://ollama.ai")
+    except subprocess.TimeoutExpired:
+        print(f"    ⚠️  Pull timed out. Try manually: ollama pull {model_name}")
+
+
+def _setup_ollama(env_path) -> "tuple[str, str, str, str | None] | None":
+    """Ollama-specific setup: scan, list models, auto-pull if needed."""
+    import urllib.request
+    import urllib.error
+
+    base_url = "http://localhost:11434"
+    extra_pkg = "tmb[ollama]"
+
+    # Try to connect to Ollama
+    try:
+        req = urllib.request.Request(f"{base_url}/api/tags")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            models = [m["name"] for m in data.get("models", [])]
+    except (urllib.error.URLError, ConnectionError, OSError):
+        # Ollama not running — check if installed
+        import shutil
+        if shutil.which("ollama"):
+            print("    ⚠️  Ollama is installed but not running.")
+            print("    Start it with: ollama serve")
+        else:
+            print("    ⚠️  Ollama not found.")
+            print("    Install it: https://ollama.ai")
+            print("    Then: ollama serve")
+
+        # Offer to continue with default anyway
+        print()
+        fallback = input("    Continue with default model (llama3.2)? [yes]: ").strip().lower()
+        if fallback in ("", "yes", "y"):
+            return ("ollama", "llama3.2", base_url, extra_pkg)
+        return None
+
+    if not models:
+        print("    Ollama is running but has no models.")
+        pull = input("    Pull llama3.2 now? [yes]: ").strip().lower()
+        if pull in ("", "yes", "y"):
+            _ollama_pull("llama3.2")
+            return ("ollama", "llama3.2", base_url, extra_pkg)
+        return None
+
+    # Show available models
+    print()
+    print("    Available models:")
+    for i, m in enumerate(models, 1):
+        print(f"      {i}) {m}")
+    print(f"      p) Pull a new model")
+    model_choice = input(f"    Pick a model [1]: ").strip() or "1"
+
+    if model_choice.lower() == "p":
+        model_name = input("    Model to pull (e.g. llama3.2, mistral): ").strip()
+        if not model_name:
+            model_name = "llama3.2"
+        _ollama_pull(model_name)
+        return ("ollama", model_name, base_url, extra_pkg)
+
+    try:
+        idx = int(model_choice) - 1
+        selected_model = models[idx]
+    except (ValueError, IndexError):
+        selected_model = models[0]
+
+    print(f"    ✅ Using: {selected_model}")
+    return ("ollama", selected_model, base_url, extra_pkg)
+
+
+def _setup_local_model(env_path) -> "tuple[str, str, str, str | None] | None":
+    """Interactive local model setup — scan for Ollama, LM Studio, or custom endpoint.
+
+    Returns (provider, model_name, base_url, extra_pkg) or None if skipped.
+    """
+    import urllib.request
+    import urllib.error
+
+    _LOCAL_PLATFORMS = [
+        ("1", "Ollama",    "http://localhost:11434"),
+        ("2", "LM Studio", "http://localhost:1234/v1"),
+        ("3", "Other / Custom (OpenAI-compatible)", None),
+    ]
+
+    print()
+    print("  Which local platform?")
+    for key, label, _ in _LOCAL_PLATFORMS:
+        print(f"    {key}) {label}")
+    platform_choice = input("  Choice [1]: ").strip() or "1"
+    platform = next((p for p in _LOCAL_PLATFORMS if p[0] == platform_choice), _LOCAL_PLATFORMS[0])
+    _, platform_name, default_url = platform
+
+    if platform_name == "Ollama":
+        return _setup_ollama(env_path)
+    else:
+        # LM Studio or Custom — OpenAI-compatible endpoint
+        if default_url:
+            url = input(f"    Base URL [{default_url}]: ").strip() or default_url
+        else:
+            url = input("    Base URL (e.g. http://localhost:8080/v1): ").strip()
+            if not url:
+                print("    No URL entered — skipping.")
+                return None
+
+        model_name = input("    Model name: ").strip()
+        if not model_name:
+            print("    No model name — skipping.")
+            return None
+
+        # OpenAI-compatible endpoints need OPENAI_API_KEY set (even if unused)
+        existing_env = env_path.read_text() if env_path.exists() else ""
+        if "OPENAI_API_KEY" not in existing_env:
+            with open(env_path, "a") as f:
+                f.write("OPENAI_API_KEY=not-needed\n")
+
+        print(f"    ✅ Configured: {platform_name} at {url} with model {model_name}")
+        return ("openai", model_name, url, None)
+
+
 # ── CLI Commands ─────────────────────────────────────────────
 
 
@@ -1461,7 +1596,7 @@ def setup():
         ("4", "Groq",               "GROQ_API_KEY",      "groq",       "tmb[groq]"),
         ("5", "Mistral",            "MISTRAL_API_KEY",   "mistral",    "tmb[mistral]"),
         ("6", "DeepSeek",           "DEEPSEEK_API_KEY",  "deepseek",   "tmb[deepseek]"),
-        ("7", "Ollama (local)",     None,                "ollama",     "tmb[ollama]"),
+        ("7", "Local model",        None,                "local",      None),
         ("s", "Skip for now bro",   None,                None,         None),
     ]
 
@@ -1487,14 +1622,28 @@ def setup():
         choice = input("  Choice [1]: ").strip() or "1"
 
         selected = next((m for m in _PROVIDER_MENU if m[0] == choice), None)
+        model_name_override = None
+        base_url_override = None
         env_lines = []
         if selected and selected[0] != "s":
             _, label, env_var, provider_name, extra_pkg = selected
-            if env_var:
-                api_key = input(f"    {env_var}: ").strip()
-                if api_key:
-                    env_lines.append(f"{env_var}={api_key}")
-                    llm_configured = True
+
+            if provider_name == "local":
+                # Local model sub-menu
+                local_result = _setup_local_model(env_path)
+                if local_result:
+                    provider_name, model_name_override, base_url_override, extra_pkg = local_result
+                    llm_configured = True  # local models don't need API keys
+                else:
+                    provider_name = None  # skipped
+            else:
+                # Cloud provider — existing flow
+                if env_var:
+                    api_key = input(f"    {env_var}: ").strip()
+                    if api_key:
+                        env_lines.append(f"{env_var}={api_key}")
+                        llm_configured = True
+
             if extra_pkg:
                 _is_tool_install = not TMB_ROOT.resolve().is_relative_to(project_root.resolve())
                 if _is_tool_install:
@@ -1539,17 +1688,18 @@ def setup():
             print("    No API key entered — set it in .env before running, bro.")
 
         # Write nodes.yaml with the selected provider
-        if selected and selected[0] != "s":
-            _, _label, _env_var, _provider_name, _extra_pkg = selected
-            if _provider_name and _provider_name in _PROVIDER_DEFAULTS:
-                defaults = _PROVIDER_DEFAULTS[_provider_name]
-                planner_model = {"provider": _provider_name, "name": defaults["name"], "temperature": 0.3}
-                executor_model = {"provider": _provider_name, "name": defaults["name"], "temperature": 0}
-                evolve_model = {"provider": _provider_name, "name": defaults["name"], "temperature": 0.3}
-                if "base_url" in defaults:
-                    planner_model["base_url"] = defaults["base_url"]
-                    executor_model["base_url"] = defaults["base_url"]
-                    evolve_model["base_url"] = defaults["base_url"]
+        if selected and selected[0] != "s" and provider_name:
+            if provider_name in _PROVIDER_DEFAULTS or (model_name_override and base_url_override):
+                defaults = _PROVIDER_DEFAULTS.get(provider_name, {})
+                model_name = model_name_override or defaults.get("name", "")
+                base_url = base_url_override or defaults.get("base_url")
+                planner_model = {"provider": provider_name, "name": model_name, "temperature": 0.3}
+                executor_model = {"provider": provider_name, "name": model_name, "temperature": 0}
+                evolve_model = {"provider": provider_name, "name": model_name, "temperature": 0.3}
+                if base_url:
+                    planner_model["base_url"] = base_url
+                    executor_model["base_url"] = base_url
+                    evolve_model["base_url"] = base_url
                 nodes_cfg = {
                     "planner": {
                         "model": planner_model,
@@ -1671,18 +1821,18 @@ def setup():
     else:
         print("    Skipped — DuckDuckGo fallback it is.")
 
-    # ── Project-level pyproject.toml ─────────────────────────
-    project_toml = project_root / "pyproject.toml"
+    # ── Project-level pyproject.toml (dev installs only) ─────
     is_local_install = TMB_ROOT.resolve().is_relative_to(project_root.resolve())
-    tmb_rel = TMB_ROOT.resolve().relative_to(project_root.resolve()) if is_local_install else None
 
-    if not project_toml.exists():
-        # Fresh project — create pyproject.toml from scratch
-        print()
-        print("  No pyproject.toml found at project root.")
-        create = input("    Create one with TMB as a dependency? (yes/no) [yes]: ").strip().lower()
-        if create in ("", "yes", "y"):
-            if is_local_install:
+    if is_local_install:
+        project_toml = project_root / "pyproject.toml"
+        tmb_rel = TMB_ROOT.resolve().relative_to(project_root.resolve())
+
+        if not project_toml.exists():
+            print()
+            print("  No pyproject.toml found at project root.")
+            create = input("    Create one with TMB as a dependency? (yes/no) [yes]: ").strip().lower()
+            if create in ("", "yes", "y"):
                 toml_content = (
                     f'[project]\nname = "{name}"\nversion = "0.1.0"\n'
                     f'requires-python = ">=3.13"\n'
@@ -1692,34 +1842,21 @@ def setup():
                     f'[tool.uv]\npackage = false\n\n'
                     f'[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n'
                 )
-            else:
-                toml_content = (
-                    f'[project]\nname = "{name}"\nversion = "0.1.0"\n'
-                    f'requires-python = ">=3.13"\n'
-                    f'dependencies = [\n'
-                    f'    "trustmybot",\n'
-                    f']\n'
-                )
-            project_toml.write_text(toml_content)
-            print(f"    Wrote {project_toml}")
-            print(f"    Run `uv sync` to install.")
-    else:
-        # Existing project — check if TMB is already a dependency
-        existing = project_toml.read_text()
-        already_present = (
-            '"tmb"' in existing or "'tmb'" in existing
-            or '"trustmybot"' in existing or "'trustmybot'" in existing
-        )
-        if not already_present:
-            print()
-            print("  Found existing pyproject.toml — your project is already set up. 👍")
-            print("  TMB is not listed as a dependency yet.")
-            inject = input("    Add TMB as a path dependency? (yes/no) [yes]: ").strip().lower()
-            if inject in ("", "yes", "y"):
-                _inject_tmb_dependency(project_toml, existing, tmb_rel)
+                project_toml.write_text(toml_content)
+                print(f"    Wrote {project_toml}")
+                print(f"    Run `uv sync` to install.")
         else:
-            print()
-            print("  Found existing pyproject.toml with TMB already wired up. 👍")
+            existing = project_toml.read_text()
+            if '"tmb"' not in existing and "'tmb'" not in existing:
+                print()
+                print("  Found existing pyproject.toml — your project is already set up. 👍")
+                print("  TMB is not listed as a dependency yet.")
+                inject = input("    Add TMB as a path dependency? (yes/no) [yes]: ").strip().lower()
+                if inject in ("", "yes", "y"):
+                    _inject_tmb_dependency(project_toml, existing, tmb_rel)
+            else:
+                print()
+                print("  Found existing pyproject.toml with TMB already wired up. 👍")
 
     dd = docs_dir().name
     print()

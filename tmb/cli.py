@@ -1334,17 +1334,22 @@ def _generate_prompts(
     return True
 
 
-def _inject_tmb_dependency(toml_path: Path, content: str, tmb_rel: Path) -> None:
+def _inject_tmb_dependency(toml_path: Path, content: str, tmb_rel: Path | None) -> None:
     """Add TMB as a dependency to an existing pyproject.toml without overwriting.
 
     Handles three cases:
-      1. [project] with dependencies list → append "tmb" to the list
+      1. [project] with dependencies list → append the dependency to the list
       2. [project] without dependencies    → add dependencies key
       3. No [project] section              → append a minimal block
 
-    Always adds [tool.uv.sources] for the path dependency if missing.
+    When tmb_rel is a Path (local/editable install), uses "tmb" as the dependency name
+    and adds [tool.uv.sources] with the path entry.
+    When tmb_rel is None (PyPI install), uses "trustmybot" as the dependency name
+    and skips [tool.uv] / [tool.uv.sources] entirely.
     """
     import re as _re
+
+    dep_name = "tmb" if tmb_rel is not None else "trustmybot"
 
     lines = content.splitlines(keepends=True)
     modified = False
@@ -1371,45 +1376,47 @@ def _inject_tmb_dependency(toml_path: Path, content: str, tmb_rel: Path) -> None
             # Single-line form: dependencies = []
             if "]" in stripped:
                 if "[]" in stripped:
-                    lines[i] = line.replace("[]", '[\n    "tmb",\n]')
+                    lines[i] = line.replace("[]", f'[\n    "{dep_name}",\n]')
                 else:
-                    lines[i] = line.replace("]", '    "tmb",\n]')
+                    lines[i] = line.replace("]", f'    "{dep_name}",\n]')
                 modified = True
                 break
             continue
         if in_deps:
             if "]" in stripped:
                 # Insert before the closing bracket
-                lines.insert(i, '    "tmb",\n')
+                lines.insert(i, f'    "{dep_name}",\n')
                 modified = True
                 break
 
     if not modified and in_project and insert_idx is not None:
         # [project] exists but no dependencies key — add it
-        lines.insert(insert_idx, 'dependencies = [\n    "tmb",\n]\n')
+        lines.insert(insert_idx, f'dependencies = [\n    "{dep_name}",\n]\n')
         modified = True
 
     if not modified:
         # No [project] at all — append a minimal block
-        lines.append('\n[project]\ndependencies = [\n    "tmb",\n]\n')
+        lines.append(f'\n[project]\ndependencies = [\n    "{dep_name}",\n]\n')
 
-    # ── Add [tool.uv.sources] if missing ──
     joined = "".join(lines)
-    if "[tool.uv.sources]" not in joined:
-        uv_section = ""
-        if "[tool.uv]" not in joined:
-            uv_section = "\n[tool.uv]\npackage = false\n"
-        joined = (
-            joined.rstrip("\n") + "\n"
-            + uv_section
-            + f'\n[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n'
-        )
-    elif "tmb" not in joined.split("[tool.uv.sources]")[1].split("[")[0]:
-        # [tool.uv.sources] exists but no tmb entry
-        joined = joined.replace(
-            "[tool.uv.sources]\n",
-            f'[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n',
-        )
+
+    # ── Add [tool.uv.sources] if local install ──
+    if tmb_rel is not None:
+        if "[tool.uv.sources]" not in joined:
+            uv_section = ""
+            if "[tool.uv]" not in joined:
+                uv_section = "\n[tool.uv]\npackage = false\n"
+            joined = (
+                joined.rstrip("\n") + "\n"
+                + uv_section
+                + f'\n[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n'
+            )
+        elif "tmb" not in joined.split("[tool.uv.sources]")[1].split("[")[0]:
+            # [tool.uv.sources] exists but no tmb entry
+            joined = joined.replace(
+                "[tool.uv.sources]\n",
+                f'[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n',
+            )
 
     toml_path.write_text(joined)
     print(f"    Added TMB dependency to {toml_path}")
@@ -1582,7 +1589,8 @@ def setup():
 
     # ── Project-level pyproject.toml ─────────────────────────
     project_toml = project_root / "pyproject.toml"
-    tmb_rel = TMB_ROOT.resolve().relative_to(project_root.resolve())
+    is_local_install = TMB_ROOT.resolve().is_relative_to(project_root.resolve())
+    tmb_rel = TMB_ROOT.resolve().relative_to(project_root.resolve()) if is_local_install else None
 
     if not project_toml.exists():
         # Fresh project — create pyproject.toml from scratch
@@ -1590,22 +1598,35 @@ def setup():
         print("  No pyproject.toml found at project root.")
         create = input("    Create one with TMB as a dependency? (yes/no) [yes]: ").strip().lower()
         if create in ("", "yes", "y"):
-            toml_content = (
-                f'[project]\nname = "{name}"\nversion = "0.1.0"\n'
-                f'requires-python = ">=3.13"\n'
-                f'dependencies = [\n'
-                f'    "tmb",\n'
-                f']\n\n'
-                f'[tool.uv]\npackage = false\n\n'
-                f'[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n'
-            )
+            if is_local_install:
+                toml_content = (
+                    f'[project]\nname = "{name}"\nversion = "0.1.0"\n'
+                    f'requires-python = ">=3.13"\n'
+                    f'dependencies = [\n'
+                    f'    "tmb",\n'
+                    f']\n\n'
+                    f'[tool.uv]\npackage = false\n\n'
+                    f'[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n'
+                )
+            else:
+                toml_content = (
+                    f'[project]\nname = "{name}"\nversion = "0.1.0"\n'
+                    f'requires-python = ">=3.13"\n'
+                    f'dependencies = [\n'
+                    f'    "trustmybot",\n'
+                    f']\n'
+                )
             project_toml.write_text(toml_content)
             print(f"    Wrote {project_toml}")
             print(f"    Run `uv sync` to install.")
     else:
         # Existing project — check if TMB is already a dependency
         existing = project_toml.read_text()
-        if '"tmb"' not in existing and "'tmb'" not in existing:
+        already_present = (
+            '"tmb"' in existing or "'tmb'" in existing
+            or '"trustmybot"' in existing or "'trustmybot'" in existing
+        )
+        if not already_present:
             print()
             print("  Found existing pyproject.toml — your project is already set up. 👍")
             print("  TMB is not listed as a dependency yet.")
@@ -1623,14 +1644,21 @@ def setup():
     print()
     print(f"  Next steps:")
     print(f"    1. Write your goals in {dd}/GOALS.md")
-    print(f"    2. Run: uv run tmb")
+    if is_local_install:
+        print(f"    2. Run: uv run tmb")
+    else:
+        print(f"    2. Run: bro")
     print()
     print(f"  Need Notion, GitHub, Slack, or any other integration?")
     print(f"    No problem — Trust Me Bro, I'll set it up when you need it. 🫡")
-    print(f"    (or configure manually: TMB/ARCHITECTURE.md § MCP Integration)")
+    if is_local_install:
+        print(f"    (or configure manually: TMB/ARCHITECTURE.md § MCP Integration)")
     print()
     print(f"  Advanced settings (retries, roles, prompts, paths):")
-    print(f"    → TMB/ARCHITECTURE.md § Configuration")
+    if is_local_install:
+        print(f"    → TMB/ARCHITECTURE.md § Configuration")
+    else:
+        print(f"    → https://github.com/ZanMax/TMB")
     print()
 
 
@@ -1668,6 +1696,69 @@ def _human_bytes(n: int) -> str:
             return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
         n /= 1024
     return f"{n:.1f}TB"
+
+
+def upgrade():
+    """Upgrade TMB to the latest version."""
+    import importlib.metadata
+
+    # Show current version
+    try:
+        current = importlib.metadata.version("trustmybot")
+    except importlib.metadata.PackageNotFoundError:
+        current = "unknown"
+
+    print()
+    print(f"  🤙 Upgrading Trust Me Bro...")
+    print(f"     Current version: {current}")
+    print()
+
+    # Run uv tool upgrade
+    try:
+        result = subprocess.run(
+            ["uv", "tool", "upgrade", "trustmybot"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0:
+            # Get new version
+            try:
+                # Re-check — but since we're in the same process, importlib cache won't refresh.
+                # Parse it from uv output instead, or just tell them to check.
+                new_version_line = [l for l in result.stdout.splitlines() if "trustmybot" in l.lower()]
+                if new_version_line:
+                    print(f"  {new_version_line[-1].strip()}")
+                else:
+                    print(result.stdout.strip() if result.stdout.strip() else "  Already on the latest version.")
+            except Exception:
+                print("  ✅ Upgrade complete.")
+            print()
+        else:
+            # uv not found or other error — try pip as fallback
+            stderr = result.stderr.strip()
+            print(f"  ⚠️  Upgrade failed: {stderr}")
+            print()
+            print("  Try manually:")
+            print("    uv tool upgrade trustmybot")
+            print("  or:")
+            print("    pip install --upgrade trustmybot")
+            print()
+    except FileNotFoundError:
+        # uv not available at all
+        print("  ⚠️  'uv' not found. Trying pip...")
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--upgrade", "trustmybot"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode == 0:
+                print("  ✅ Upgrade complete.")
+            else:
+                print(f"  ❌ Upgrade failed: {result.stderr.strip()}")
+                print("  Try manually: pip install --upgrade trustmybot")
+        except Exception as e:
+            print(f"  ❌ Upgrade failed: {e}")
+            print("  Try manually: pip install --upgrade trustmybot")
+        print()
 
 
 def chat():
@@ -1893,7 +1984,7 @@ def tokens(issue_id: int | None = None):
     print()
 
 
-_KNOWN_COMMANDS = {"setup", "log", "report", "tokens", "serve", "evolve", "chat", "scan", "help", "--help", "-h"}
+_KNOWN_COMMANDS = {"setup", "log", "report", "tokens", "serve", "evolve", "chat", "scan", "upgrade", "version", "help", "--help", "-h"}
 
 
 def main():
@@ -1927,6 +2018,15 @@ def main():
         chat()
     elif cmd == "scan":
         scan()
+    elif cmd == "upgrade":
+        upgrade()
+    elif cmd == "version":
+        import importlib.metadata
+        try:
+            v = importlib.metadata.version("trustmybot")
+        except importlib.metadata.PackageNotFoundError:
+            v = "dev"
+        print(f"Trust Me Bro v{v}")
     elif cmd == "serve":
         from tmb.mcp.server import run_server
         if "--http" in sys.argv:
@@ -1957,4 +2057,6 @@ def main():
         print("  tmb tokens <id>                    Show token usage for one issue")
         print("  tmb serve                          Start MCP server (stdio)")
         print("  tmb serve --http 8080              Start MCP server (HTTP)")
+        print("  tmb upgrade                        Upgrade to latest version")
+        print("  tmb version                        Show current version")
         sys.exit(1)

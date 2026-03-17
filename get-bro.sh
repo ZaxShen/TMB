@@ -21,7 +21,7 @@ fi
 
 # 2. Install trustmybot globally
 echo "  Installing trustmybot..."
-uv tool install trustmybot 2>&1 | tail -3
+uv tool install --upgrade trustmybot 2>&1 | tail -3
 echo
 
 echo "  ✅ Done! Run 'bot' in your project directory:"

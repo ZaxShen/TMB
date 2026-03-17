@@ -104,7 +104,7 @@ your-project/
 └── your files...
 ```
 
-To update: `uv tool upgrade trustmybot`
+To update: `bro upgrade`
 
 > **Tip**: `bro` is an alias for `bot` — use whichever you prefer.
 

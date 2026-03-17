@@ -40,3 +40,7 @@ config/mcp.yaml
 # Legacy remnants
 mcp_servers/
 uv.lock
+
+# Local Dev
+.claude/
+.bro/

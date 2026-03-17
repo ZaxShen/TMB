@@ -77,6 +77,6 @@ evolve:
 # planner:
 #   model:
 #     provider: ollama
-#     name: llama3.2
+#     name: llama3.2:8b
 #     temperature: 0.3
 #     base_url: http://localhost:11434

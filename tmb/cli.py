@@ -1437,6 +1437,20 @@ def _inject_tmb_dependency(toml_path: Path, content: str, tmb_rel: Path | None) 
 # ── Local model setup helpers ─────────────────────────────────────────────
 
 
+def _pick_ollama_model() -> str:
+    """Show recommended model menu and return the chosen model name."""
+    print("    Recommended models:")
+    print("      1) llama3.2:8b        (default — good all-rounder)")
+    print("      2) deepseek-r1:7b     (reasoning focused)")
+    print("      3) qwen3:8b           (open-source, multilingual)")
+    print("      4) Enter custom name")
+    choice = input("    Choice [1]: ").strip() or "1"
+    _options = {"1": "llama3.2:8b", "2": "deepseek-r1:7b", "3": "qwen3:8b"}
+    if choice == "4":
+        return input("    Model name: ").strip() or "llama3.2:8b"
+    return _options.get(choice, "llama3.2:8b")
+
+
 def _ollama_pull(model_name: str):
     """Pull an Ollama model with live output."""
     print(f"    Pulling {model_name}... (this may take a few minutes)")
@@ -1480,20 +1494,18 @@ def _setup_ollama(env_path) -> "tuple[str, str, str, str | None] | None":
             print("    Install it: https://ollama.ai")
             print("    Then: ollama serve")
 
-        # Offer to continue with default anyway
+        # Offer to pull a model
         print()
-        fallback = input("    Continue with default model (llama3.2)? [yes]: ").strip().lower()
-        if fallback in ("", "yes", "y"):
-            return ("ollama", "llama3.2", base_url, extra_pkg)
-        return None
+        model_name = _pick_ollama_model()
+        _ollama_pull(model_name)
+        return ("ollama", model_name, base_url, extra_pkg)
 
     if not models:
         print("    Ollama is running but has no models.")
-        pull = input("    Pull llama3.2 now? [yes]: ").strip().lower()
-        if pull in ("", "yes", "y"):
-            _ollama_pull("llama3.2")
-            return ("ollama", "llama3.2", base_url, extra_pkg)
-        return None
+        print()
+        model_name = _pick_ollama_model()
+        _ollama_pull(model_name)
+        return ("ollama", model_name, base_url, extra_pkg)
 
     # Show available models
     print()
@@ -1504,9 +1516,8 @@ def _setup_ollama(env_path) -> "tuple[str, str, str, str | None] | None":
     model_choice = input(f"    Pick a model [1]: ").strip() or "1"
 
     if model_choice.lower() == "p":
-        model_name = input("    Model to pull (e.g. llama3.2, mistral): ").strip()
-        if not model_name:
-            model_name = "llama3.2"
+        print()
+        model_name = _pick_ollama_model()
         _ollama_pull(model_name)
         return ("ollama", model_name, base_url, extra_pkg)
 
@@ -1607,7 +1618,7 @@ def setup():
         "groq":      {"name": "llama-3.3-70b-versatile", "temperature": 0.3},
         "mistral":   {"name": "mistral-large-latest", "temperature": 0.3},
         "deepseek":  {"name": "deepseek-chat", "temperature": 0.3},
-        "ollama":    {"name": "llama3.2", "temperature": 0.3, "base_url": "http://localhost:11434"},
+        "ollama":    {"name": "llama3.2:8b", "temperature": 0.3, "base_url": "http://localhost:11434"},
     }
 
     env_path = project_root / ".env"

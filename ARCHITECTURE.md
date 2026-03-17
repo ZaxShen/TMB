@@ -26,50 +26,63 @@
 
 ## Developer Setup
 
-> Non-technical users: see [README.md](README.md) — just run `./bro`.
-
-This section is for developers who prefer `uv` directly, need optional providers, or contribute to TMB.
-
-### Prerequisites
-
-- [uv](https://docs.astral.sh/uv/) — auto-installed by `./TMB/install` if missing
+**Prerequisites:**
+- [uv](https://docs.astral.sh/uv/) — auto-installed by install scripts if missing
 - Python 3.13+ — auto-installed by `uv` if missing
 - An LLM API key (see [Configuration](#configuration))
 
-### Install
+**Global install (recommended):**
+```bash
+uv tool install trustmybot
+bot                          # available everywhere
+```
 
+**Local/editable install (for TMB contributors):**
 ```bash
 cd your-project/
 git clone https://github.com/ZaxShen/TMB.git
-./TMB/install          # installs uv (if needed), creates venv, creates ./bro wrapper
+./TMB/install
+uv run bot                   # or: uv run bro, uv run tmb
 ```
 
-### Commands
+**Commands table:**
 
-The `./bro` wrapper (created by install) is equivalent to `uv run tmb`:
-
-| User command | Developer equivalent | What it does |
+| Global (user) | Local (developer) | What it does |
 |---|---|---|
-| `./bro` | `uv run tmb` | Full workflow — goals, discuss, plan, execute |
-| `./bro "fix the bug"` | `uv run tmb "fix the bug"` | Quick task — auto-approved |
-| `./bro chat` | `uv run tmb chat` | Interactive chat |
-| `./bro scan` | `uv run tmb scan` | Scan project files |
-| `./bro log` | `uv run tmb log` | Show recent issues |
-| `./bro log 3` | `uv run tmb log 3` | Issue details |
-| `./bro report 3` | `uv run tmb report 3` | Export markdown report |
-| `./bro tokens` | `uv run tmb tokens` | Token usage |
-| `./bro setup` | `uv run tmb setup` | Re-run setup |
-| `./bro evolve "..."` | `uv run tmb evolve "..."` | Self-evolution |
-| `./bro serve` | `uv run tmb serve` | MCP server (stdio) |
-| `./bro serve --http 8080` | `uv run tmb serve --http 8080` | MCP server (HTTP) |
+| `bot` | `uv run bot` | Full workflow |
+| `bot "fix bug"` | `uv run bot "fix bug"` | Quick task |
+| `bot chat` | `uv run bot chat` | Interactive chat |
+| `bot scan` | `uv run bot scan` | Scan project |
+| `bot log` | `uv run bot log` | Recent issues |
+| `bot log 3` | `uv run bot log 3` | Issue details |
+| `bot report 3` | `uv run bot report 3` | Export report |
+| `bot tokens` | `uv run bot tokens` | Token usage |
+| `bot setup` | `uv run bot setup` | Re-run setup |
+| `bot evolve "..."` | `uv run bot evolve "..."` | Self-evolution |
+| `bot serve` | `uv run bot serve` | MCP server (stdio) |
+| `bot serve --http 8080` | `uv run bot serve --http 8080` | MCP server (HTTP) |
 
-### Running Tests
+> `bro` is an alias for `bot` — use whichever you prefer.
 
+**Running tests:**
 ```bash
 cd TMB/
 uv run pytest tests/
 uv run ruff check tmb/
 ```
+
+**Optional providers:**
+
+| Provider | Install command |
+|---|---|
+| Google Gemini | `uv tool install trustmybot[google]` |
+| Groq | `uv tool install trustmybot[groq]` |
+| Mistral | `uv tool install trustmybot[mistral]` |
+| DeepSeek | `uv tool install trustmybot[deepseek]` |
+| Ollama (local) | `uv tool install trustmybot[ollama]` |
+| All providers | `uv tool install trustmybot[all]` |
+
+For local/editable installs, use `uv add trustmybot[google]` etc.
 
 ---
 
@@ -405,12 +418,12 @@ Anthropic and OpenAI are included by default. Other providers are optional — i
 |----------|------------|---------|-----------------|
 | Anthropic | `anthropic` | `ANTHROPIC_API_KEY` | included |
 | OpenAI | `openai` | `OPENAI_API_KEY` | included |
-| Google Gemini | `google` | `GOOGLE_API_KEY` | `uv add tmb[google]` |
-| Groq | `groq` | `GROQ_API_KEY` | `uv add tmb[groq]` |
-| Mistral | `mistral` | `MISTRAL_API_KEY` | `uv add tmb[mistral]` |
-| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `uv add tmb[deepseek]` |
-| Ollama (local) | `ollama` | none | `uv add tmb[ollama]` |
-| All providers | -- | -- | `uv add tmb[all]` |
+| Google Gemini | `google` | `GOOGLE_API_KEY` | `uv tool install trustmybot[google]` |
+| Groq | `groq` | `GROQ_API_KEY` | `uv tool install trustmybot[groq]` |
+| Mistral | `mistral` | `MISTRAL_API_KEY` | `uv tool install trustmybot[mistral]` |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `uv tool install trustmybot[deepseek]` |
+| Ollama (local) | `ollama` | none | `uv tool install trustmybot[ollama]` |
+| All providers | -- | -- | `uv tool install trustmybot[all]` |
 
 Every provider supports `base_url` for custom endpoints (proxies, self-hosted, Vercel AI Gateway, etc.).
 
@@ -453,10 +466,9 @@ Same for `executor.md`. Template variables `{role_owner}`, `{role_planner}`, `{r
 ## Project Structure
 
 ```
-your-project/                    # <- project root (run `./bro` here)
-|-- bro                          # <- run this (./bro)
-|-- .venv/                       # <- shared venv (TMB deps + your deps)
-|-- pyproject.toml               # <- references TMB as path dependency
+your-project/                    # <- project root (run `bot` here)
+|-- .venv/                       # <- only if using local/editable install
+|-- pyproject.toml               # <- only if using local/editable install
 |-- .env                         # <- API keys (gitignored)
 |
 |-- bro/                 # <- user interaction zone
@@ -531,8 +543,8 @@ MCP tools are auto-discovered at startup, converted to LangChain tools, and pref
 Expose TMB's store and workflow to external hosts (Claude Desktop, Cursor):
 
 ```bash
-./bro serve              # stdio (for Claude Desktop / Cursor)
-./bro serve --http 8080  # HTTP (for remote access)
+bot serve              # stdio (for Claude Desktop / Cursor)
+bot serve --http 8080  # HTTP (for remote access)
 ```
 
 **Exposed tools**: `tmb_list_issues`, `tmb_get_tasks`, `tmb_get_ledger`, `tmb_get_skills`, `tmb_query_branch`, `tmb_quick_task`, `tmb_export_report`
@@ -543,9 +555,10 @@ Claude Desktop config:
 ```json
 {
   "mcpServers": {
-    "tmb": {
-      "command": "/path/to/your-project/bro",
-      "args": ["serve"]
+    "trustmybot": {
+      "command": "bot",
+      "args": ["serve"],
+      "cwd": "/path/to/your-project"
     }
   }
 }
@@ -562,8 +575,7 @@ The Planner can scaffold project-specific MCP servers using the `mcp_generate` t
 TMB can modify its own source code through a guarded flow:
 
 ```bash
-./bro evolve "add a new CLI command to export tasks as CSV"
-# Developer equivalent: uv run tmb evolve "..."
+bot evolve "add a new CLI command to export tasks as CSV"
 ```
 
 Safety gates:

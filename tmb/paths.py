@@ -14,13 +14,21 @@ from pathlib import Path
 
 TMB_ROOT = Path(__file__).resolve().parent.parent
 
+# ── Data file resolution ──────────────────────────────────
+# In PyPI install: data files are at tmb/_data/ (via hatchling force-include)
+# In dev/editable install: data files are at TMB/ root (parent of tmb/)
+_PKG_DIR = Path(__file__).resolve().parent
+_DATA_DIR = _PKG_DIR / "_data"
+if not _DATA_DIR.is_dir():
+    _DATA_DIR = _PKG_DIR.parent  # Development layout
+
 # ── Layer 1: Framework paths (immutable, inside TMB/) ─────
 
-PROMPTS_DIR     = TMB_ROOT / "prompts"
+PROMPTS_DIR     = _DATA_DIR / "prompts"
 SYSTEM_PROMPTS_DIR = PROMPTS_DIR / "system"
 SAMPLES_DIR     = PROMPTS_DIR / "samples"
-DEFAULT_CFG_DIR = TMB_ROOT / "config"
-SEED_SKILLS_DIR = TMB_ROOT / "skills"
+DEFAULT_CFG_DIR = _DATA_DIR / "config"
+SEED_SKILLS_DIR = _DATA_DIR / "skills"
 
 # ── Layer 2: Defaults for project-level directory names ──────
 

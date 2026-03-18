@@ -1,11 +1,11 @@
 """TMB CLI entry point.
 
 Usage:
-  tmb                               Full workflow (reads bro/GOALS.md)
-  tmb "update FLOWCHART"            Quick task (full pipeline, no interactive steps)
+  tmb                               Chat mode (default — ask anything)
+  tmb plan                          Full planning workflow (reads bro/GOALS.md)
+  tmb chat                          Chat mode (explicit)
   tmb evolve "instruction"          Self-evolution (modify TMB itself)
   tmb setup                         Interactive project setup
-  tmb chat                          Interactive chat with the planner
   tmb scan                          Scan project for TMB context
   tmb log                           Show recent issues
   tmb log <id>                      Show issue details + ledger
@@ -2132,7 +2132,7 @@ def upgrade():
         print()
 
 
-def chat():
+def chat(initial_message: str | None = None):
     """Interactive chat with the planner — read-only exploration, with optional planning escalation."""
     import uuid
     from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
@@ -2140,6 +2140,11 @@ def chat():
     from tmb.config import get_llm, load_prompt, extract_token_usage
     from tmb.tools import get_tools_for_node
 
+    if _is_first_run():
+        print("[TMB] First time? Let's get you set up, bro.\n")
+        setup()
+
+    _check_llm_config()
     ensure_dirs()
     store = Store()
     project_root = str(get_project_root())
@@ -2161,7 +2166,11 @@ def chat():
 
     while True:
         try:
-            user_input = input(f"[you] ").strip()
+            if initial_message is not None:
+                user_input = initial_message
+                initial_message = None  # Only use once
+            else:
+                user_input = input(f"[you] ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\n[TMB] Chat ended.")
             break
@@ -2265,12 +2274,8 @@ def _check_llm_config():
         pass
 
 
-def run():
-    """Phase-aware entry point: resumes an open issue or starts fresh."""
-    if _is_first_run():
-        print("[TMB] First time? Let's get you set up, bro.\n")
-        setup()
-
+def plan():
+    """Full planning workflow invoked via `bro plan`: resumes an open issue or starts fresh."""
     _check_llm_config()
 
     ensure_dirs()
@@ -2385,12 +2390,12 @@ def tokens(issue_id: int | None = None):
     print()
 
 
-_KNOWN_COMMANDS = {"setup", "log", "report", "tokens", "serve", "evolve", "chat", "scan", "upgrade", "uninstall", "version", "help", "--help", "-h", "--version", "-v"}
+_KNOWN_COMMANDS = {"setup", "log", "report", "tokens", "serve", "evolve", "chat", "plan", "scan", "upgrade", "uninstall", "version", "help", "--help", "-h", "--version", "-v"}
 
 
 def main():
     if len(sys.argv) == 1:
-        run()
+        chat()
         return
 
     cmd = sys.argv[1]
@@ -2426,6 +2431,8 @@ def main():
         _evolve(store, instruction)
     elif cmd == "chat":
         chat()
+    elif cmd == "plan":
+        plan()
     elif cmd == "scan":
         scan()
     elif cmd == "upgrade":
@@ -2449,28 +2456,28 @@ def main():
         else:
             run_server(transport="stdio")
     elif cmd not in _KNOWN_COMMANDS:
-        _check_llm_config()
         instruction = " ".join(sys.argv[1:])
-        store = Store()
-        _quick_task(store, instruction)
+        chat(initial_message=instruction)
     else:
         print("TMB — AI Direction & Execution")
         print()
         print("Usage:")
-        print("  tmb                               Full workflow (reads bro/GOALS.md)")
-        print('  tmb "update FLOWCHART"             Quick task (full pipeline)')
-        print('  tmb evolve "instruction"           Self-evolution (modify TMB)')
-        print("  tmb setup                          Interactive project setup")
-        print("  tmb chat                           Interactive chat with the planner")
-        print("  tmb scan                           Scan project for TMB context")
-        print("  tmb log                            Show recent issues")
-        print("  tmb log <id>                       Show issue details + ledger")
-        print("  tmb report <id>                    Export full report as markdown")
-        print("  tmb tokens                         Show token usage across all issues")
-        print("  tmb tokens <id>                    Show token usage for one issue")
-        print("  tmb serve                          Start MCP server (stdio)")
-        print("  tmb serve --http 8080              Start MCP server (HTTP)")
-        print("  tmb upgrade                        Upgrade to latest version")
-        print("  tmb uninstall                      Uninstall instructions")
-        print("  tmb version                        Show current version")
+        print("  bro                               Chat mode (default — ask anything)")
+        print("  bro plan                          Full planning workflow (reads bro/GOALS.md)")
+        print("  bro chat                          Chat mode (explicit)")
+        print('  bro evolve "instruction"           Self-evolution (modify TMB)')
+        print("  bro setup                          Interactive project setup")
+        print("  bro scan                           Scan project for TMB context")
+        print("  bro log                            Show recent issues")
+        print("  bro log <id>                       Show issue details + ledger")
+        print("  bro report <id>                    Export full report as markdown")
+        print("  bro tokens                         Show token usage across all issues")
+        print("  bro tokens <id>                    Show token usage for one issue")
+        print("  bro serve                          Start MCP server (stdio)")
+        print("  bro serve --http 8080              Start MCP server (HTTP)")
+        print("  bro upgrade                        Upgrade to latest version")
+        print("  bro uninstall                      Uninstall instructions")
+        print("  bro version                        Show current version")
+        print()
+        print("  Tip: just type `bro` and ask — chat can run any command for you.")
         sys.exit(1)

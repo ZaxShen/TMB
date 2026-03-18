@@ -5,6 +5,15 @@ description = "Multi-agent workflow engine for industrial-grade software project
 readme = "README.md"
 license = "AGPL-3.0-only"
 requires-python = ">=3.13"
+authors = [{name = "Zax Shen", email = "zax@zaxshen.com"}]
+keywords = ["ai", "agent", "multi-agent", "llm", "workflow", "claude"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
 dependencies = [
     "langgraph>=0.4",
     "langchain>=0.3",
@@ -17,6 +26,11 @@ dependencies = [
     "tavily-python>=0.7.23",
     "ddgs>=9.11.2",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ZaxShen/TMB"
+Repository = "https://github.com/ZaxShen/TMB"
+Issues = "https://github.com/ZaxShen/TMB/issues"
 
 [project.optional-dependencies]
 google  = ["langchain-google-genai>=4.0"]

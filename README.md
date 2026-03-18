@@ -88,7 +88,7 @@ Everything else happens automatically:
 curl -LsSf https://raw.githubusercontent.com/ZaxShen/TMB/main/get-bro.sh | sh
 ```
 
-> **Bleeding edge?** Install from dev: `curl -LsSf https://raw.githubusercontent.com/ZaxShen/TMB/dev/get-bro.sh | sh`
+> **Bleeding edge?** Install from dev: `curl -LsSf https://raw.githubusercontent.com/ZaxShen/TMB/dev/get-bro.sh | sh -s -- dev`
 
 **Start:**
 

@@ -1600,6 +1600,39 @@ def _setup_ollama(env_path) -> "tuple[str, str, str, str | None] | None":
         print("    Model verification failed. Let's try another.")
 
 
+def _setup_api_provider() -> "tuple[str, str, str | None, str | None] | None":
+    """Interactive API provider sub-menu.
+
+    Returns (env_var, provider_name, extra_pkg, base_url_override) or None if user picks Back.
+    """
+    _API_PROVIDERS = [
+        ("1", "Anthropic (Claude)",  "ANTHROPIC_API_KEY", "anthropic",  None,               None),
+        ("2", "OpenAI (GPT)",        "OPENAI_API_KEY",    "openai",     None,               None),
+        ("3", "Google (Gemini)",     "GOOGLE_API_KEY",    "google",     "tmb[google]",      None),
+        ("4", "Groq",                "GROQ_API_KEY",      "groq",       "tmb[groq]",        None),
+        ("5", "Mistral",             "MISTRAL_API_KEY",   "mistral",    "tmb[mistral]",     None),
+        ("6", "DeepSeek",            "DEEPSEEK_API_KEY",  "deepseek",   "tmb[deepseek]",    None),
+        ("7", "Vercel AI",           "OPENAI_API_KEY",    "openai",     None,               "https://api.vercel.ai/v1"),
+    ]
+
+    print()
+    print("  Which API provider?")
+    for key, label, _, _, _, _ in _API_PROVIDERS:
+        print(f"    {key}) {label}")
+    print("    s) Back")
+    choice = input("  Choice [1]: ").strip() or "1"
+
+    if choice == "s":
+        return None
+
+    entry = next((p for p in _API_PROVIDERS if p[0] == choice), None)
+    if entry is None:
+        return None
+
+    _, _, env_var, provider_name, extra_pkg, base_url_override = entry
+    return (env_var, provider_name, extra_pkg, base_url_override)
+
+
 def _setup_local_model(env_path) -> "tuple[str, str, str, str | None] | None":
     """Interactive local model setup — scan for Ollama, LM Studio, or custom endpoint.
 
@@ -1679,27 +1712,15 @@ def setup():
     _needs_restart = False
 
     # ── LLM Provider (moved before purpose — needed for prompt generation) ──
-    _PROVIDER_MENU = [
-        ("1", "Anthropic (Claude)",  "ANTHROPIC_API_KEY", "anthropic",    None),
-        ("2", "OpenAI (GPT)",        "OPENAI_API_KEY",    "openai",       None),
-        ("3", "Google (Gemini)",     "GOOGLE_API_KEY",    "google",       "tmb[google]"),
-        ("4", "Groq",               "GROQ_API_KEY",      "groq",         "tmb[groq]"),
-        ("5", "Mistral",            "MISTRAL_API_KEY",   "mistral",      "tmb[mistral]"),
-        ("6", "DeepSeek",           "DEEPSEEK_API_KEY",  "deepseek",     "tmb[deepseek]"),
-        ("7", "Claude Code",        None,                "claude_code",  None),
-        ("8", "Local model",        None,                "local",        None),
-        ("s", "Skip for now bro",   None,                None,           None),
-    ]
-
     _PROVIDER_DEFAULTS = {
-        "anthropic":   {"name": "claude-sonnet-4-6", "temperature": 0.3},
-        "openai":      {"name": "gpt-4o", "temperature": 0.3},
-        "google":      {"name": "gemini-2.0-flash", "temperature": 0.3},
-        "groq":        {"name": "llama-3.3-70b-versatile", "temperature": 0.3},
-        "mistral":     {"name": "mistral-large-latest", "temperature": 0.3},
-        "deepseek":    {"name": "deepseek-chat", "temperature": 0.3},
-        "claude_code": {"name": "sonnet", "temperature": 0},
-        "ollama":      {"name": "llama3.1:8b", "temperature": 0.3, "base_url": "http://localhost:11434"},
+        "anthropic":   {"planner_name": "claude-sonnet-4-6", "executor_name": "claude-haiku-3-5", "temperature": 0.3},
+        "openai":      {"planner_name": "gpt-4o", "executor_name": "gpt-4o-mini", "temperature": 0.3},
+        "google":      {"planner_name": "gemini-2.5-pro", "executor_name": "gemini-2.0-flash", "temperature": 0.3},
+        "groq":        {"planner_name": "llama-3.3-70b-versatile", "executor_name": "llama-3.1-8b-instant", "temperature": 0.3},
+        "mistral":     {"planner_name": "mistral-large-latest", "executor_name": "mistral-small-latest", "temperature": 0.3},
+        "deepseek":    {"planner_name": "deepseek-chat", "executor_name": "deepseek-chat", "temperature": 0.3},
+        "claude_code": {"planner_name": "sonnet", "executor_name": "sonnet", "temperature": 0},
+        "ollama":      {"planner_name": "llama3.1:8b", "executor_name": "llama3.1:8b", "temperature": 0.3, "base_url": "http://localhost:11434"},
     }
 
     env_path = project_root / ".env"
@@ -1709,93 +1730,105 @@ def setup():
     else:
         print()
         print("  Which LLM is gonna be your bro's brain?")
-        for key, label, _, _, _ in _PROVIDER_MENU:
-            print(f"    {key}) {label}")
-        choice = input("  Choice [1]: ").strip() or "1"
+        print("    1) Desktop coding tool (Claude Code)")
+        print("    2) LLM API")
+        print("    3) Local model")
+        print("    s) Skip for now bro")
+        choice = input("  Choice [2]: ").strip() or "2"
 
-        selected = next((m for m in _PROVIDER_MENU if m[0] == choice), None)
+        provider_name = None
+        env_var = None
+        extra_pkg = None
         model_name_override = None
         base_url_override = None
         env_lines = []
-        if selected and selected[0] != "s":
-            _, label, env_var, provider_name, extra_pkg = selected
 
-            if provider_name == "local":
-                # Local model sub-menu
-                local_result = _setup_local_model(env_path)
-                if local_result:
-                    provider_name, model_name_override, base_url_override, extra_pkg = local_result
-                    llm_configured = True  # local models don't need API keys
-                else:
-                    provider_name = None  # skipped
-            elif provider_name == "claude_code":
-                import shutil
-                if shutil.which("claude"):
-                    print("    Claude Code detected. No API key needed.")
-                    llm_configured = True
-                else:
-                    print("    Claude Code CLI not found.")
-                    print("    Install it: https://docs.anthropic.com/en/docs/claude-code")
-                    print("    After installing, re-run: bro setup")
-                    provider_name = None  # Skip config writing
+        if choice == "1":
+            # Desktop coding tool — Claude Code
+            import shutil
+            if shutil.which("claude"):
+                print("    Claude Code detected. No API key needed.")
+                provider_name = "claude_code"
+                llm_configured = True
             else:
-                # Cloud provider — existing flow
+                print("    Claude Code CLI not found.")
+                print("    Install it: https://docs.anthropic.com/en/docs/claude-code")
+                print("    After installing, re-run: bro setup")
+                provider_name = None  # Skip config writing
+
+        elif choice == "2":
+            # LLM API — show sub-menu
+            api_result = _setup_api_provider()
+            if api_result:
+                env_var, provider_name, extra_pkg, base_url_override = api_result
+                # Cloud provider — get API key
                 if env_var:
                     api_key = input(f"    {env_var}: ").strip()
                     if api_key:
                         env_lines.append(f"{env_var}={api_key}")
                         llm_configured = True
+            else:
+                provider_name = None  # user picked Back
 
-            if extra_pkg:
-                _is_tool_install = not TMB_ROOT.resolve().is_relative_to(project_root.resolve())
-                if _is_tool_install:
-                    # Auto-install the provider package into the tool environment
-                    pip_pkg = extra_pkg.split("[")[1].rstrip("]")  # "tmb[ollama]" → "ollama"
-                    lang_pkg = f"langchain-{pip_pkg}"
-                    print(f"    Installing {lang_pkg}...")
-                    channel = _detect_install_channel()
-                    if channel == "dev":
-                        from_src = "git+https://github.com/ZaxShen/TMB@dev"
-                    else:
-                        from_src = "trustmybot"
+        elif choice == "3":
+            # Local model sub-menu
+            local_result = _setup_local_model(env_path)
+            if local_result:
+                provider_name, model_name_override, base_url_override, extra_pkg = local_result
+                llm_configured = True  # local models don't need API keys
+            else:
+                provider_name = None  # skipped
 
-                    _pkg_installed = False
+        if extra_pkg:
+            _is_tool_install = not TMB_ROOT.resolve().is_relative_to(project_root.resolve())
+            if _is_tool_install:
+                # Auto-install the provider package into the tool environment
+                pip_pkg = extra_pkg.split("[")[1].rstrip("]")  # "tmb[ollama]" → "ollama"
+                lang_pkg = f"langchain-{pip_pkg}"
+                print(f"    Installing {lang_pkg}...")
+                channel = _detect_install_channel()
+                if channel == "dev":
+                    from_src = "git+https://github.com/ZaxShen/TMB@dev"
+                else:
+                    from_src = "trustmybot"
+
+                _pkg_installed = False
+                try:
+                    result = subprocess.run(
+                        ["uv", "tool", "install", "--upgrade", "--reinstall",
+                         "--from", from_src, "trustmybot",
+                         "--with", lang_pkg],
+                        capture_output=True, text=True, timeout=180,
+                    )
+                    if result.returncode == 0:
+                        _pkg_installed = True
+                except Exception:
+                    pass
+
+                if not _pkg_installed:
+                    # Try uv pip install as a second option
                     try:
                         result = subprocess.run(
-                            ["uv", "tool", "install", "--upgrade", "--reinstall",
-                             "--from", from_src, "trustmybot",
-                             "--with", lang_pkg],
-                            capture_output=True, text=True, timeout=180,
+                            ["uv", "pip", "install", "--python", sys.executable, lang_pkg],
+                            capture_output=True, text=True, timeout=120,
                         )
                         if result.returncode == 0:
                             _pkg_installed = True
                     except Exception:
                         pass
 
-                    if not _pkg_installed:
-                        # Try uv pip install as a second option
-                        try:
-                            result = subprocess.run(
-                                ["uv", "pip", "install", "--python", sys.executable, lang_pkg],
-                                capture_output=True, text=True, timeout=120,
-                            )
-                            if result.returncode == 0:
-                                _pkg_installed = True
-                        except Exception:
-                            pass
-
-                    if _pkg_installed:
-                        print(f"    ✅ {lang_pkg} installed.")
-                        # The tool venv was reinstalled — the current process can't use it.
-                        # Finish writing config, then tell user to re-run.
-                        _needs_restart = True
-                    else:
-                        print(f"    ⚠️  Couldn't auto-install {lang_pkg}.")
-                        print(f"    Install manually, then re-run bro:")
-                        print(f"      uv tool install --with {lang_pkg} trustmybot")
-                        _needs_restart = True  # Can't continue without the package
+                if _pkg_installed:
+                    print(f"    ✅ {lang_pkg} installed.")
+                    # The tool venv was reinstalled — the current process can't use it.
+                    # Finish writing config, then tell user to re-run.
+                    _needs_restart = True
                 else:
-                    print(f"    Heads up — install the provider:  uv add {extra_pkg}")
+                    print(f"    ⚠️  Couldn't auto-install {lang_pkg}.")
+                    print(f"    Install manually, then re-run bro:")
+                    print(f"      uv tool install --with {lang_pkg} trustmybot")
+                    _needs_restart = True  # Can't continue without the package
+            else:
+                print(f"    Heads up — install the provider:  uv add {extra_pkg}")
 
         if env_lines:
             env_path.write_text("\n".join(env_lines) + "\n")
@@ -1803,46 +1836,46 @@ def setup():
             # Reload .env so get_llm() can find the key
             from dotenv import load_dotenv
             load_dotenv(env_path, override=True)
-        elif choice != "s":
+        elif choice == "2" and provider_name and not env_lines:
             print("    No API key entered — set it in .env before running, bro.")
 
         # Write nodes.yaml with the selected provider
-        if selected and selected[0] != "s" and provider_name:
-            if provider_name in _PROVIDER_DEFAULTS or (model_name_override and base_url_override):
-                defaults = _PROVIDER_DEFAULTS.get(provider_name, {})
-                model_name = model_name_override or defaults.get("name", "")
-                base_url = base_url_override or defaults.get("base_url")
-                planner_model = {"provider": provider_name, "name": model_name, "temperature": 0.3}
-                executor_model = {"provider": provider_name, "name": model_name, "temperature": 0}
-                evolve_model = {"provider": provider_name, "name": model_name, "temperature": 0.3}
-                if base_url:
-                    planner_model["base_url"] = base_url
-                    executor_model["base_url"] = base_url
-                    evolve_model["base_url"] = base_url
-                nodes_cfg = {
-                    "planner": {
-                        "model": planner_model,
-                        "tools": ["file_inspect", "search", "web_search", "skill_create"],
-                    },
-                    "executor": {
-                        "model": executor_model,
-                        "tools": ["shell", "file_read", "file_write", "search", "skill_request"],
-                    },
-                    "evolve": {
-                        "model": evolve_model,
-                        "tools": ["file_read", "file_write", "search", "shell"],
-                    },
-                }
-                # Claude Code uses its own tools — don't bind TMB tools
-                if provider_name == "claude_code":
-                    nodes_cfg["planner"]["tools"] = []
-                    nodes_cfg["executor"]["tools"] = []
-                    nodes_cfg["evolve"]["tools"] = []
-                nodes_path = user_cfg_dir() / "nodes.yaml"
-                nodes_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(nodes_path, "w") as f:
-                    yaml.dump(nodes_cfg, f, default_flow_style=False, sort_keys=False)
-                print(f"    Saved LLM config → .tmb/config/nodes.yaml")
+        if provider_name and (provider_name in _PROVIDER_DEFAULTS or (model_name_override and base_url_override)):
+            defaults = _PROVIDER_DEFAULTS.get(provider_name, {})
+            planner_name = model_name_override or defaults.get("planner_name", "")
+            executor_name = model_name_override or defaults.get("executor_name", "")
+            base_url = base_url_override or defaults.get("base_url")
+            planner_model = {"provider": provider_name, "name": planner_name, "temperature": 0.3}
+            executor_model = {"provider": provider_name, "name": executor_name, "temperature": 0}
+            evolve_model = {"provider": provider_name, "name": planner_name, "temperature": 0.3}  # evolve uses planner model
+            if base_url:
+                planner_model["base_url"] = base_url
+                executor_model["base_url"] = base_url
+                evolve_model["base_url"] = base_url
+            nodes_cfg = {
+                "planner": {
+                    "model": planner_model,
+                    "tools": ["file_inspect", "search", "web_search", "skill_create"],
+                },
+                "executor": {
+                    "model": executor_model,
+                    "tools": ["shell", "file_read", "file_write", "search", "skill_request"],
+                },
+                "evolve": {
+                    "model": evolve_model,
+                    "tools": ["file_read", "file_write", "search", "shell"],
+                },
+            }
+            # Claude Code uses its own tools — don't bind TMB tools
+            if provider_name == "claude_code":
+                nodes_cfg["planner"]["tools"] = []
+                nodes_cfg["executor"]["tools"] = []
+                nodes_cfg["evolve"]["tools"] = []
+            nodes_path = user_cfg_dir() / "nodes.yaml"
+            nodes_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(nodes_path, "w") as f:
+                yaml.dump(nodes_cfg, f, default_flow_style=False, sort_keys=False)
+            print(f"    Saved LLM config → .tmb/config/nodes.yaml")
 
     # ── Project Snapshot ──
     snapshot = _quick_project_snapshot(project_root)
@@ -1982,28 +2015,15 @@ def setup():
                 print()
                 print("  Found existing pyproject.toml with TMB already wired up. 👍")
 
-    dd = docs_dir().name
     print()
     print("  ─────────────────────────────────")
-    print("  🤙 Setup complete, bro!")
+    print("  🤙 Setup complete!")
     print()
-    print(f"  Next steps:")
-    print(f"    1. Write your goals in {dd}/GOALS.md")
-    if is_local_install:
-        print(f"    2. Run: uv run tmb")
-    else:
-        print(f"    2. Run: bro")
-    print()
-    print(f"  Need Notion, GitHub, Slack, or any other integration?")
-    print(f"    No problem — Trust Me Bro, I'll set it up when you need it. 🫡")
-    if is_local_install:
-        print(f"    (or configure manually: TMB/ARCHITECTURE.md § MCP Integration)")
-    print()
-    print(f"  Advanced settings (retries, roles, prompts, paths):")
-    if is_local_install:
-        print(f"    → TMB/ARCHITECTURE.md § Configuration")
-    else:
-        print(f"    → https://github.com/ZanMax/TMB")
+    _cmd = "uv run tmb" if is_local_install else "bro"
+    print(f"  Here's how to use bro:")
+    print(f"    {_cmd}              Chat with your bro")
+    print(f"    {_cmd} plan         Full planning workflow")
+    print(f"    {_cmd} --help       All commands")
     print()
 
     if _needs_restart:
@@ -2053,10 +2073,10 @@ def _human_bytes(n: int) -> str:
 
 
 def _detect_install_channel() -> str:
-    """Detect which channel TMB was installed from.
+    """Detect whether TMB was installed from PyPI (stable) or git (dev).
 
     Reads PEP 610 direct_url.json from the installed distribution:
-      - Git URL with a branch → that branch name (e.g. "dev", "my-feature")
+      - Git URL containing '@dev' → "dev"
       - Anything else (PyPI, editable, unknown) → "stable"
     """
     import importlib.metadata
@@ -2068,76 +2088,18 @@ def _detect_install_channel() -> str:
             info = json.loads(raw)
             url = info.get("url", "")
             vcs = info.get("vcs_info", {})
-            branch = vcs.get("requested_revision")
-            if "github.com" in url and branch:
-                return branch
+            if "github.com" in url and vcs.get("requested_revision") == "dev":
+                return "dev"
     except Exception:
         pass
     return "stable"
 
 
-def _upgrade_from_git(branch: str, current: str) -> bool:
-    """Upgrade TMB from a git branch. Returns True on success."""
-    git_url = f"git+https://github.com/ZaxShen/TMB@{branch}"
-    try:
-        result = subprocess.run(
-            ["uv", "tool", "install", "--upgrade", "--reinstall",
-             "--from", git_url, "trustmybot"],
-            capture_output=True, text=True, timeout=180,
-        )
-        if result.returncode == 0:
-            new_ver = subprocess.run(
-                ["bro", "--version"],
-                capture_output=True, text=True, timeout=10,
-            )
-            new_version = new_ver.stdout.strip() if new_ver.returncode == 0 else None
-            if new_version:
-                print(f"  ✅ {new_version}")
-            else:
-                print("  ✅ Upgrade complete.")
-            if current != "unknown" and new_version and current in new_version:
-                print("     (already on latest)")
-            return True
-        return False
-    except FileNotFoundError:
-        return False
-
-
-def _upgrade_from_pypi(current: str) -> bool:
-    """Upgrade TMB from PyPI. Returns True on success."""
-    try:
-        result = subprocess.run(
-            ["uv", "tool", "upgrade", "trustmybot"],
-            capture_output=True, text=True, timeout=180,
-        )
-        if result.returncode == 0:
-            new_ver = subprocess.run(
-                ["bro", "--version"],
-                capture_output=True, text=True, timeout=10,
-            )
-            new_version = new_ver.stdout.strip() if new_ver.returncode == 0 else None
-            if new_version:
-                print(f"  ✅ {new_version}")
-            else:
-                print("  ✅ Upgrade complete.")
-            if current != "unknown" and new_version and current in new_version:
-                print("     (already on latest)")
-            return True
-        return False
-    except FileNotFoundError:
-        return False
-
-
 def upgrade():
-    """Upgrade TMB to the latest version, respecting install channel.
-
-    Channel logic:
-      - "stable" or "main" → upgrade from PyPI (stable releases)
-      - Any other branch    → upgrade from that git branch;
-                               if branch is gone, fall back to main/PyPI
-    """
+    """Upgrade TMB to the latest version, respecting install channel."""
     import importlib.metadata
 
+    # Show current version
     try:
         current = importlib.metadata.version("trustmybot")
     except importlib.metadata.PackageNotFoundError:
@@ -2150,43 +2112,60 @@ def upgrade():
     print(f"     Current version: {current}")
     print()
 
-    # Stable / main → upgrade from PyPI
-    if channel in ("stable", "main"):
-        print("  Upgrading from PyPI...")
+    # Dev channel: self-upgrade from git
+    if channel == "dev":
+        print("  Upgrading from dev branch...")
         print()
-        if _upgrade_from_pypi(current):
-            print()
-            return
-        # PyPI failed — try main branch from git as fallback
-        print("  ⚠️  PyPI upgrade failed, trying main branch from git...")
+        try:
+            result = subprocess.run(
+                ["uv", "tool", "install", "--upgrade", "--reinstall",
+                 "--from", "git+https://github.com/ZaxShen/TMB@dev",
+                 "trustmybot"],
+                capture_output=True, text=True, timeout=180,
+            )
+            if result.returncode == 0:
+                # Get the new version from a fresh process (our importlib cache is stale)
+                new_ver = subprocess.run(
+                    ["bro", "--version"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                new_version = new_ver.stdout.strip() if new_ver.returncode == 0 else None
+                if new_version:
+                    print(f"  ✅ {new_version}")
+                else:
+                    print("  ✅ Upgrade complete.")
+                if current != "unknown" and new_version and current in new_version:
+                    print(f"     (already on latest)")
+            else:
+                print(f"  ⚠️  Upgrade failed: {result.stderr.strip()}")
+                print()
+                print("  Try manually:")
+                print('    uv tool install --upgrade --reinstall --from "git+https://github.com/ZaxShen/TMB@dev" trustmybot')
+        except FileNotFoundError:
+            print("  ⚠️  'uv' not found. Trying pip...")
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "--upgrade",
+                     "trustmybot @ git+https://github.com/ZaxShen/TMB@dev"],
+                    capture_output=True, text=True, timeout=120,
+                )
+                if result.returncode == 0:
+                    print("  ✅ Upgrade complete.")
+                else:
+                    print(f"  ❌ Upgrade failed: {result.stderr.strip()}")
+            except Exception as e:
+                print(f"  ❌ Upgrade failed: {e}")
         print()
-        if _upgrade_from_git("main", current):
-            print()
-            return
-        print("  ❌ Upgrade failed. Try manually:")
+
+    # Stable channel: show manual instructions
+    else:
+        print("  To upgrade, run one of these:")
         print()
         print("    uv tool upgrade trustmybot")
         print()
-
-    # Any other git branch → upgrade from that branch
-    else:
-        print(f"  Upgrading from {channel} branch...")
+        print("  or:")
         print()
-        if _upgrade_from_git(channel, current):
-            print()
-            return
-        # Branch may have been merged & deleted — fall back to main/PyPI
-        print(f"  ⚠️  Branch '{channel}' not found (merged/deleted?). Falling back to stable...")
-        print()
-        if _upgrade_from_pypi(current):
-            print()
-            return
-        if _upgrade_from_git("main", current):
-            print()
-            return
-        print("  ❌ Upgrade failed. Try manually:")
-        print()
-        print(f'    uv tool install --upgrade --reinstall --from "git+https://github.com/ZaxShen/TMB@{channel}" trustmybot')
+        print("    pip install --upgrade trustmybot")
         print()
 
 
@@ -2336,6 +2315,7 @@ def chat(initial_message: str | None = None):
     if _is_first_run():
         print("[TMB] First time? Let's get you set up, bro.\n")
         setup()
+        return  # Don't auto-enter chat after first setup
 
     _check_llm_config()
     ensure_dirs()
@@ -2353,7 +2333,7 @@ def chat(initial_message: str | None = None):
 
     messages = [SystemMessage(content=system_prompt)]
 
-    planner_display = get_role_name("planner").upper()
+    planner_display = "BRO"
     print(f"[TMB] Chat mode — session {session_id}")
     print(f"[TMB] Type your questions. Press Ctrl+C or type 'exit' to quit.\n")
 

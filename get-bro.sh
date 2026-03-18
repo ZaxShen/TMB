@@ -93,7 +93,12 @@ fi
 
 # 4. Verify installation
 if command -v bro >/dev/null 2>&1; then
-    echo "  ✅ Done! Run 'bot' in your project directory:"
+    VERSION=$(bro --version 2>/dev/null || echo "")
+    if [ -n "$VERSION" ]; then
+        echo "  ✅ $VERSION installed! Run 'bot' in your project directory:"
+    else
+        echo "  ✅ Done! Run 'bot' in your project directory:"
+    fi
     echo
     echo "     cd your-project/"
     echo "     bot                    # first run walks you through setup"

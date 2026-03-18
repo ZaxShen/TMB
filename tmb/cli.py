@@ -1668,6 +1668,16 @@ def setup():
 
     name = input(f"  What's this project called? [{detected_name}]: ").strip() or detected_name
 
+    # Write minimal project.yaml EARLY as a sentinel for _is_first_run().
+    # Full config (roles, purpose) is written later and overwrites this.
+    _early_cfg_path = user_cfg_dir() / "project.yaml"
+    _early_cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    if not _early_cfg_path.exists():
+        with open(_early_cfg_path, "w") as f:
+            yaml.dump({"name": name}, f, default_flow_style=False, sort_keys=False)
+
+    _needs_restart = False
+
     # ── LLM Provider (moved before purpose — needed for prompt generation) ──
     _PROVIDER_MENU = [
         ("1", "Anthropic (Claude)",  "ANTHROPIC_API_KEY", "anthropic",  None),
@@ -1736,6 +1746,8 @@ def setup():
                         from_src = "git+https://github.com/ZaxShen/TMB@dev"
                     else:
                         from_src = "trustmybot"
+
+                    _pkg_installed = False
                     try:
                         result = subprocess.run(
                             ["uv", "tool", "install", "--upgrade", "--reinstall",
@@ -1744,17 +1756,32 @@ def setup():
                             capture_output=True, text=True, timeout=180,
                         )
                         if result.returncode == 0:
-                            print(f"    ✅ {lang_pkg} installed.")
-                        else:
-                            # Fallback: try pip install directly
-                            subprocess.run(
-                                [sys.executable, "-m", "pip", "install", lang_pkg],
+                            _pkg_installed = True
+                    except Exception:
+                        pass
+
+                    if not _pkg_installed:
+                        # Try uv pip install as a second option
+                        try:
+                            result = subprocess.run(
+                                ["uv", "pip", "install", "--python", sys.executable, lang_pkg],
                                 capture_output=True, text=True, timeout=120,
                             )
-                            print(f"    ✅ {lang_pkg} installed (via pip).")
-                    except Exception:
+                            if result.returncode == 0:
+                                _pkg_installed = True
+                        except Exception:
+                            pass
+
+                    if _pkg_installed:
+                        print(f"    ✅ {lang_pkg} installed.")
+                        # The tool venv was reinstalled — the current process can't use it.
+                        # Finish writing config, then tell user to re-run.
+                        _needs_restart = True
+                    else:
                         print(f"    ⚠️  Couldn't auto-install {lang_pkg}.")
-                        print(f"    Install manually: pip install {lang_pkg}")
+                        print(f"    Install manually, then re-run bro:")
+                        print(f"      uv tool install --with {lang_pkg} trustmybot")
+                        _needs_restart = True  # Can't continue without the package
                 else:
                     print(f"    Heads up — install the provider:  uv add {extra_pkg}")
 
@@ -1962,10 +1989,19 @@ def setup():
         print(f"    → https://github.com/ZanMax/TMB")
     print()
 
+    if _needs_restart:
+        print()
+        print("  🔄 Please run `bro` again to start working.")
+        print("     (The provider package was installed into a fresh environment.)")
+        print()
+        sys.exit(0)
+
 
 def _is_first_run() -> bool:
     """Detect whether setup has ever been run for this project."""
-    return not (user_cfg_dir() / "project.yaml").exists()
+    cfg = user_cfg_dir()
+    # Check multiple indicators — if ANY config file exists, setup has run
+    return not (cfg / "project.yaml").exists() and not (cfg / "nodes.yaml").exists()
 
 
 def scan():

@@ -234,9 +234,22 @@ def get_llm(node_name: str):
     try:
         mod = importlib.import_module(package)
     except ImportError:
+        # Detect if running as a uv tool or a local/project install
+        from tmb.paths import TMB_ROOT
+        try:
+            project_root = get_project_root()
+            is_tool = not TMB_ROOT.resolve().is_relative_to(project_root.resolve())
+        except Exception:
+            is_tool = False
+
+        if is_tool:
+            hint = f"uv tool install --with {pip_name} trustmybot"
+        else:
+            hint = f"uv add {pip_name}"
+
         raise ImportError(
             f"Provider '{provider}' requires the '{pip_name}' package.\n"
-            f"Install it with:  uv add {pip_name}"
+            f"Install it with:  {hint}"
         ) from None
 
     cls = getattr(mod, class_name)

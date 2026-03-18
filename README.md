@@ -1,6 +1,6 @@
 # TMB — Trust My Bot
 
-> "I don't trust LLM, but I trust my bro." — Zax Shen
+> "I don't trust LLM, but I trust my bro." — Zax Shen    
 > "Trust Me Bro, it works." - Your Bro
 
 Agentic AI & multi-agent framework that harnesses LLMs into reliable engineering workflows — through structured planning, execution, and validation.

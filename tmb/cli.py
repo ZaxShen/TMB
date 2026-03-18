@@ -1680,24 +1680,26 @@ def setup():
 
     # ── LLM Provider (moved before purpose — needed for prompt generation) ──
     _PROVIDER_MENU = [
-        ("1", "Anthropic (Claude)",  "ANTHROPIC_API_KEY", "anthropic",  None),
-        ("2", "OpenAI (GPT)",        "OPENAI_API_KEY",    "openai",     None),
-        ("3", "Google (Gemini)",     "GOOGLE_API_KEY",    "google",     "tmb[google]"),
-        ("4", "Groq",               "GROQ_API_KEY",      "groq",       "tmb[groq]"),
-        ("5", "Mistral",            "MISTRAL_API_KEY",   "mistral",    "tmb[mistral]"),
-        ("6", "DeepSeek",           "DEEPSEEK_API_KEY",  "deepseek",   "tmb[deepseek]"),
-        ("7", "Local model",        None,                "local",      None),
-        ("s", "Skip for now bro",   None,                None,         None),
+        ("1", "Anthropic (Claude)",  "ANTHROPIC_API_KEY", "anthropic",    None),
+        ("2", "OpenAI (GPT)",        "OPENAI_API_KEY",    "openai",       None),
+        ("3", "Google (Gemini)",     "GOOGLE_API_KEY",    "google",       "tmb[google]"),
+        ("4", "Groq",               "GROQ_API_KEY",      "groq",         "tmb[groq]"),
+        ("5", "Mistral",            "MISTRAL_API_KEY",   "mistral",      "tmb[mistral]"),
+        ("6", "DeepSeek",           "DEEPSEEK_API_KEY",  "deepseek",     "tmb[deepseek]"),
+        ("7", "Claude Code",        None,                "claude_code",  None),
+        ("8", "Local model",        None,                "local",        None),
+        ("s", "Skip for now bro",   None,                None,           None),
     ]
 
     _PROVIDER_DEFAULTS = {
-        "anthropic": {"name": "claude-sonnet-4-6", "temperature": 0.3},
-        "openai":    {"name": "gpt-4o", "temperature": 0.3},
-        "google":    {"name": "gemini-2.0-flash", "temperature": 0.3},
-        "groq":      {"name": "llama-3.3-70b-versatile", "temperature": 0.3},
-        "mistral":   {"name": "mistral-large-latest", "temperature": 0.3},
-        "deepseek":  {"name": "deepseek-chat", "temperature": 0.3},
-        "ollama":    {"name": "llama3.1:8b", "temperature": 0.3, "base_url": "http://localhost:11434"},
+        "anthropic":   {"name": "claude-sonnet-4-6", "temperature": 0.3},
+        "openai":      {"name": "gpt-4o", "temperature": 0.3},
+        "google":      {"name": "gemini-2.0-flash", "temperature": 0.3},
+        "groq":        {"name": "llama-3.3-70b-versatile", "temperature": 0.3},
+        "mistral":     {"name": "mistral-large-latest", "temperature": 0.3},
+        "deepseek":    {"name": "deepseek-chat", "temperature": 0.3},
+        "claude_code": {"name": "sonnet", "temperature": 0},
+        "ollama":      {"name": "llama3.1:8b", "temperature": 0.3, "base_url": "http://localhost:11434"},
     }
 
     env_path = project_root / ".env"
@@ -1726,6 +1728,16 @@ def setup():
                     llm_configured = True  # local models don't need API keys
                 else:
                     provider_name = None  # skipped
+            elif provider_name == "claude_code":
+                import shutil
+                if shutil.which("claude"):
+                    print("    Claude Code detected. No API key needed.")
+                    llm_configured = True
+                else:
+                    print("    Claude Code CLI not found.")
+                    print("    Install it: https://docs.anthropic.com/en/docs/claude-code")
+                    print("    After installing, re-run: bro setup")
+                    provider_name = None  # Skip config writing
             else:
                 # Cloud provider — existing flow
                 if env_var:
@@ -1821,6 +1833,11 @@ def setup():
                         "tools": ["file_read", "file_write", "search", "shell"],
                     },
                 }
+                # Claude Code uses its own tools — don't bind TMB tools
+                if provider_name == "claude_code":
+                    nodes_cfg["planner"]["tools"] = []
+                    nodes_cfg["executor"]["tools"] = []
+                    nodes_cfg["evolve"]["tools"] = []
                 nodes_path = user_cfg_dir() / "nodes.yaml"
                 nodes_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(nodes_path, "w") as f:
@@ -2396,11 +2413,22 @@ def _check_llm_config():
     with no API key and crash.
     """
     import os
+    import shutil
     from tmb.config import load_nodes_config, _PROVIDERS
 
     nodes_yaml = user_cfg_dir() / "nodes.yaml"
     if nodes_yaml.exists():
-        return  # User has explicit config — trust it
+        # Even with explicit config, verify claude_code CLI is available
+        try:
+            cfg = load_nodes_config()
+            provider = cfg.get("planner", {}).get("model", {}).get("provider", "anthropic")
+            if provider == "claude_code" and not shutil.which("claude"):
+                print("[TMB] Claude Code CLI not found. Install it or run `bro setup` to pick a different provider.")
+                print()
+                setup()
+        except Exception:
+            pass
+        return
 
     # No nodes.yaml → using defaults (Anthropic). Check if that'll work.
     try:

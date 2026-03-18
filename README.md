@@ -80,12 +80,19 @@ Everything else happens automatically:
 
 ## Setup
 
-**Prerequisites**: An LLM API key (Anthropic, OpenAI, Google, Groq, Mistral, DeepSeek — or Ollama for local models).
+**Prerequisites**: An LLM API key (Anthropic, OpenAI, Google, Groq, Mistral, DeepSeek — or Ollama for local models). Or just [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with a Claude subscription.
 
-**Install** (one command):
+**Install** (pick one):
 
 ```bash
+# Recommended — works everywhere
 curl -LsSf https://raw.githubusercontent.com/ZaxShen/TMB/main/get-bro.sh | sh
+
+# macOS (Homebrew)
+brew tap ZaxShen/tmb && brew install trustmybot
+
+# Python users
+uv tool install trustmybot
 ```
 
 > **Bleeding edge?** Install from dev: `curl -LsSf https://raw.githubusercontent.com/ZaxShen/TMB/dev/get-bro.sh | sh -s -- dev`

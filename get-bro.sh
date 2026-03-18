@@ -2,11 +2,11 @@
 set -eu
 
 # ── Channel ──────────────────────────────────────────────
-# No argument  → install from PyPI (stable release)
-# Branch name  → install from that git branch:
+# No argument = stable (PyPI release, fastest).
+# Pass a branch name to install from git:
 #   curl ... | sh              (stable from PyPI)
-#   curl ... | sh -s -- dev    (dev branch from git)
-#   curl ... | sh -s -- main   (main branch from git)
+#   curl ... | sh -s -- dev
+#   curl ... | sh -s -- my-feature
 CHANNEL="${1:-stable}"
 
 echo
@@ -93,7 +93,12 @@ fi
 
 # 4. Verify installation
 if command -v bro >/dev/null 2>&1; then
-    echo "  ✅ Done! Run 'bot' in your project directory:"
+    VERSION=$(bro --version 2>/dev/null || echo "")
+    if [ -n "$VERSION" ]; then
+        echo "  ✅ $VERSION installed! Run 'bot' in your project directory:"
+    else
+        echo "  ✅ Done! Run 'bot' in your project directory:"
+    fi
     echo
     echo "     cd your-project/"
     echo "     bot                    # first run walks you through setup"

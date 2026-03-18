@@ -2053,10 +2053,10 @@ def _human_bytes(n: int) -> str:
 
 
 def _detect_install_channel() -> str:
-    """Detect whether TMB was installed from PyPI (stable) or git (dev).
+    """Detect which channel TMB was installed from.
 
     Reads PEP 610 direct_url.json from the installed distribution:
-      - Git URL containing '@dev' → "dev"
+      - Git URL with a branch → that branch name (e.g. "dev", "my-feature")
       - Anything else (PyPI, editable, unknown) → "stable"
     """
     import importlib.metadata
@@ -2068,18 +2068,76 @@ def _detect_install_channel() -> str:
             info = json.loads(raw)
             url = info.get("url", "")
             vcs = info.get("vcs_info", {})
-            if "github.com" in url and vcs.get("requested_revision") == "dev":
-                return "dev"
+            branch = vcs.get("requested_revision")
+            if "github.com" in url and branch:
+                return branch
     except Exception:
         pass
     return "stable"
 
 
+def _upgrade_from_git(branch: str, current: str) -> bool:
+    """Upgrade TMB from a git branch. Returns True on success."""
+    git_url = f"git+https://github.com/ZaxShen/TMB@{branch}"
+    try:
+        result = subprocess.run(
+            ["uv", "tool", "install", "--upgrade", "--reinstall",
+             "--from", git_url, "trustmybot"],
+            capture_output=True, text=True, timeout=180,
+        )
+        if result.returncode == 0:
+            new_ver = subprocess.run(
+                ["bro", "--version"],
+                capture_output=True, text=True, timeout=10,
+            )
+            new_version = new_ver.stdout.strip() if new_ver.returncode == 0 else None
+            if new_version:
+                print(f"  ✅ {new_version}")
+            else:
+                print("  ✅ Upgrade complete.")
+            if current != "unknown" and new_version and current in new_version:
+                print("     (already on latest)")
+            return True
+        return False
+    except FileNotFoundError:
+        return False
+
+
+def _upgrade_from_pypi(current: str) -> bool:
+    """Upgrade TMB from PyPI. Returns True on success."""
+    try:
+        result = subprocess.run(
+            ["uv", "tool", "upgrade", "trustmybot"],
+            capture_output=True, text=True, timeout=180,
+        )
+        if result.returncode == 0:
+            new_ver = subprocess.run(
+                ["bro", "--version"],
+                capture_output=True, text=True, timeout=10,
+            )
+            new_version = new_ver.stdout.strip() if new_ver.returncode == 0 else None
+            if new_version:
+                print(f"  ✅ {new_version}")
+            else:
+                print("  ✅ Upgrade complete.")
+            if current != "unknown" and new_version and current in new_version:
+                print("     (already on latest)")
+            return True
+        return False
+    except FileNotFoundError:
+        return False
+
+
 def upgrade():
-    """Upgrade TMB to the latest version, respecting install channel."""
+    """Upgrade TMB to the latest version, respecting install channel.
+
+    Channel logic:
+      - "stable" or "main" → upgrade from PyPI (stable releases)
+      - Any other branch    → upgrade from that git branch;
+                               if branch is gone, fall back to main/PyPI
+    """
     import importlib.metadata
 
-    # Show current version
     try:
         current = importlib.metadata.version("trustmybot")
     except importlib.metadata.PackageNotFoundError:
@@ -2092,60 +2150,43 @@ def upgrade():
     print(f"     Current version: {current}")
     print()
 
-    # Dev channel: self-upgrade from git
-    if channel == "dev":
-        print("  Upgrading from dev branch...")
+    # Stable / main → upgrade from PyPI
+    if channel in ("stable", "main"):
+        print("  Upgrading from PyPI...")
         print()
-        try:
-            result = subprocess.run(
-                ["uv", "tool", "install", "--upgrade", "--reinstall",
-                 "--from", "git+https://github.com/ZaxShen/TMB@dev",
-                 "trustmybot"],
-                capture_output=True, text=True, timeout=180,
-            )
-            if result.returncode == 0:
-                # Get the new version from a fresh process (our importlib cache is stale)
-                new_ver = subprocess.run(
-                    ["bro", "--version"],
-                    capture_output=True, text=True, timeout=10,
-                )
-                new_version = new_ver.stdout.strip() if new_ver.returncode == 0 else None
-                if new_version:
-                    print(f"  ✅ {new_version}")
-                else:
-                    print("  ✅ Upgrade complete.")
-                if current != "unknown" and new_version and current in new_version:
-                    print(f"     (already on latest)")
-            else:
-                print(f"  ⚠️  Upgrade failed: {result.stderr.strip()}")
-                print()
-                print("  Try manually:")
-                print('    uv tool install --upgrade --reinstall --from "git+https://github.com/ZaxShen/TMB@dev" trustmybot')
-        except FileNotFoundError:
-            print("  ⚠️  'uv' not found. Trying pip...")
-            try:
-                result = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "--upgrade",
-                     "trustmybot @ git+https://github.com/ZaxShen/TMB@dev"],
-                    capture_output=True, text=True, timeout=120,
-                )
-                if result.returncode == 0:
-                    print("  ✅ Upgrade complete.")
-                else:
-                    print(f"  ❌ Upgrade failed: {result.stderr.strip()}")
-            except Exception as e:
-                print(f"  ❌ Upgrade failed: {e}")
+        if _upgrade_from_pypi(current):
+            print()
+            return
+        # PyPI failed — try main branch from git as fallback
+        print("  ⚠️  PyPI upgrade failed, trying main branch from git...")
         print()
-
-    # Stable channel: show manual instructions
-    else:
-        print("  To upgrade, run one of these:")
+        if _upgrade_from_git("main", current):
+            print()
+            return
+        print("  ❌ Upgrade failed. Try manually:")
         print()
         print("    uv tool upgrade trustmybot")
         print()
-        print("  or:")
+
+    # Any other git branch → upgrade from that branch
+    else:
+        print(f"  Upgrading from {channel} branch...")
         print()
-        print("    pip install --upgrade trustmybot")
+        if _upgrade_from_git(channel, current):
+            print()
+            return
+        # Branch may have been merged & deleted — fall back to main/PyPI
+        print(f"  ⚠️  Branch '{channel}' not found (merged/deleted?). Falling back to stable...")
+        print()
+        if _upgrade_from_pypi(current):
+            print()
+            return
+        if _upgrade_from_git("main", current):
+            print()
+            return
+        print("  ❌ Upgrade failed. Try manually:")
+        print()
+        print(f'    uv tool install --upgrade --reinstall --from "git+https://github.com/ZaxShen/TMB@{channel}" trustmybot')
         print()
 
 

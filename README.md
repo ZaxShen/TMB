@@ -1,6 +1,6 @@
 # TMB — Trust My Bot
 
-> "I don't trust LLM, but I trust my bro." — Zax Shen
+> "I don't trust LLM, but I trust my bro." — Zax Shen    
 > "Trust Me Bro, it works." - Your Bro
 
 Agentic AI & multi-agent framework that harnesses LLMs into reliable engineering workflows — through structured planning, execution, and validation.
@@ -88,7 +88,7 @@ Everything else happens automatically:
 curl -LsSf https://raw.githubusercontent.com/ZaxShen/TMB/main/get-bro.sh | sh
 ```
 
-> **Bleeding edge?** Install from dev: `curl -LsSf https://raw.githubusercontent.com/ZaxShen/TMB/dev/get-bro.sh | sh`
+> **Bleeding edge?** Install from dev: `curl -LsSf https://raw.githubusercontent.com/ZaxShen/TMB/dev/get-bro.sh | sh -s -- dev`
 
 **Start:**
 

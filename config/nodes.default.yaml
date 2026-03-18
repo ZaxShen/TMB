@@ -82,3 +82,10 @@ evolve:
 #     base_url: http://localhost:11434
 #     timeout: 300  # seconds per LLM call (recommended for local models)
 #     num_gpu: 1    # GPU layers (auto-detected if omitted; 0 = CPU only)
+#
+# planner:
+#   model:
+#     provider: claude_code
+#     name: sonnet                    # model alias: sonnet, opus, haiku
+#     timeout: 300                    # seconds per CLI call
+#   tools: []                         # Claude Code uses its own tools

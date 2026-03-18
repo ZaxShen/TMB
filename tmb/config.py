@@ -172,7 +172,8 @@ _PROVIDERS: dict[str, tuple[str, str, str | None]] = {
     "groq":      ("langchain_groq",         "ChatGroq",               "GROQ_API_KEY"),
     "mistral":   ("langchain_mistralai",    "ChatMistralAI",          "MISTRAL_API_KEY"),
     "deepseek":  ("langchain_deepseek",     "ChatDeepSeek",           "DEEPSEEK_API_KEY"),
-    "ollama":    ("langchain_ollama",       "ChatOllama",              None),
+    "ollama":      ("langchain_ollama",             "ChatOllama",      None),
+    "claude_code": ("tmb.providers.claude_code",   "ChatClaudeCode",  None),
 }
 
 
@@ -273,6 +274,18 @@ def get_llm(node_name: str):
         if num_gpu is None:
             num_gpu = _detect_gpu_layers()
         kwargs["num_gpu"] = num_gpu
+
+    if provider == "claude_code":
+        # Claude Code uses its own tools — pass node-specific restrictions
+        _EXECUTOR_DISALLOWED = [
+            "Read(**/GOALS.md)",
+            "Read(**/DISCUSSION.md)",
+            "Read(**/BLUEPRINT.md)",
+            "Read(**/FLOWCHART.md)",
+        ]
+        kwargs["disallowed_tools"] = _EXECUTOR_DISALLOWED if node_name == "executor" else []
+        # Claude Code doesn't use base_url — not applicable
+        kwargs.pop("base_url", None)
 
     return cls(**kwargs)
 

@@ -15,7 +15,7 @@ import re
 
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
-from tmb.config import get_llm, get_role_name, get_project_root, load_nodes_config, extract_token_usage
+from tmb.config import get_llm, get_role_name, get_project_root, load_nodes_config, extract_token_usage, safe_llm_invoke, LLMConnectionError
 from tmb.paths import docs_dir
 from tmb.utils import truncate
 from tmb.store import Store
@@ -149,7 +149,7 @@ def _run_discussion_tool_loop(llm_with_tools, messages, tool_map,
     for _rnd in range(_MAX_TOOL_ROUNDS):
         if counts:
             _print_progress()
-        response = llm_with_tools.invoke(messages)
+        response = safe_llm_invoke(llm_with_tools, messages, label="discussion")
         messages.append(response)
 
         if token_accum is not None:
@@ -193,6 +193,19 @@ def _run_discussion_tool_loop(llm_with_tools, messages, tool_map,
 
 def run_discussion(goals_md: str, project_context: str, store: Store, issue_id: int) -> str:
     """File-based discussion loop. Returns the full discussion as a string."""
+    try:
+        return _run_discussion_impl(goals_md, project_context, store, issue_id)
+    except LLMConnectionError as e:
+        planner_display = get_role_name("planner").upper()
+        print(f"\n[{planner_display}] ❌ LLM connection error:\n{e}\n")
+        store.log(issue_id, None, "planner", "llm_connection_error", {
+            "error": str(e)[:500],
+        }, summary=f"LLM connection error: {str(e)[:100]}")
+        return ""
+
+
+def _run_discussion_impl(goals_md: str, project_context: str, store: Store, issue_id: int) -> str:
+    """Inner implementation — may raise LLMConnectionError."""
     llm = get_llm("planner")
     discussion_path = docs_dir() / "DISCUSSION.md"
     planner_display = get_role_name("planner")

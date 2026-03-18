@@ -79,11 +79,13 @@ class TestGetLlmOllama:
 
     @staticmethod
     def _make_nodes_config(provider="ollama", model="llama3.2",
-                            temperature=0.3, base_url=None):
+                            temperature=0.3, base_url=None, timeout=None):
         """Build a minimal nodes config for testing."""
         model_cfg = {"provider": provider, "name": model, "temperature": temperature}
         if base_url:
             model_cfg["base_url"] = base_url
+        if timeout is not None:
+            model_cfg["timeout"] = timeout
         return {"planner": {"model": model_cfg, "tools": []}}
 
     def test_ollama_instantiation(self):
@@ -164,3 +166,60 @@ class TestGetLlmOllama:
             from tmb.config import get_llm
             with pytest.raises(ValueError, match="nonexistent"):
                 get_llm("planner")
+
+    def test_ollama_timeout_uses_client_kwargs(self):
+        """Ollama timeout must be passed as client_kwargs={'timeout': N}, not as timeout=N."""
+        mock_cls = MagicMock()
+        mock_module = MagicMock()
+        mock_module.ChatOllama = mock_cls
+
+        config = self._make_nodes_config(timeout=300)
+
+        with (
+            patch("tmb.config.load_nodes_config", return_value=config),
+            patch("importlib.import_module", return_value=mock_module),
+        ):
+            from tmb.config import get_llm
+            get_llm("planner")
+
+        mock_cls.assert_called_once_with(
+            model="llama3.2", temperature=0.3, client_kwargs={"timeout": 300}
+        )
+
+    def test_non_ollama_timeout_uses_timeout_kwarg(self):
+        """Non-Ollama providers (e.g. anthropic) should receive timeout= directly."""
+        mock_cls = MagicMock()
+        mock_module = MagicMock()
+        mock_module.ChatAnthropic = mock_cls
+
+        config = self._make_nodes_config(provider="anthropic", model="claude-3-5-haiku-20241022", timeout=120)
+
+        with (
+            patch("tmb.config.load_nodes_config", return_value=config),
+            patch("importlib.import_module", return_value=mock_module),
+        ):
+            from tmb.config import get_llm
+            get_llm("planner")
+
+        mock_cls.assert_called_once_with(
+            model="claude-3-5-haiku-20241022", temperature=0.3, timeout=120
+        )
+
+    def test_no_timeout_config_passes_no_timeout_kwarg(self):
+        """When timeout is not in config, no timeout kwarg should be passed."""
+        mock_cls = MagicMock()
+        mock_module = MagicMock()
+        mock_module.ChatOllama = mock_cls
+
+        config = self._make_nodes_config()  # no timeout
+
+        with (
+            patch("tmb.config.load_nodes_config", return_value=config),
+            patch("importlib.import_module", return_value=mock_module),
+        ):
+            from tmb.config import get_llm
+            get_llm("planner")
+
+        call_kwargs = mock_cls.call_args[1]
+        assert "timeout" not in call_kwargs
+        assert "client_kwargs" not in call_kwargs

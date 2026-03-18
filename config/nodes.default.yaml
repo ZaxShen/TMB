@@ -80,3 +80,4 @@ evolve:
 #     name: llama3.1:8b
 #     temperature: 0.3
 #     base_url: http://localhost:11434
+#     timeout: 300  # seconds per LLM call (recommended for local models)

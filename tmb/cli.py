@@ -2132,8 +2132,143 @@ def upgrade():
         print()
 
 
+def _extract_chat_signal(content: str) -> tuple[str | None, str | None, str]:
+    """Parse chat LLM response for action signals.
+
+    Returns (signal_type, signal_value, display_text) where:
+      - signal_type: "command", "quick_task", "plan", or None
+      - signal_value: the extracted content from the tag, or None
+      - display_text: the response with all action tags stripped (for display)
+    """
+    import re
+
+    display = content
+
+    # Check for <run_command>...</run_command>
+    m = re.search(r'<run_command>(.*?)</run_command>', content, re.DOTALL)
+    if m:
+        display = re.sub(r'\s*<run_command>.*?</run_command>\s*', '', content, flags=re.DOTALL).strip()
+        return ("command", m.group(1).strip(), display)
+
+    # Check for <quick_task>...</quick_task>
+    m = re.search(r'<quick_task>(.*?)</quick_task>', content, re.DOTALL)
+    if m:
+        display = re.sub(r'\s*<quick_task>.*?</quick_task>\s*', '', content, flags=re.DOTALL).strip()
+        return ("quick_task", m.group(1).strip(), display)
+
+    # Check for <plan_mode>...</plan_mode>
+    m = re.search(r'<plan_mode>(.*?)</plan_mode>', content, re.DOTALL)
+    if m:
+        display = re.sub(r'\s*<plan_mode>.*?</plan_mode>\s*', '', content, flags=re.DOTALL).strip()
+        return ("plan", m.group(1).strip(), display)
+
+    return (None, None, content)
+
+
+def _dispatch_chat_command(command_str: str, store: Store) -> bool:
+    """Dispatch a built-in command from chat mode.
+
+    Returns True if chat should continue after this command,
+    False if chat should exit (e.g., plan mode).
+    """
+    parts = command_str.strip().split(None, 1)
+    cmd = parts[0].lower() if parts else ""
+    arg = parts[1].strip() if len(parts) > 1 else None
+
+    try:
+        # Read-only commands — run immediately
+        if cmd == "scan":
+            scan()
+        elif cmd == "log":
+            log_history(int(arg) if arg else None)
+        elif cmd == "report":
+            if not arg:
+                print("[TMB] Usage: report <issue_id>")
+                return True
+            report(int(arg))
+        elif cmd == "tokens":
+            tokens(int(arg) if arg else None)
+        elif cmd == "version":
+            import importlib.metadata
+            try:
+                v = importlib.metadata.version("trustmybot")
+            except importlib.metadata.PackageNotFoundError:
+                v = "dev"
+            print(f"Trust Me Bro v{v}")
+
+        # Interactive commands — confirm first
+        elif cmd == "setup":
+            try:
+                confirm = input("[TMB] Run setup? (y/n): ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                return True
+            if confirm in ("y", "yes"):
+                setup()
+        elif cmd == "upgrade":
+            try:
+                confirm = input("[TMB] Check for upgrades? (y/n): ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                return True
+            if confirm in ("y", "yes"):
+                upgrade()
+        elif cmd == "plan":
+            try:
+                confirm = input("[TMB] Switch to plan mode? (y/n): ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                return True
+            if confirm in ("y", "yes"):
+                plan()
+                return False  # Exit chat after plan
+        else:
+            print(f"[TMB] Unknown command: {cmd}")
+    except (ValueError, TypeError) as e:
+        print(f"[TMB] Invalid argument: {e}")
+
+    return True  # Continue chat
+
+
+def _prefill_goals_and_plan(store: Store, goals_summary: str, session_id: str):
+    """Write goals from chat escalation to GOALS.md, then start the plan workflow.
+
+    This is the SOLE EXCEPTION where TMB writes user content to GOALS.md.
+    Normally GOALS.md is written only by the human. This exception exists because
+    chat-to-plan escalation needs to transfer the conversation context.
+    """
+    goals_path = docs_dir() / "GOALS.md"
+
+    # Check for existing non-template content
+    if goals_path.exists():
+        existing = goals_path.read_text().strip()
+        # Strip template boilerplate to check for real content
+        cleaned = re.sub(r"<!--.*?-->", "", existing, flags=re.DOTALL).strip()
+        cleaned = re.sub(
+            r"^# Goals\s*\n+Write your goals.*?---\s*",
+            "", cleaned, flags=re.DOTALL,
+        ).strip()
+        if cleaned:
+            try:
+                confirm = input(
+                    "[TMB] GOALS.md has existing content. Overwrite? (y/n): "
+                ).strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                print("\n[TMB] Aborted. Your GOALS.md was not changed.")
+                return
+            if confirm not in ("y", "yes"):
+                print("[TMB] Keeping existing GOALS.md. Update it manually, then run `bro plan`.")
+                return
+
+    goals_path.parent.mkdir(parents=True, exist_ok=True)
+    goals_path.write_text(f"# Goals\n\n{goals_summary}\n")
+    print(f"[TMB] Goals written to {goals_path}")
+
+    # Log escalation
+    store.log_chat(session_id, "system", f"Escalated to plan mode — GOALS.md prefilled")
+
+    plan()
+
+
 def chat(initial_message: str | None = None):
-    """Interactive chat with the planner — read-only exploration, with optional planning escalation."""
+    """Interactive chat — the intelligent front door to all bro functionality."""
     import uuid
     from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
@@ -2161,14 +2296,14 @@ def chat(initial_message: str | None = None):
     messages = [SystemMessage(content=system_prompt)]
 
     planner_display = get_role_name("planner").upper()
-    print(f"[TMB] 💬 Chat mode — session {session_id}")
+    print(f"[TMB] Chat mode — session {session_id}")
     print(f"[TMB] Type your questions. Press Ctrl+C or type 'exit' to quit.\n")
 
     while True:
         try:
             if initial_message is not None:
                 user_input = initial_message
-                initial_message = None  # Only use once
+                initial_message = None
             else:
                 user_input = input(f"[you] ").strip()
         except (KeyboardInterrupt, EOFError):
@@ -2181,6 +2316,7 @@ def chat(initial_message: str | None = None):
         store.log_chat(session_id, "user", user_input)
         messages.append(HumanMessage(content=user_input))
 
+        # Tool loop — let LLM use file_inspect/search before responding
         for _ in range(10):
             response = llm_with_tools.invoke(messages)
             messages.append(response)
@@ -2205,6 +2341,7 @@ def chat(initial_message: str | None = None):
                         tool_call_id=tc["id"],
                     ))
 
+        # Normalize content
         content = response.content
         if isinstance(content, list):
             content = "\n".join(
@@ -2212,37 +2349,42 @@ def chat(initial_message: str | None = None):
                 for block in content
             )
 
+        # Parse for action signals
+        signal_type, signal_value, display_text = _extract_chat_signal(content)
+
+        # Log and display (always show the clean display_text)
         store.log_chat(session_id, "assistant", content)
-        print(f"\n[{planner_display}] {content}\n")
+        if display_text:
+            print(f"\n[{planner_display}] {display_text}\n")
 
-        if re.search(r"ready to plan\?", content, re.IGNORECASE):
+        # Handle action signals
+        if signal_type == "command" and signal_value:
+            if not _dispatch_chat_command(signal_value, store):
+                break  # Command signaled exit (e.g., plan mode)
+
+        elif signal_type == "quick_task" and signal_value:
             try:
-                confirm = input("[TMB] Escalate to planning? (y/n): ").strip().lower()
+                confirm = input("[TMB] Run this task? (y/n): ").strip().lower()
             except (KeyboardInterrupt, EOFError):
-                print("\n[TMB] Chat ended.")
-                break
+                print("\n[TMB] Skipped.")
+                continue
             if confirm in ("y", "yes"):
-                chat_history = store.get_chat_history(session_id)
-                summary_parts = []
-                for msg in chat_history:
-                    prefix = "User" if msg["role"] == "user" else "Planner"
-                    summary_parts.append(f"{prefix}: {msg['content']}")
-                chat_summary = "\n".join(summary_parts[-20:])
+                print("[TMB] Working on it...\n")
+                _quick_task(store, signal_value)
+                print()  # Blank line after task output
+                # Add task result context to chat
+                messages.append(HumanMessage(
+                    content="[system] The task has been executed. Continue chatting."
+                ))
 
-                instruction = (
-                    f"Based on the following chat discussion, plan and execute:\n\n"
-                    f"{chat_summary}"
-                )
-
-                issue_id = store.create_issue(
-                    instruction[:120].strip(), instruction,
-                )
-                store.mark_chat_escalated(session_id, issue_id)
-                store.log_chat(session_id, "system", f"Escalated to issue #{issue_id}")
-
-                print(f"\n[TMB] 🚀 Created issue #{issue_id} from chat — starting planning...")
-                print("-" * 40)
-                _quick_task(store, instruction)
+        elif signal_type == "plan" and signal_value:
+            try:
+                confirm = input("[TMB] Switch to plan mode? (y/n): ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                print("\n[TMB] Staying in chat.")
+                continue
+            if confirm in ("y", "yes"):
+                _prefill_goals_and_plan(store, signal_value, session_id)
                 break
 
 

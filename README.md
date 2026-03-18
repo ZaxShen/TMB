@@ -1,6 +1,9 @@
 # TMB — Trust My Bot
 
-> trust me bro, it works.
+> "I don't trust LLM, but I trust my bro." — Zax Shen
+> "Trust Me Bro, it works." - Your Bro
+
+Agentic AI & multi-agent framework that harnesses LLMs into reliable engineering workflows — through structured planning, execution, and validation.
 
 ---
 
@@ -117,20 +120,21 @@ To update: `bro upgrade`
 ## Quick Commands
 
 
-| Command                        | What it does                                                 |
-| ------------------------------ | ------------------------------------------------------------ |
-| `bot`                          | Full workflow — reads your goals, discusses, plans, executes |
-| `bot "fix the login bug"`      | Quick task — skips discussion, auto-approves the plan        |
-| `bot chat`                     | Interactive chat with the planner (read-only exploration)    |
-| `bot scan`                     | Scan project for TMB context (file registry, git history)    |
-| `bot log`                      | Show recent issues                                           |
-| `bot log 3`                    | Show details for issue #3                                    |
-| `bot report 3`                 | Export a full markdown report for issue #3                   |
-| `bot tokens`                   | Show token usage across all issues                           |
-| `bot tokens 3`                 | Show token usage for issue #3                                |
-| `bot setup`                    | Re-run setup (change LLM provider, role names, etc.)         |
-| `bot evolve "..."`             | Self-modify TMB's own code (guarded, git-snapshotted)        |
-| `bot serve`                    | Expose TMB as an MCP server (for Claude Desktop, Cursor)     |
+| Command            | What it does                                                 |
+| ------------------ | ------------------------------------------------------------ |
+| `bro`              | Chat mode (default) — ask anything, bro handles it           |
+| `bro plan`         | Full workflow — reads your goals, discusses, plans, executes |
+| `bro chat`         | Chat mode (explicit)                                         |
+| `bro scan`         | Scan project for TMB context (file registry, git history)    |
+| `bro log`          | Show recent issues                                           |
+| `bro log 3`        | Show details for issue #3                                    |
+| `bro report 3`     | Export a full markdown report for issue #3                   |
+| `bro tokens`       | Show token usage across all issues                           |
+| `bro tokens 3`     | Show token usage for issue #3                                |
+| `bro setup`        | Re-run setup (change LLM provider, role names, etc.)         |
+| `bro evolve "..."` | Self-modify TMB's own code (guarded, git-snapshotted)        |
+| `bro serve`        | Expose TMB as an MCP server (for Claude Desktop, Cursor)     |
+
 
 ### MCP — External Integrations
 
@@ -187,6 +191,6 @@ For architecture, configuration, permissions, skills, MCP integration, and datab
 
 ## License
 
-MIT License — See [LICENSE](LICENSE)
+AGPL-3.0 — See [LICENSE](LICENSE)
 
 **Author**: Zax S ([@ZaxShen](https://github.com/ZaxShen))

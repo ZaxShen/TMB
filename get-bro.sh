@@ -2,11 +2,12 @@
 set -eu
 
 # ── Channel ──────────────────────────────────────────────
-# Pass a branch name to install from that git branch:
-#   curl ... | sh              (defaults to main)
-#   curl ... | sh -s -- dev
-#   curl ... | sh -s -- my-feature
-CHANNEL="${1:-main}"
+# No argument  → install from PyPI (stable release)
+# Branch name  → install from that git branch:
+#   curl ... | sh              (stable from PyPI)
+#   curl ... | sh -s -- dev    (dev branch from git)
+#   curl ... | sh -s -- main   (main branch from git)
+CHANNEL="${1:-stable}"
 
 echo
 echo "  🤙  Installing Trust My Bot ($CHANNEL)..."
@@ -32,10 +33,18 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 # 2. Install trustmybot globally
-echo "  Installing trustmybot ($CHANNEL branch)..."
-if ! uv tool install --upgrade --reinstall --from "git+https://github.com/ZaxShen/TMB@$CHANNEL" trustmybot; then
-    echo "  ERROR: Failed to install trustmybot from $CHANNEL."
-    exit 1
+if [ "$CHANNEL" = "stable" ]; then
+    echo "  Installing trustmybot (stable from PyPI)..."
+    if ! uv tool install --upgrade trustmybot; then
+        echo "  ERROR: Failed to install trustmybot from PyPI."
+        exit 1
+    fi
+else
+    echo "  Installing trustmybot ($CHANNEL branch from git)..."
+    if ! uv tool install --upgrade --reinstall --from "git+https://github.com/ZaxShen/TMB@$CHANNEL" trustmybot; then
+        echo "  ERROR: Failed to install trustmybot from $CHANNEL."
+        exit 1
+    fi
 fi
 echo
 

@@ -6,12 +6,13 @@ import hashlib
 import json
 import logging
 import re
+import time
 
 logger = logging.getLogger("tmb.executor")
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from tmb.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, extract_token_usage
+from tmb.config import get_llm, load_prompt, load_nodes_config, get_project_root, get_role_name, extract_token_usage, safe_llm_invoke, LLMConnectionError
 from tmb.paths import TMB_ROOT, user_skills_dir
 from tmb.utils import truncate, fit_line
 from tmb.state import AgentState
@@ -22,6 +23,7 @@ from tmb.types import TokenAccumulator
 _MAX_TOOL_ROUNDS = 15
 _MAX_TOOL_OUTPUT_CHARS = 20_000
 _CONTEXT_BUDGET_CHARS = 600_000  # ~150K tokens; leaves headroom under 200K limit
+_MAX_WALL_SECONDS = 600  # 10 min hard limit per task execution
 
 
 def _get_execution_plan(store: Store, issue_id: int, branch_id: str) -> str:
@@ -111,6 +113,20 @@ def _output_hash(output: str) -> str:
 
 
 def executor(state: AgentState) -> dict:
+    try:
+        return _executor_impl(state)
+    except LLMConnectionError as e:
+        executor_display = get_role_name("executor").upper()
+        print(f"\n[{executor_display}] ❌ LLM connection error:\n{e}\n")
+        store = Store()
+        issue_id = state.get("issue_id")
+        store.log(issue_id, None, "executor", "llm_connection_error", {
+            "error": str(e)[:500],
+        }, summary=f"LLM connection error: {str(e)[:100]}")
+        return {"execution_log": f"LLM connection error: {e}", "next_node": "__end__"}
+
+
+def _executor_impl(state: AgentState) -> dict:
     node_cfg = load_nodes_config()["executor"]
     project_root = str(get_project_root())
     store = Store()
@@ -212,8 +228,27 @@ def executor(state: AgentState) -> dict:
     _MAX_REPEATS_PER_TOOL = 3
     _MAX_TOTAL_REPEATS = 5
     _repeat_forced_stop = False
+    _wall_exceeded = False
 
+    _start_time = time.monotonic()
     for _round in range(_MAX_TOOL_ROUNDS):
+        # Wall-clock budget
+        _elapsed = time.monotonic() - _start_time
+        if _elapsed > _MAX_WALL_SECONDS:
+            _wall_exceeded = True
+            logger.warning("Executor wall-clock exceeded: %.0fs", _elapsed)
+            messages.append(HumanMessage(
+                content=(
+                    f"[system] Time budget exceeded ({_elapsed:.0f}s). "
+                    f"Stop using tools and return your structured log now."
+                )
+            ))
+            response = safe_llm_invoke(llm_with_tools, messages, label="executor")
+            messages.append(response)
+            usage = extract_token_usage(response)
+            token_accum.add(usage)
+            break
+
         ctx_chars = _estimate_context_chars(messages)
         if ctx_chars > _CONTEXT_BUDGET_CHARS:
             budget_exceeded = True
@@ -223,13 +258,13 @@ def executor(state: AgentState) -> dict:
                     f"Stop using tools and return your structured log now."
                 )
             ))
-            response = llm_with_tools.invoke(messages)
+            response = safe_llm_invoke(llm_with_tools, messages, label="executor")
             messages.append(response)
             usage = extract_token_usage(response)
             token_accum.add(usage)
             break
 
-        response = llm_with_tools.invoke(messages)
+        response = safe_llm_invoke(llm_with_tools, messages, label="executor")
         messages.append(response)
 
         usage = extract_token_usage(response)
@@ -294,7 +329,7 @@ def executor(state: AgentState) -> dict:
                     "Report what you attempted and why it's failing."
                 )
             ))
-            response = llm_with_tools.invoke(messages)
+            response = safe_llm_invoke(llm_with_tools, messages, label="executor")
             messages.append(response)
             usage = extract_token_usage(response)
             token_accum.add(usage)
@@ -322,6 +357,12 @@ def executor(state: AgentState) -> dict:
             "total_repeats": _total_repeats,
             "rounds_used": _round + 1,
         }, summary=f"Forced stop: {_total_repeats} repeated outputs after {_round + 1} rounds")
+
+    if _wall_exceeded:
+        store.log(issue_id, branch_id, "executor", "wall_clock_exceeded", {
+            "elapsed_seconds": round(_elapsed),
+            "rounds_used": _round + 1,
+        }, summary=f"Wall-clock exceeded: {_elapsed:.0f}s after {_round + 1} rounds")
 
     execution_log = _normalize_content(response.content)
     if tool_outputs:

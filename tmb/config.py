@@ -176,6 +176,37 @@ _PROVIDERS: dict[str, tuple[str, str, str | None]] = {
 }
 
 
+def _detect_gpu_layers() -> int:
+    """Auto-detect GPU availability for Ollama.
+
+    Returns:
+        1 if GPU detected (Apple Silicon MPS or NVIDIA CUDA), 0 for CPU-only.
+    """
+    import platform
+    import shutil
+    import subprocess
+
+    # macOS: Apple Silicon has MPS (Metal Performance Shaders)
+    if platform.system() == "Darwin":
+        if platform.machine() == "arm64":
+            return 1  # Apple Silicon — MPS available
+        return 0  # Intel Mac — no MPS
+
+    # Linux/Windows: check for NVIDIA GPU via nvidia-smi
+    if shutil.which("nvidia-smi"):
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return 1  # NVIDIA GPU available
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+    return 0  # No GPU detected
+
+
 def get_llm(node_name: str):
     """Instantiate the LLM for a given node based on config/nodes.yaml.
 
@@ -189,6 +220,7 @@ def get_llm(node_name: str):
     model_name = cfg["name"]
     temperature = cfg.get("temperature", 0)
     base_url = cfg.get("base_url")
+    timeout = cfg.get("timeout")  # seconds per LLM call; None means provider default
 
     if provider not in _PROVIDERS:
         supported = ", ".join(sorted(_PROVIDERS))
@@ -202,9 +234,22 @@ def get_llm(node_name: str):
     try:
         mod = importlib.import_module(package)
     except ImportError:
+        # Detect if running as a uv tool or a local/project install
+        from tmb.paths import TMB_ROOT
+        try:
+            project_root = get_project_root()
+            is_tool = not TMB_ROOT.resolve().is_relative_to(project_root.resolve())
+        except Exception:
+            is_tool = False
+
+        if is_tool:
+            hint = f"uv tool install --with {pip_name} trustmybot"
+        else:
+            hint = f"uv add {pip_name}"
+
         raise ImportError(
             f"Provider '{provider}' requires the '{pip_name}' package.\n"
-            f"Install it with:  uv add {pip_name}"
+            f"Install it with:  {hint}"
         ) from None
 
     cls = getattr(mod, class_name)
@@ -213,7 +258,73 @@ def get_llm(node_name: str):
     if base_url:
         kwargs["base_url"] = base_url
 
+    # Apply timeout — different providers use different kwargs
+    if timeout is not None:
+        if provider == "ollama":
+            # ChatOllama passes timeout through client_kwargs to httpx
+            kwargs["client_kwargs"] = {"timeout": timeout}
+        else:
+            # ChatAnthropic, ChatOpenAI, and most others accept `timeout`
+            kwargs["timeout"] = timeout
+
+    # Auto-detect or use configured GPU layers for Ollama
+    if provider == "ollama":
+        num_gpu = cfg.get("num_gpu")
+        if num_gpu is None:
+            num_gpu = _detect_gpu_layers()
+        kwargs["num_gpu"] = num_gpu
+
     return cls(**kwargs)
+
+
+class LLMConnectionError(Exception):
+    """Raised when the LLM endpoint is unreachable or the model is unavailable."""
+    pass
+
+
+def safe_llm_invoke(llm, messages, *, label: str = "LLM"):
+    """Invoke an LLM with friendly error handling for connection/timeout failures.
+
+    Catches connection errors, timeouts, and model-not-found errors from any provider
+    and raises LLMConnectionError with a human-friendly message.
+
+    Raises:
+        LLMConnectionError: with a user-friendly message describing what went wrong
+    """
+    try:
+        return llm.invoke(messages)
+    except Exception as e:
+        error_str = str(e).lower()
+        error_type = type(e).__name__
+
+        # Connection refused / endpoint not running
+        if any(term in error_str for term in ["connect", "connection refused", "no route to host"]):
+            raise LLMConnectionError(
+                f"Can't connect to the LLM. Is it running?\n"
+                f"  If using Ollama: run 'ollama serve'\n"
+                f"  If using LM Studio: start the local server\n"
+                f"  Error: {error_type}: {str(e)[:200]}"
+            ) from e
+
+        # Timeout
+        if any(term in error_str for term in ["timeout", "timed out", "deadline exceeded"]):
+            raise LLMConnectionError(
+                f"LLM call timed out. The model may be too slow for this prompt.\n"
+                f"  Try: increase 'timeout' in .tmb/config/nodes.yaml\n"
+                f"  Or: use a smaller/faster model\n"
+                f"  Error: {error_type}: {str(e)[:200]}"
+            ) from e
+
+        # Model not found (Ollama-specific)
+        if "not found" in error_str or "model" in error_str and "404" in error_str:
+            raise LLMConnectionError(
+                f"Model not found. Check the model name in .tmb/config/nodes.yaml\n"
+                f"  If using Ollama: run 'ollama list' to see available models\n"
+                f"  Error: {error_type}: {str(e)[:200]}"
+            ) from e
+
+        # Re-raise anything else (content errors, auth errors, etc.)
+        raise
 
 
 def extract_token_usage(response) -> dict:

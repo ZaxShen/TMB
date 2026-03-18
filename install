@@ -20,7 +20,7 @@ if ! command -v uv &> /dev/null; then
     echo
 fi
 
-echo "[TMB] Installing into $(basename "$PROJECT_ROOT")/"
+echo "[TMB] Installing into $(basename "$PROJECT_ROOT")/ (developer mode)"
 echo
 
 if [ ! -f pyproject.toml ]; then
@@ -31,14 +31,14 @@ name = "$PROJECT_NAME"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
-    "tmb",
+    "trustmybot",
 ]
 
 [tool.uv]
 package = false
 
 [tool.uv.sources]
-tmb = { path = "./$TMB_REL", editable = true }
+trustmybot = { path = "./$TMB_REL", editable = true }
 TOML
     echo "  Created pyproject.toml"
 fi
@@ -50,16 +50,6 @@ fi
 uv sync 2>&1 | tail -1
 echo
 
-# Create bro wrapper script
-if [ ! -f "$PROJECT_ROOT/bro" ]; then
-    cat > "$PROJECT_ROOT/bro" <<'WRAPPER'
-#!/usr/bin/env bash
-exec "$(dirname "$0")/.venv/bin/tmb" "$@"
-WRAPPER
-    chmod +x "$PROJECT_ROOT/bro"
-    echo "  Created ./bro"
-fi
-
-echo "[TMB] Ready. Run:"
-echo "  ./bro                   # first run walks you through setup"
+echo "[TMB] Ready (developer mode). Commands:"
+echo "  uv run bot               # or: uv run bro, uv run tmb"
 echo

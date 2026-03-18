@@ -1,6 +1,9 @@
 # TMB — Trust My Bot
 
-> trust me bro, it works.
+> "I don't trust LLM, but I trust my bro." — Zax Shen
+> "Trust Me Bro, it works." - Your Bro
+
+Agentic AI & multi-agent framework that harnesses LLMs into reliable engineering workflows — through structured planning, execution, and validation.
 
 ---
 
@@ -31,9 +34,9 @@ The key insight: **you stay at the system-design level**. You never argue about 
 
 **3. Every task is validated.** After the Executor finishes, the Planner (which holds full project context) independently validates the output against success criteria — running tests, inspecting files, checking results. It's a built-in code review that never gets lazy.
 
-**4. Everything is recorded.** Every discussion, decision, tool call, and validation result is persisted in SQLite. Run `tmb report 3` six months later and reconstruct exactly what happened, why, and what the agents saw.
+**4. Everything is recorded.** Every discussion, decision, tool call, and validation result is persisted in SQLite. Run `bot report 3` six months later and reconstruct exactly what happened, why, and what the agents saw.
 
-**5. You can interrupt anytime.** Close your laptop mid-task. Run `./bro` again — it picks up exactly where it left off. State lives in the database, not in memory.
+**5. You can interrupt anytime.** Close your laptop mid-task. Run `bot` again — it picks up exactly where it left off. State lives in the database, not in memory.
 
 ---
 
@@ -58,7 +61,7 @@ No special syntax required. Write like you're explaining to a colleague.
 ### 2. Run TMB
 
 ```bash
-./bro
+bot
 ```
 
 TMB reads your goals, then the Planner will ask you clarifying questions in `bro/DISCUSSION.md`. Open that file, write your answers below the marker, save, and press Enter in the terminal.
@@ -77,64 +80,61 @@ Everything else happens automatically:
 
 ## Setup
 
-**Prerequisites**: Python 3.13+ (the installer handles everything else) and an LLM API key (Anthropic, OpenAI, Google, Groq, Mistral, DeepSeek — or Ollama for local models).
+**Prerequisites**: An LLM API key (Anthropic, OpenAI, Google, Groq, Mistral, DeepSeek — or Ollama for local models).
 
-**New project:**
+**Install** (one command):
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/ZaxShen/TMB/main/get-bro.sh | sh
+```
+
+> **Bleeding edge?** Install from dev: `curl -LsSf https://raw.githubusercontent.com/ZaxShen/TMB/dev/get-bro.sh | sh`
+
+**Start:**
 
 ```bash
 cd your-project/
-git clone https://github.com/ZaxShen/TMB.git
-./TMB/install
-./bro
+bot
 ```
 
-**Joining an existing project** (someone already set up TMB):
-
-```bash
-cd your-project/
-./TMB/install
-./bro
-```
-
-The install script handles everything — Python dependencies, package setup, and creating the `./bro` command. The first time you run `./bro`, TMB walks you through naming your project, choosing an LLM provider, and setting your API key — then continues straight into the workflow.
+The first time you run `bot`, it walks you through naming your project, choosing an LLM provider, and setting your API key — then continues straight into the workflow.
 
 After setup your project looks like this:
 
 ```
 your-project/
-├── bro               ← run this (./bro)
 ├── bro/              ← you interact here (GOALS.md, DISCUSSION.md)
 ├── .tmb/             ← runtime state (automatic, hidden)
-├── TMB/              ← framework (don't touch)
 ├── .env              ← your API key
-└── ...
+└── your files...
 ```
 
-> **Important**: Always run commands from your **project root** (the parent of `TMB/`), not from inside `TMB/`.
+To update: `bro upgrade`
 
-To update TMB later: `cd TMB && git pull origin dev && cd .. && ./TMB/install`
+> **Tip**: `bro` is an alias for `bot` — use whichever you prefer.
 
-> **Developers**: `uv run tmb` also works if you prefer. See [ARCHITECTURE.md](ARCHITECTURE.md) for developer setup, optional providers, and technical details.
+> **Developers**: For local/editable install, `uv` commands, and optional providers, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
 ## Quick Commands
 
 
-| Command                        | What it does                                                 |
-| ------------------------------ | ------------------------------------------------------------ |
-| `./bro`                        | Full workflow — reads your goals, discusses, plans, executes |
-| `./bro "fix the login bug"`    | Quick task — skips discussion, auto-approves the plan        |
-| `./bro chat`                   | Interactive chat with the planner (read-only exploration)    |
-| `./bro scan`                   | Scan project for TMB context (file registry, git history)    |
-| `./bro log`                    | Show recent issues                                           |
-| `./bro log 3`                  | Show details for issue #3                                    |
-| `./bro report 3`               | Export a full markdown report for issue #3                   |
-| `./bro tokens`                 | Show token usage across all issues                           |
-| `./bro tokens 3`               | Show token usage for issue #3                                |
-| `./bro setup`                  | Re-run setup (change LLM provider, role names, etc.)         |
-| `./bro evolve "..."`           | Self-modify TMB's own code (guarded, git-snapshotted)        |
-| `./bro serve`                  | Expose TMB as an MCP server (for Claude Desktop, Cursor)     |
+| Command            | What it does                                                 |
+| ------------------ | ------------------------------------------------------------ |
+| `bro`              | Chat mode (default) — ask anything, bro handles it           |
+| `bro plan`         | Full workflow — reads your goals, discusses, plans, executes |
+| `bro chat`         | Chat mode (explicit)                                         |
+| `bro scan`         | Scan project for TMB context (file registry, git history)    |
+| `bro log`          | Show recent issues                                           |
+| `bro log 3`        | Show details for issue #3                                    |
+| `bro report 3`     | Export a full markdown report for issue #3                   |
+| `bro tokens`       | Show token usage across all issues                           |
+| `bro tokens 3`     | Show token usage for issue #3                                |
+| `bro setup`        | Re-run setup (change LLM provider, role names, etc.)         |
+| `bro evolve "..."` | Self-modify TMB's own code (guarded, git-snapshotted)        |
+| `bro serve`        | Expose TMB as an MCP server (for Claude Desktop, Cursor)     |
+
 
 ### MCP — External Integrations
 
@@ -145,9 +145,10 @@ To use TMB as an MCP server in Claude Desktop or Cursor, add this to your MCP co
 ```json
 {
   "mcpServers": {
-    "tmb": {
-      "command": "/path/to/your-project/bro",
-      "args": ["serve"]
+    "trustmybot": {
+      "command": "bot",
+      "args": ["serve"],
+      "cwd": "/path/to/your-project"
     }
   }
 }
@@ -190,6 +191,6 @@ For architecture, configuration, permissions, skills, MCP integration, and datab
 
 ## License
 
-MIT License — See [LICENSE](LICENSE)
+AGPL-3.0 — See [LICENSE](LICENSE)
 
 **Author**: Zax S ([@ZaxShen](https://github.com/ZaxShen))

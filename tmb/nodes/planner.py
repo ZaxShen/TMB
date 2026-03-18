@@ -11,13 +11,14 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import xml.etree.ElementTree as ET
 
 logger = logging.getLogger("tmb.planner")
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from tmb.config import get_llm, load_prompt, load_nodes_config, load_project_config, get_project_root, get_role_name, extract_token_usage
+from tmb.config import get_llm, load_prompt, load_nodes_config, load_project_config, get_project_root, get_role_name, extract_token_usage, safe_llm_invoke, LLMConnectionError
 from tmb.paths import TMB_ROOT, docs_dir, SEED_SKILLS_DIR, user_skills_dir
 from tmb.utils import truncate
 from tmb.state import AgentState
@@ -64,13 +65,15 @@ def _estimate_context_chars(messages: list) -> int:
 def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = "",
                    token_accum: "TokenAccumulator | None" = None,
                    max_context_chars: int = _PLANNER_CONTEXT_BUDGET_CHARS,
+                   max_wall_seconds: float = 600.0,
                    audit_store=None, audit_issue_id=None, audit_branch_id=None,
                    audit_from_node: str = "planner"):
     """Run a multi-turn tool loop, returning the final response.
 
     Shows live progress on a single line, overwritten after each tool call.
     If *token_accum* is provided, accumulates token counts across calls.
-    Stops early if estimated context exceeds *max_context_chars*.
+    Stops early if estimated context exceeds *max_context_chars* or if
+    wall-clock time exceeds *max_wall_seconds*.
     """
     import sys
     import time
@@ -90,6 +93,23 @@ def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = 
             sys.stdout.flush()
 
     for rnd in range(max_rounds):
+        # Wall-clock budget check
+        elapsed = time.monotonic() - start
+        if elapsed > max_wall_seconds:
+            logger.warning("Wall-clock budget exceeded: %.0fs > %.0fs", elapsed, max_wall_seconds)
+            messages.append(HumanMessage(
+                content=(
+                    f"[system] Time budget exceeded ({elapsed:.0f}s). "
+                    f"Stop using tools and return your final answer now."
+                )
+            ))
+            response = safe_llm_invoke(llm_with_tools, messages, label=label)
+            messages.append(response)
+            if token_accum is not None:
+                usage = extract_token_usage(response)
+                token_accum.add(usage)
+            break
+
         # Context budget check
         ctx_chars = _estimate_context_chars(messages)
         if ctx_chars > max_context_chars:
@@ -99,7 +119,7 @@ def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = 
                     f"Stop using tools and return your final answer now."
                 )
             ))
-            response = llm_with_tools.invoke(messages)
+            response = safe_llm_invoke(llm_with_tools, messages, label=label)
             messages.append(response)
             if token_accum is not None:
                 usage = extract_token_usage(response)
@@ -108,7 +128,7 @@ def _run_tool_loop(llm_with_tools, messages, tool_map, max_rounds, label: str = 
 
         if counts:
             _print_progress()
-        response = llm_with_tools.invoke(messages)
+        response = safe_llm_invoke(llm_with_tools, messages, label=label)
         messages.append(response)
 
         if token_accum is not None:
@@ -255,6 +275,15 @@ EXPLORE_INSTRUCTION = (
     "5. **File formats encountered** — list every data/config format the project uses\n"
 )
 
+CLASSIFY_INSTRUCTION = (
+    "Does this task require reading or modifying the project's source code or files?\n"
+    "Answer ONLY 'yes' or 'no'.\n\n"
+    "YES examples: fix a bug, add a feature, refactor code, update config, "
+    "change tests, analyze data files, modify a script\n"
+    "NO examples: write an email, draft a document, summarize something, "
+    "brainstorm ideas, answer a question, create text content"
+)
+
 SKILL_PROVISION_INSTRUCTION = (
     "You have just explored the codebase. Now **provision skills** that the "
     "{role_executor} will need.\n\n"
@@ -363,7 +392,7 @@ def _maybe_generate_flowchart(
             f"## Blueprint ({len(blueprint)} tasks)\n```json\n{json.dumps(blueprint[:5], indent=2)}\n```",
             FLOWCHART_NEEDED_INSTRUCTION,
         ]
-        decide_resp = llm.invoke([
+        decide_resp = safe_llm_invoke(llm, [
             SystemMessage(content=system_prompt),
             HumanMessage(content="\n\n".join(decide_parts)),
         ])
@@ -390,14 +419,14 @@ def _maybe_generate_flowchart(
         SystemMessage(content=system_prompt),
         HumanMessage(content="\n\n".join(fc_parts)),
     ]
-    fc_response = llm.invoke(fc_messages)
+    fc_response = safe_llm_invoke(llm, fc_messages)
     usage = extract_token_usage(fc_response)
     token_accum.add(usage)
     fc_raw = _normalize_content(fc_response.content)
 
     if "mermaid" not in fc_raw.lower() and len(fc_raw) < 200:
         print(f"[{planner_display}] Flowchart too short, retrying...")
-        fc_response = llm.invoke(fc_messages)
+        fc_response = safe_llm_invoke(llm, fc_messages)
         usage = extract_token_usage(fc_response)
         token_accum.add(usage)
         fc_raw = _normalize_content(fc_response.content)
@@ -426,7 +455,7 @@ def _maybe_update_flowchart_after_task(
         "(new module, changed data flow, restructured pipeline, new service)?\n"
         "Answer ONLY 'yes' or 'no'."
     )
-    resp = llm.invoke([
+    resp = safe_llm_invoke(llm, [
         SystemMessage(content=system_prompt),
         HumanMessage(content=check_prompt),
     ])
@@ -471,6 +500,21 @@ def _per_task_exec_instruction():
 
 def planner_plan(state: AgentState) -> dict:
     """Explore codebase, then generate BLUEPRINT.md and FLOWCHART.md."""
+    try:
+        return _planner_plan_impl(state)
+    except LLMConnectionError as e:
+        planner_display = get_role_name("planner").upper()
+        print(f"\n[{planner_display}] ❌ LLM connection error:\n{e}\n")
+        store = Store()
+        issue_id = state.get("issue_id")
+        store.log(issue_id, None, "planner", "llm_connection_error", {
+            "error": str(e)[:500],
+        }, summary=f"LLM connection error: {str(e)[:100]}")
+        return {"blueprint": [], "next_node": "__end__"}
+
+
+def _planner_plan_impl(state: AgentState) -> dict:
+    """Inner implementation of planner_plan — may raise LLMConnectionError."""
     node_cfg = load_nodes_config().get("planner", {})
     project_cfg = load_project_config()
     project_root = str(get_project_root())
@@ -496,12 +540,38 @@ def planner_plan(state: AgentState) -> dict:
     project_context = state.get("project_context", "")
     discussion = state.get("discussion", "")
     token_accum = TokenAccumulator()
+    start_time = time.monotonic()
 
     is_replan = bool(feedback)
 
+    # ── 0a. Classify task — does it need codebase exploration? ────
+    needs_codebase = True  # default: explore (safe fallback)
+    if tools and not is_replan:
+        classify_parts = [f"## Task\n{objective}"]
+        if discussion:
+            classify_parts.append(f"## Discussion Context\n{discussion[:500]}")
+        classify_parts.append(CLASSIFY_INSTRUCTION)
+
+        classify_resp = safe_llm_invoke(llm, [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content="\n\n".join(classify_parts)),
+        ], label="classify")
+        usage = extract_token_usage(classify_resp)
+        token_accum.add(usage)
+
+        answer = _normalize_content(classify_resp.content).strip().lower()
+        if "no" in answer and "yes" not in answer:
+            needs_codebase = False
+            print(f"[{planner_display}] 📝 Non-code task detected — skipping codebase exploration.")
+            store.log(issue_id, None, "planner", "exploration_skipped", {
+                "reason": "task_classification_no_code",
+            }, summary="Skipped exploration — non-code task")
+        else:
+            print(f"[{planner_display}] 💻 Code task detected — will explore codebase.")
+
     # ── 0. Explore the codebase ──────────────────────────────
     exploration_summary = ""
-    if tools and not is_replan:
+    if tools and not is_replan and needs_codebase:
         print(f"[{planner_display}] 🔍 Exploring codebase...")
         explore_parts = []
         if project_context:
@@ -531,22 +601,26 @@ def planner_plan(state: AgentState) -> dict:
                 "4. File formats and data files\n\n"
                 "Summarize what you learned from the files you inspected."
             )))
-            summary_resp = llm.invoke(explore_messages)
+            summary_resp = safe_llm_invoke(llm, explore_messages)
             usage = extract_token_usage(summary_resp)
             token_accum.add(usage)
             exploration_summary = _normalize_content(summary_resp.content)
 
-        store.log(issue_id, None, "planner", "codebase_explored", {
+        explore_elapsed = time.monotonic() - start_time
+        tool_count = sum(1 for m in explore_messages if hasattr(m, 'tool_call_id'))
+        store.log(issue_id, None, "planner", "exploration_complete", {
             "summary_length": len(exploration_summary),
-        }, summary="Explored codebase structure and key modules")
-        print(f"[{planner_display}] 🔍 Exploration complete ({len(exploration_summary)} chars)")
+            "elapsed_seconds": round(explore_elapsed),
+            "tool_calls": tool_count,
+        }, summary=f"Exploration complete: {tool_count} tool calls in {explore_elapsed:.0f}s")
+        print(f"[{planner_display}] 🔍 Exploration complete — {tool_count} tool calls in {explore_elapsed:.0f}s")
     elif is_replan:
         print(f"[{planner_display}] 🔄 Re-planning based on feedback...")
     else:
         print(f"[{planner_display}] 📋 Building blueprint from discussion...")
 
     # ── 0a. Skill provisioning ────────────────────────────────
-    if tools and not is_replan:
+    if tools and not is_replan and needs_codebase:
         available_skills = store.get_all_skills()
         existing_names = {s["name"] for s in available_skills}
         skill_section = ""
@@ -672,7 +746,7 @@ def planner_plan(state: AgentState) -> dict:
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=review_prompt),
             ]
-            review_resp = llm.invoke(review_msgs)
+            review_resp = safe_llm_invoke(llm, review_msgs)
             usage = extract_token_usage(review_resp)
             token_accum.add(usage)
             verdict = _normalize_content(review_resp.content).strip().upper()
@@ -732,7 +806,7 @@ def planner_plan(state: AgentState) -> dict:
         HumanMessage(content="\n\n".join(parts)),
     ]
 
-    print(f"[{planner_display}] 📋 Generating blueprint...")
+    print(f"[{planner_display}] 📋 Generating blueprint... (waiting for LLM response)")
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, 5, label="blueprint",
         token_accum=token_accum,
@@ -761,7 +835,7 @@ def planner_plan(state: AgentState) -> dict:
             "  </task>\n"
             "</blueprint>"
         )))
-        retry_resp = llm.invoke(messages)
+        retry_resp = safe_llm_invoke(llm, messages)
         usage = extract_token_usage(retry_resp)
         token_accum.add(usage)
         raw = _normalize_content(retry_resp.content)
@@ -812,7 +886,12 @@ def planner_plan(state: AgentState) -> dict:
         exploration_summary, issue_id, store, token_accum, planner_display,
     )
 
-    print(f"[{planner_display}] ✅ Planning complete: {len(blueprint)} tasks")
+    total_elapsed = time.monotonic() - start_time
+    print(f"[{planner_display}] ✅ Planning complete: {len(blueprint)} tasks in {total_elapsed:.0f}s")
+    store.log(issue_id, None, "planner", "blueprint_generated", {
+        "task_count": len(blueprint),
+        "total_elapsed_seconds": round(total_elapsed),
+    }, summary=f"Blueprint: {len(blueprint)} tasks in {total_elapsed:.0f}s")
     store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
 
     return {
@@ -841,6 +920,19 @@ def _quick_task_instruction():
 
 def planner_quick_task(instruction: str, project_context: str, issue_id: int):
     """Planner handles a simple task directly — no graph, no executor."""
+    try:
+        return _planner_quick_task_impl(instruction, project_context, issue_id)
+    except LLMConnectionError as e:
+        planner_display = get_role_name("planner").upper()
+        print(f"\n[{planner_display}] ❌ LLM connection error:\n{e}\n")
+        Store().log(issue_id, None, "planner", "llm_connection_error", {
+            "error": str(e)[:500],
+        }, summary=f"LLM connection error: {str(e)[:100]}")
+        return f"Error: {e}"
+
+
+def _planner_quick_task_impl(instruction: str, project_context: str, issue_id: int):
+    """Inner implementation — may raise LLMConnectionError."""
     node_cfg = load_nodes_config().get("planner", {})
     project_root = str(get_project_root())
     llm = get_llm("planner")
@@ -1019,7 +1111,22 @@ def planner_evolve_execute(
 
 
 def planner_execution_plan(state: AgentState) -> dict:
-    """Generate per-task execution plans and store each in SQLite.
+    """Generate per-task execution plans and store each in SQLite."""
+    try:
+        return _planner_execution_plan_impl(state)
+    except LLMConnectionError as e:
+        planner_display = get_role_name("planner").upper()
+        print(f"\n[{planner_display}] ❌ LLM connection error:\n{e}\n")
+        store = Store()
+        issue_id = state.get("issue_id")
+        store.log(issue_id, None, "planner", "llm_connection_error", {
+            "error": str(e)[:500],
+        }, summary=f"LLM connection error: {str(e)[:100]}")
+        return {"next_node": "__end__"}
+
+
+def _planner_execution_plan_impl(state: AgentState) -> dict:
+    """Inner implementation — may raise LLMConnectionError.
 
     Loops over blueprint tasks, generating a concise plan for each one
     individually. Writes a lightweight summary to doc/EXECUTION.md for
@@ -1207,7 +1314,22 @@ def _record_skill_outcomes(store: Store, skill_names: list[str], is_pass: bool):
 
 
 def planner_validate(state: AgentState) -> dict:
-    """Validate executor output against success criteria.
+    """Validate executor output against success criteria."""
+    try:
+        return _planner_validate_impl(state)
+    except LLMConnectionError as e:
+        planner_display = get_role_name("planner").upper()
+        print(f"\n[{planner_display}] ❌ LLM connection error:\n{e}\n")
+        store = Store()
+        issue_id = state.get("issue_id")
+        store.log(issue_id, None, "planner", "llm_connection_error", {
+            "error": str(e)[:500],
+        }, summary=f"LLM connection error: {str(e)[:100]}")
+        return {"next_node": "__end__"}
+
+
+def _planner_validate_impl(state: AgentState) -> dict:
+    """Inner implementation — may raise LLMConnectionError.
 
     The Planner validates because it already holds full context — data
     schema, algorithm design, success criteria, edge cases.  No context

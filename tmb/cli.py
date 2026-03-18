@@ -1,11 +1,11 @@
 """TMB CLI entry point.
 
 Usage:
-  tmb                               Full workflow (reads bro/GOALS.md)
-  tmb "update FLOWCHART"            Quick task (full pipeline, no interactive steps)
+  tmb                               Chat mode (default — ask anything)
+  tmb plan                          Full planning workflow (reads bro/GOALS.md)
+  tmb chat                          Chat mode (explicit)
   tmb evolve "instruction"          Self-evolution (modify TMB itself)
   tmb setup                         Interactive project setup
-  tmb chat                          Interactive chat with the planner
   tmb scan                          Scan project for TMB context
   tmb log                           Show recent issues
   tmb log <id>                      Show issue details + ledger
@@ -15,6 +15,11 @@ Usage:
 """
 
 from __future__ import annotations
+
+# Suppress Pydantic V1 compat warning on Python 3.14+
+# (LangChain's transitive deps still use pydantic.v1 — harmless until they migrate)
+import warnings
+warnings.filterwarnings("ignore", message=".*Pydantic V1.*")
 
 import difflib
 import hashlib
@@ -272,6 +277,17 @@ def _approve_blueprint(store: Store, issue_id: int) -> bool:
     print("[TMB] ✅ Blueprint approved. Generating execution plan...")
     print("-" * 40)
     return True
+
+
+def _maybe_suggest_scan(store: Store, project_root) -> None:
+    """Suggest running 'tmb scan' if the project hasn't been scanned yet."""
+    try:
+        count = store._conn.execute("SELECT COUNT(*) FROM file_registry").fetchone()[0]
+        if count == 0:
+            print("[TMB] 💡 Tip: run `bro scan` first for better results (scans your project for context).")
+    except Exception:
+        # Table might not exist yet — that's fine, skip silently
+        pass
 
 
 def _quick_task(store: Store, instruction: str):
@@ -1334,17 +1350,22 @@ def _generate_prompts(
     return True
 
 
-def _inject_tmb_dependency(toml_path: Path, content: str, tmb_rel: Path) -> None:
+def _inject_tmb_dependency(toml_path: Path, content: str, tmb_rel: Path | None) -> None:
     """Add TMB as a dependency to an existing pyproject.toml without overwriting.
 
     Handles three cases:
-      1. [project] with dependencies list → append "tmb" to the list
+      1. [project] with dependencies list → append the dependency to the list
       2. [project] without dependencies    → add dependencies key
       3. No [project] section              → append a minimal block
 
-    Always adds [tool.uv.sources] for the path dependency if missing.
+    When tmb_rel is a Path (local/editable install), uses "tmb" as the dependency name
+    and adds [tool.uv.sources] with the path entry.
+    When tmb_rel is None (PyPI install), uses "trustmybot" as the dependency name
+    and skips [tool.uv] / [tool.uv.sources] entirely.
     """
     import re as _re
+
+    dep_name = "tmb" if tmb_rel is not None else "trustmybot"
 
     lines = content.splitlines(keepends=True)
     modified = False
@@ -1371,49 +1392,261 @@ def _inject_tmb_dependency(toml_path: Path, content: str, tmb_rel: Path) -> None
             # Single-line form: dependencies = []
             if "]" in stripped:
                 if "[]" in stripped:
-                    lines[i] = line.replace("[]", '[\n    "tmb",\n]')
+                    lines[i] = line.replace("[]", f'[\n    "{dep_name}",\n]')
                 else:
-                    lines[i] = line.replace("]", '    "tmb",\n]')
+                    lines[i] = line.replace("]", f'    "{dep_name}",\n]')
                 modified = True
                 break
             continue
         if in_deps:
             if "]" in stripped:
                 # Insert before the closing bracket
-                lines.insert(i, '    "tmb",\n')
+                lines.insert(i, f'    "{dep_name}",\n')
                 modified = True
                 break
 
     if not modified and in_project and insert_idx is not None:
         # [project] exists but no dependencies key — add it
-        lines.insert(insert_idx, 'dependencies = [\n    "tmb",\n]\n')
+        lines.insert(insert_idx, f'dependencies = [\n    "{dep_name}",\n]\n')
         modified = True
 
     if not modified:
         # No [project] at all — append a minimal block
-        lines.append('\n[project]\ndependencies = [\n    "tmb",\n]\n')
+        lines.append(f'\n[project]\ndependencies = [\n    "{dep_name}",\n]\n')
 
-    # ── Add [tool.uv.sources] if missing ──
     joined = "".join(lines)
-    if "[tool.uv.sources]" not in joined:
-        uv_section = ""
-        if "[tool.uv]" not in joined:
-            uv_section = "\n[tool.uv]\npackage = false\n"
-        joined = (
-            joined.rstrip("\n") + "\n"
-            + uv_section
-            + f'\n[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n'
-        )
-    elif "tmb" not in joined.split("[tool.uv.sources]")[1].split("[")[0]:
-        # [tool.uv.sources] exists but no tmb entry
-        joined = joined.replace(
-            "[tool.uv.sources]\n",
-            f'[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n',
-        )
+
+    # ── Add [tool.uv.sources] if local install ──
+    if tmb_rel is not None:
+        if "[tool.uv.sources]" not in joined:
+            uv_section = ""
+            if "[tool.uv]" not in joined:
+                uv_section = "\n[tool.uv]\npackage = false\n"
+            joined = (
+                joined.rstrip("\n") + "\n"
+                + uv_section
+                + f'\n[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n'
+            )
+        elif "tmb" not in joined.split("[tool.uv.sources]")[1].split("[")[0]:
+            # [tool.uv.sources] exists but no tmb entry
+            joined = joined.replace(
+                "[tool.uv.sources]\n",
+                f'[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n',
+            )
 
     toml_path.write_text(joined)
     print(f"    Added TMB dependency to {toml_path}")
     print(f"    Run `uv sync` to install.")
+
+
+# ── Local model setup helpers ─────────────────────────────────────────────
+
+
+def _verify_ollama_model(base_url: str, model_name: str) -> bool:
+    """Verify an Ollama model exists and responds. Quick ping with tiny prompt."""
+    import urllib.request
+    import urllib.error
+
+    print(f"    Verifying {model_name}...")
+    try:
+        payload = json.dumps({"model": model_name, "prompt": "hi", "stream": False}).encode()
+        req = urllib.request.Request(
+            f"{base_url}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode())
+            if "error" in data:
+                print(f"    ❌ Model error: {data['error']}")
+                return False
+            print(f"    ✅ {model_name} is working.")
+            return True
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read().decode())
+            print(f"    ❌ {body.get('error', f'HTTP {e.code}')}")
+        except Exception:
+            print(f"    ❌ Ollama returned HTTP {e.code}")
+        return False
+    except (urllib.error.URLError, ConnectionError, OSError):
+        print(f"    ❌ Can't reach Ollama at {base_url}")
+        return False
+    except Exception as e:
+        print(f"    ❌ Verification failed: {e}")
+        return False
+
+
+def _pick_ollama_model() -> str:
+    """Show recommended model menu and return the chosen model name."""
+    print("    Recommended models:")
+    print("      1) llama3.1:8b        (default — good all-rounder)")
+    print("      2) deepseek-r1:7b     (reasoning focused)")
+    print("      3) qwen3:8b           (open-source, multilingual)")
+    print("      4) Enter custom name")
+    choice = input("    Choice [1]: ").strip() or "1"
+    _options = {"1": "llama3.1:8b", "2": "deepseek-r1:7b", "3": "qwen3:8b"}
+    if choice == "4":
+        return input("    Model name: ").strip() or "llama3.1:8b"
+    return _options.get(choice, "llama3.1:8b")
+
+
+def _ollama_pull(model_name: str):
+    """Pull an Ollama model with live output."""
+    print(f"    Pulling {model_name}... (this may take a few minutes)")
+    try:
+        proc = subprocess.run(
+            ["ollama", "pull", model_name],
+            timeout=600,  # 10 min for large models
+        )
+        if proc.returncode == 0:
+            print(f"    ✅ {model_name} ready.")
+        else:
+            print(f"    ⚠️  Pull failed. Try manually: ollama pull {model_name}")
+    except FileNotFoundError:
+        print(f"    ⚠️  'ollama' command not found. Install: https://ollama.ai")
+    except subprocess.TimeoutExpired:
+        print(f"    ⚠️  Pull timed out. Try manually: ollama pull {model_name}")
+
+
+def _setup_ollama(env_path) -> "tuple[str, str, str, str | None] | None":
+    """Ollama-specific setup: scan, list models, auto-pull if needed."""
+    import urllib.request
+    import urllib.error
+
+    base_url = "http://localhost:11434"
+    extra_pkg = "tmb[ollama]"
+
+    # Show GPU detection
+    from tmb.config import _detect_gpu_layers
+    import platform
+    gpu_layers = _detect_gpu_layers()
+    if gpu_layers > 0:
+        if platform.system() == "Darwin":
+            print("    GPU: Apple Silicon (MPS) detected — GPU acceleration enabled")
+        else:
+            print("    GPU: NVIDIA GPU detected — CUDA acceleration enabled")
+    else:
+        print("    GPU: No GPU detected — running on CPU")
+    print()
+
+    # Try to connect to Ollama
+    try:
+        req = urllib.request.Request(f"{base_url}/api/tags")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            models = [m["name"] for m in data.get("models", [])]
+    except (urllib.error.URLError, ConnectionError, OSError):
+        # Ollama not running — check if installed
+        import shutil
+        if shutil.which("ollama"):
+            print("    ⚠️  Ollama is installed but not running.")
+            print("    Start it with: ollama serve")
+        else:
+            print("    ⚠️  Ollama not found.")
+            print("    Install it: https://ollama.ai")
+            print("    Then: ollama serve")
+
+        # Offer to pull a model
+        print()
+        model_name = _pick_ollama_model()
+        _ollama_pull(model_name)
+        return ("ollama", model_name, base_url, extra_pkg)
+
+    if not models:
+        print("    Ollama is running but has no models.")
+        while True:
+            print()
+            model_name = _pick_ollama_model()
+            _ollama_pull(model_name)
+            if _verify_ollama_model(base_url, model_name):
+                return ("ollama", model_name, base_url, extra_pkg)
+            print("    Model verification failed. Let's try another.")
+
+    # Show available models
+    print()
+    print("    Available models:")
+    for i, m in enumerate(models, 1):
+        print(f"      {i}) {m}")
+    print(f"      p) Pull a new model")
+    model_choice = input(f"    Pick a model [1]: ").strip() or "1"
+
+    if model_choice.lower() == "p":
+        while True:
+            print()
+            model_name = _pick_ollama_model()
+            _ollama_pull(model_name)
+            if _verify_ollama_model(base_url, model_name):
+                return ("ollama", model_name, base_url, extra_pkg)
+            print("    Model verification failed. Let's try another.")
+
+    try:
+        idx = int(model_choice) - 1
+        selected_model = models[idx]
+    except (ValueError, IndexError):
+        selected_model = models[0]
+
+    if _verify_ollama_model(base_url, selected_model):
+        return ("ollama", selected_model, base_url, extra_pkg)
+
+    # Existing model failed verification — let user pick another
+    print("    Model verification failed. Let's try another.")
+    while True:
+        print()
+        model_name = _pick_ollama_model()
+        _ollama_pull(model_name)
+        if _verify_ollama_model(base_url, model_name):
+            return ("ollama", model_name, base_url, extra_pkg)
+        print("    Model verification failed. Let's try another.")
+
+
+def _setup_local_model(env_path) -> "tuple[str, str, str, str | None] | None":
+    """Interactive local model setup — scan for Ollama, LM Studio, or custom endpoint.
+
+    Returns (provider, model_name, base_url, extra_pkg) or None if skipped.
+    """
+    import urllib.request
+    import urllib.error
+
+    _LOCAL_PLATFORMS = [
+        ("1", "Ollama",    "http://localhost:11434"),
+        ("2", "LM Studio", "http://localhost:1234/v1"),
+        ("3", "Other / Custom (OpenAI-compatible)", None),
+    ]
+
+    print()
+    print("  Which local platform?")
+    for key, label, _ in _LOCAL_PLATFORMS:
+        print(f"    {key}) {label}")
+    platform_choice = input("  Choice [1]: ").strip() or "1"
+    platform = next((p for p in _LOCAL_PLATFORMS if p[0] == platform_choice), _LOCAL_PLATFORMS[0])
+    _, platform_name, default_url = platform
+
+    if platform_name == "Ollama":
+        return _setup_ollama(env_path)
+    else:
+        # LM Studio or Custom — OpenAI-compatible endpoint
+        if default_url:
+            url = input(f"    Base URL [{default_url}]: ").strip() or default_url
+        else:
+            url = input("    Base URL (e.g. http://localhost:8080/v1): ").strip()
+            if not url:
+                print("    No URL entered — skipping.")
+                return None
+
+        model_name = input("    Model name: ").strip()
+        if not model_name:
+            print("    No model name — skipping.")
+            return None
+
+        # OpenAI-compatible endpoints need OPENAI_API_KEY set (even if unused)
+        existing_env = env_path.read_text() if env_path.exists() else ""
+        if "OPENAI_API_KEY" not in existing_env:
+            with open(env_path, "a") as f:
+                f.write("OPENAI_API_KEY=not-needed\n")
+
+        print(f"    ✅ Configured: {platform_name} at {url} with model {model_name}")
+        return ("openai", model_name, url, None)
 
 
 # ── CLI Commands ─────────────────────────────────────────────
@@ -1435,6 +1668,16 @@ def setup():
 
     name = input(f"  What's this project called? [{detected_name}]: ").strip() or detected_name
 
+    # Write minimal project.yaml EARLY as a sentinel for _is_first_run().
+    # Full config (roles, purpose) is written later and overwrites this.
+    _early_cfg_path = user_cfg_dir() / "project.yaml"
+    _early_cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    if not _early_cfg_path.exists():
+        with open(_early_cfg_path, "w") as f:
+            yaml.dump({"name": name}, f, default_flow_style=False, sort_keys=False)
+
+    _needs_restart = False
+
     # ── LLM Provider (moved before purpose — needed for prompt generation) ──
     _PROVIDER_MENU = [
         ("1", "Anthropic (Claude)",  "ANTHROPIC_API_KEY", "anthropic",  None),
@@ -1443,9 +1686,19 @@ def setup():
         ("4", "Groq",               "GROQ_API_KEY",      "groq",       "tmb[groq]"),
         ("5", "Mistral",            "MISTRAL_API_KEY",   "mistral",    "tmb[mistral]"),
         ("6", "DeepSeek",           "DEEPSEEK_API_KEY",  "deepseek",   "tmb[deepseek]"),
-        ("7", "Ollama (local)",     None,                "ollama",     "tmb[ollama]"),
+        ("7", "Local model",        None,                "local",      None),
         ("s", "Skip for now bro",   None,                None,         None),
     ]
+
+    _PROVIDER_DEFAULTS = {
+        "anthropic": {"name": "claude-sonnet-4-6", "temperature": 0.3},
+        "openai":    {"name": "gpt-4o", "temperature": 0.3},
+        "google":    {"name": "gemini-2.0-flash", "temperature": 0.3},
+        "groq":      {"name": "llama-3.3-70b-versatile", "temperature": 0.3},
+        "mistral":   {"name": "mistral-large-latest", "temperature": 0.3},
+        "deepseek":  {"name": "deepseek-chat", "temperature": 0.3},
+        "ollama":    {"name": "llama3.1:8b", "temperature": 0.3, "base_url": "http://localhost:11434"},
+    }
 
     env_path = project_root / ".env"
     llm_configured = env_path.exists()
@@ -1459,16 +1712,78 @@ def setup():
         choice = input("  Choice [1]: ").strip() or "1"
 
         selected = next((m for m in _PROVIDER_MENU if m[0] == choice), None)
+        model_name_override = None
+        base_url_override = None
         env_lines = []
         if selected and selected[0] != "s":
             _, label, env_var, provider_name, extra_pkg = selected
-            if env_var:
-                api_key = input(f"    {env_var}: ").strip()
-                if api_key:
-                    env_lines.append(f"{env_var}={api_key}")
-                    llm_configured = True
+
+            if provider_name == "local":
+                # Local model sub-menu
+                local_result = _setup_local_model(env_path)
+                if local_result:
+                    provider_name, model_name_override, base_url_override, extra_pkg = local_result
+                    llm_configured = True  # local models don't need API keys
+                else:
+                    provider_name = None  # skipped
+            else:
+                # Cloud provider — existing flow
+                if env_var:
+                    api_key = input(f"    {env_var}: ").strip()
+                    if api_key:
+                        env_lines.append(f"{env_var}={api_key}")
+                        llm_configured = True
+
             if extra_pkg:
-                print(f"    Heads up — install the provider:  uv add {extra_pkg}")
+                _is_tool_install = not TMB_ROOT.resolve().is_relative_to(project_root.resolve())
+                if _is_tool_install:
+                    # Auto-install the provider package into the tool environment
+                    pip_pkg = extra_pkg.split("[")[1].rstrip("]")  # "tmb[ollama]" → "ollama"
+                    lang_pkg = f"langchain-{pip_pkg}"
+                    print(f"    Installing {lang_pkg}...")
+                    channel = _detect_install_channel()
+                    if channel == "dev":
+                        from_src = "git+https://github.com/ZaxShen/TMB@dev"
+                    else:
+                        from_src = "trustmybot"
+
+                    _pkg_installed = False
+                    try:
+                        result = subprocess.run(
+                            ["uv", "tool", "install", "--upgrade", "--reinstall",
+                             "--from", from_src, "trustmybot",
+                             "--with", lang_pkg],
+                            capture_output=True, text=True, timeout=180,
+                        )
+                        if result.returncode == 0:
+                            _pkg_installed = True
+                    except Exception:
+                        pass
+
+                    if not _pkg_installed:
+                        # Try uv pip install as a second option
+                        try:
+                            result = subprocess.run(
+                                ["uv", "pip", "install", "--python", sys.executable, lang_pkg],
+                                capture_output=True, text=True, timeout=120,
+                            )
+                            if result.returncode == 0:
+                                _pkg_installed = True
+                        except Exception:
+                            pass
+
+                    if _pkg_installed:
+                        print(f"    ✅ {lang_pkg} installed.")
+                        # The tool venv was reinstalled — the current process can't use it.
+                        # Finish writing config, then tell user to re-run.
+                        _needs_restart = True
+                    else:
+                        print(f"    ⚠️  Couldn't auto-install {lang_pkg}.")
+                        print(f"    Install manually, then re-run bro:")
+                        print(f"      uv tool install --with {lang_pkg} trustmybot")
+                        _needs_restart = True  # Can't continue without the package
+                else:
+                    print(f"    Heads up — install the provider:  uv add {extra_pkg}")
 
         if env_lines:
             env_path.write_text("\n".join(env_lines) + "\n")
@@ -1478,6 +1793,39 @@ def setup():
             load_dotenv(env_path, override=True)
         elif choice != "s":
             print("    No API key entered — set it in .env before running, bro.")
+
+        # Write nodes.yaml with the selected provider
+        if selected and selected[0] != "s" and provider_name:
+            if provider_name in _PROVIDER_DEFAULTS or (model_name_override and base_url_override):
+                defaults = _PROVIDER_DEFAULTS.get(provider_name, {})
+                model_name = model_name_override or defaults.get("name", "")
+                base_url = base_url_override or defaults.get("base_url")
+                planner_model = {"provider": provider_name, "name": model_name, "temperature": 0.3}
+                executor_model = {"provider": provider_name, "name": model_name, "temperature": 0}
+                evolve_model = {"provider": provider_name, "name": model_name, "temperature": 0.3}
+                if base_url:
+                    planner_model["base_url"] = base_url
+                    executor_model["base_url"] = base_url
+                    evolve_model["base_url"] = base_url
+                nodes_cfg = {
+                    "planner": {
+                        "model": planner_model,
+                        "tools": ["file_inspect", "search", "web_search", "skill_create"],
+                    },
+                    "executor": {
+                        "model": executor_model,
+                        "tools": ["shell", "file_read", "file_write", "search", "skill_request"],
+                    },
+                    "evolve": {
+                        "model": evolve_model,
+                        "tools": ["file_read", "file_write", "search", "shell"],
+                    },
+                }
+                nodes_path = user_cfg_dir() / "nodes.yaml"
+                nodes_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(nodes_path, "w") as f:
+                    yaml.dump(nodes_cfg, f, default_flow_style=False, sort_keys=False)
+                print(f"    Saved LLM config → .tmb/config/nodes.yaml")
 
     # ── Project Snapshot ──
     snapshot = _quick_project_snapshot(project_root)
@@ -1580,41 +1928,42 @@ def setup():
     else:
         print("    Skipped — DuckDuckGo fallback it is.")
 
-    # ── Project-level pyproject.toml ─────────────────────────
-    project_toml = project_root / "pyproject.toml"
-    tmb_rel = TMB_ROOT.resolve().relative_to(project_root.resolve())
+    # ── Project-level pyproject.toml (dev installs only) ─────
+    is_local_install = TMB_ROOT.resolve().is_relative_to(project_root.resolve())
 
-    if not project_toml.exists():
-        # Fresh project — create pyproject.toml from scratch
-        print()
-        print("  No pyproject.toml found at project root.")
-        create = input("    Create one with TMB as a dependency? (yes/no) [yes]: ").strip().lower()
-        if create in ("", "yes", "y"):
-            toml_content = (
-                f'[project]\nname = "{name}"\nversion = "0.1.0"\n'
-                f'requires-python = ">=3.13"\n'
-                f'dependencies = [\n'
-                f'    "tmb",\n'
-                f']\n\n'
-                f'[tool.uv]\npackage = false\n\n'
-                f'[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n'
-            )
-            project_toml.write_text(toml_content)
-            print(f"    Wrote {project_toml}")
-            print(f"    Run `uv sync` to install.")
-    else:
-        # Existing project — check if TMB is already a dependency
-        existing = project_toml.read_text()
-        if '"tmb"' not in existing and "'tmb'" not in existing:
+    if is_local_install:
+        project_toml = project_root / "pyproject.toml"
+        tmb_rel = TMB_ROOT.resolve().relative_to(project_root.resolve())
+
+        if not project_toml.exists():
             print()
-            print("  Found existing pyproject.toml — your project is already set up. 👍")
-            print("  TMB is not listed as a dependency yet.")
-            inject = input("    Add TMB as a path dependency? (yes/no) [yes]: ").strip().lower()
-            if inject in ("", "yes", "y"):
-                _inject_tmb_dependency(project_toml, existing, tmb_rel)
+            print("  No pyproject.toml found at project root.")
+            create = input("    Create one with TMB as a dependency? (yes/no) [yes]: ").strip().lower()
+            if create in ("", "yes", "y"):
+                toml_content = (
+                    f'[project]\nname = "{name}"\nversion = "0.1.0"\n'
+                    f'requires-python = ">=3.13"\n'
+                    f'dependencies = [\n'
+                    f'    "tmb",\n'
+                    f']\n\n'
+                    f'[tool.uv]\npackage = false\n\n'
+                    f'[tool.uv.sources]\ntmb = {{ path = "./{tmb_rel}", editable = true }}\n'
+                )
+                project_toml.write_text(toml_content)
+                print(f"    Wrote {project_toml}")
+                print(f"    Run `uv sync` to install.")
         else:
-            print()
-            print("  Found existing pyproject.toml with TMB already wired up. 👍")
+            existing = project_toml.read_text()
+            if '"tmb"' not in existing and "'tmb'" not in existing:
+                print()
+                print("  Found existing pyproject.toml — your project is already set up. 👍")
+                print("  TMB is not listed as a dependency yet.")
+                inject = input("    Add TMB as a path dependency? (yes/no) [yes]: ").strip().lower()
+                if inject in ("", "yes", "y"):
+                    _inject_tmb_dependency(project_toml, existing, tmb_rel)
+            else:
+                print()
+                print("  Found existing pyproject.toml with TMB already wired up. 👍")
 
     dd = docs_dir().name
     print()
@@ -1623,20 +1972,36 @@ def setup():
     print()
     print(f"  Next steps:")
     print(f"    1. Write your goals in {dd}/GOALS.md")
-    print(f"    2. Run: uv run tmb")
+    if is_local_install:
+        print(f"    2. Run: uv run tmb")
+    else:
+        print(f"    2. Run: bro")
     print()
     print(f"  Need Notion, GitHub, Slack, or any other integration?")
     print(f"    No problem — Trust Me Bro, I'll set it up when you need it. 🫡")
-    print(f"    (or configure manually: TMB/ARCHITECTURE.md § MCP Integration)")
+    if is_local_install:
+        print(f"    (or configure manually: TMB/ARCHITECTURE.md § MCP Integration)")
     print()
     print(f"  Advanced settings (retries, roles, prompts, paths):")
-    print(f"    → TMB/ARCHITECTURE.md § Configuration")
+    if is_local_install:
+        print(f"    → TMB/ARCHITECTURE.md § Configuration")
+    else:
+        print(f"    → https://github.com/ZanMax/TMB")
     print()
+
+    if _needs_restart:
+        print()
+        print("  🔄 Please run `bro` again to start working.")
+        print("     (The provider package was installed into a fresh environment.)")
+        print()
+        sys.exit(0)
 
 
 def _is_first_run() -> bool:
     """Detect whether setup has ever been run for this project."""
-    return not (user_cfg_dir() / "project.yaml").exists()
+    cfg = user_cfg_dir()
+    # Check multiple indicators — if ANY config file exists, setup has run
+    return not (cfg / "project.yaml").exists() and not (cfg / "nodes.yaml").exists()
 
 
 def scan():
@@ -1670,14 +2035,251 @@ def _human_bytes(n: int) -> str:
     return f"{n:.1f}TB"
 
 
-def chat():
-    """Interactive chat with the planner — read-only exploration, with optional planning escalation."""
+def _detect_install_channel() -> str:
+    """Detect whether TMB was installed from PyPI (stable) or git (dev).
+
+    Reads PEP 610 direct_url.json from the installed distribution:
+      - Git URL containing '@dev' → "dev"
+      - Anything else (PyPI, editable, unknown) → "stable"
+    """
+    import importlib.metadata
+
+    try:
+        dist = importlib.metadata.distribution("trustmybot")
+        raw = dist.read_text("direct_url.json")
+        if raw:
+            info = json.loads(raw)
+            url = info.get("url", "")
+            vcs = info.get("vcs_info", {})
+            if "github.com" in url and vcs.get("requested_revision") == "dev":
+                return "dev"
+    except Exception:
+        pass
+    return "stable"
+
+
+def upgrade():
+    """Upgrade TMB to the latest version, respecting install channel."""
+    import importlib.metadata
+
+    # Show current version
+    try:
+        current = importlib.metadata.version("trustmybot")
+    except importlib.metadata.PackageNotFoundError:
+        current = "unknown"
+
+    channel = _detect_install_channel()
+
+    print()
+    print(f"  🤙 Trust Me Bro ({channel})")
+    print(f"     Current version: {current}")
+    print()
+
+    # Dev channel: self-upgrade from git
+    if channel == "dev":
+        print("  Upgrading from dev branch...")
+        print()
+        try:
+            result = subprocess.run(
+                ["uv", "tool", "install", "--upgrade", "--reinstall",
+                 "--from", "git+https://github.com/ZaxShen/TMB@dev",
+                 "trustmybot"],
+                capture_output=True, text=True, timeout=180,
+            )
+            if result.returncode == 0:
+                # Get the new version from a fresh process (our importlib cache is stale)
+                new_ver = subprocess.run(
+                    ["bro", "--version"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                new_version = new_ver.stdout.strip() if new_ver.returncode == 0 else None
+                if new_version:
+                    print(f"  ✅ {new_version}")
+                else:
+                    print("  ✅ Upgrade complete.")
+                if current != "unknown" and new_version and current in new_version:
+                    print(f"     (already on latest)")
+            else:
+                print(f"  ⚠️  Upgrade failed: {result.stderr.strip()}")
+                print()
+                print("  Try manually:")
+                print('    uv tool install --upgrade --reinstall --from "git+https://github.com/ZaxShen/TMB@dev" trustmybot')
+        except FileNotFoundError:
+            print("  ⚠️  'uv' not found. Trying pip...")
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "--upgrade",
+                     "trustmybot @ git+https://github.com/ZaxShen/TMB@dev"],
+                    capture_output=True, text=True, timeout=120,
+                )
+                if result.returncode == 0:
+                    print("  ✅ Upgrade complete.")
+                else:
+                    print(f"  ❌ Upgrade failed: {result.stderr.strip()}")
+            except Exception as e:
+                print(f"  ❌ Upgrade failed: {e}")
+        print()
+
+    # Stable channel: show manual instructions
+    else:
+        print("  To upgrade, run one of these:")
+        print()
+        print("    uv tool upgrade trustmybot")
+        print()
+        print("  or:")
+        print()
+        print("    pip install --upgrade trustmybot")
+        print()
+
+
+def _extract_chat_signal(content: str) -> tuple[str | None, str | None, str]:
+    """Parse chat LLM response for action signals.
+
+    Returns (signal_type, signal_value, display_text) where:
+      - signal_type: "command", "quick_task", "plan", or None
+      - signal_value: the extracted content from the tag, or None
+      - display_text: the response with all action tags stripped (for display)
+    """
+    import re
+
+    display = content
+
+    # Check for <run_command>...</run_command>
+    m = re.search(r'<run_command>(.*?)</run_command>', content, re.DOTALL)
+    if m:
+        display = re.sub(r'\s*<run_command>.*?</run_command>\s*', '', content, flags=re.DOTALL).strip()
+        return ("command", m.group(1).strip(), display)
+
+    # Check for <quick_task>...</quick_task>
+    m = re.search(r'<quick_task>(.*?)</quick_task>', content, re.DOTALL)
+    if m:
+        display = re.sub(r'\s*<quick_task>.*?</quick_task>\s*', '', content, flags=re.DOTALL).strip()
+        return ("quick_task", m.group(1).strip(), display)
+
+    # Check for <plan_mode>...</plan_mode>
+    m = re.search(r'<plan_mode>(.*?)</plan_mode>', content, re.DOTALL)
+    if m:
+        display = re.sub(r'\s*<plan_mode>.*?</plan_mode>\s*', '', content, flags=re.DOTALL).strip()
+        return ("plan", m.group(1).strip(), display)
+
+    return (None, None, content)
+
+
+def _dispatch_chat_command(command_str: str, store: Store) -> bool:
+    """Dispatch a built-in command from chat mode.
+
+    Returns True if chat should continue after this command,
+    False if chat should exit (e.g., plan mode).
+    """
+    parts = command_str.strip().split(None, 1)
+    cmd = parts[0].lower() if parts else ""
+    arg = parts[1].strip() if len(parts) > 1 else None
+
+    try:
+        # Read-only commands — run immediately
+        if cmd == "scan":
+            scan()
+        elif cmd == "log":
+            log_history(int(arg) if arg else None)
+        elif cmd == "report":
+            if not arg:
+                print("[TMB] Usage: report <issue_id>")
+                return True
+            report(int(arg))
+        elif cmd == "tokens":
+            tokens(int(arg) if arg else None)
+        elif cmd == "version":
+            import importlib.metadata
+            try:
+                v = importlib.metadata.version("trustmybot")
+            except importlib.metadata.PackageNotFoundError:
+                v = "dev"
+            print(f"Trust Me Bro v{v}")
+
+        # Interactive commands — confirm first
+        elif cmd == "setup":
+            try:
+                confirm = input("[TMB] Run setup? (y/n): ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                return True
+            if confirm in ("y", "yes"):
+                setup()
+        elif cmd == "upgrade":
+            try:
+                confirm = input("[TMB] Check for upgrades? (y/n): ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                return True
+            if confirm in ("y", "yes"):
+                upgrade()
+        elif cmd == "plan":
+            try:
+                confirm = input("[TMB] Switch to plan mode? (y/n): ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                return True
+            if confirm in ("y", "yes"):
+                plan()
+                return False  # Exit chat after plan
+        else:
+            print(f"[TMB] Unknown command: {cmd}")
+    except (ValueError, TypeError) as e:
+        print(f"[TMB] Invalid argument: {e}")
+
+    return True  # Continue chat
+
+
+def _prefill_goals_and_plan(store: Store, goals_summary: str, session_id: str):
+    """Write goals from chat escalation to GOALS.md, then start the plan workflow.
+
+    This is the SOLE EXCEPTION where TMB writes user content to GOALS.md.
+    Normally GOALS.md is written only by the human. This exception exists because
+    chat-to-plan escalation needs to transfer the conversation context.
+    """
+    goals_path = docs_dir() / "GOALS.md"
+
+    # Check for existing non-template content
+    if goals_path.exists():
+        existing = goals_path.read_text().strip()
+        # Strip template boilerplate to check for real content
+        cleaned = re.sub(r"<!--.*?-->", "", existing, flags=re.DOTALL).strip()
+        cleaned = re.sub(
+            r"^# Goals\s*\n+Write your goals.*?---\s*",
+            "", cleaned, flags=re.DOTALL,
+        ).strip()
+        if cleaned:
+            try:
+                confirm = input(
+                    "[TMB] GOALS.md has existing content. Overwrite? (y/n): "
+                ).strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                print("\n[TMB] Aborted. Your GOALS.md was not changed.")
+                return
+            if confirm not in ("y", "yes"):
+                print("[TMB] Keeping existing GOALS.md. Update it manually, then run `bro plan`.")
+                return
+
+    goals_path.parent.mkdir(parents=True, exist_ok=True)
+    goals_path.write_text(f"# Goals\n\n{goals_summary}\n")
+    print(f"[TMB] Goals written to {goals_path}")
+
+    # Log escalation
+    store.log_chat(session_id, "system", f"Escalated to plan mode — GOALS.md prefilled")
+
+    plan()
+
+
+def chat(initial_message: str | None = None):
+    """Interactive chat — the intelligent front door to all bro functionality."""
     import uuid
     from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
     from tmb.config import get_llm, load_prompt, extract_token_usage
     from tmb.tools import get_tools_for_node
 
+    if _is_first_run():
+        print("[TMB] First time? Let's get you set up, bro.\n")
+        setup()
+
+    _check_llm_config()
     ensure_dirs()
     store = Store()
     project_root = str(get_project_root())
@@ -1694,12 +2296,16 @@ def chat():
     messages = [SystemMessage(content=system_prompt)]
 
     planner_display = get_role_name("planner").upper()
-    print(f"[TMB] 💬 Chat mode — session {session_id}")
+    print(f"[TMB] Chat mode — session {session_id}")
     print(f"[TMB] Type your questions. Press Ctrl+C or type 'exit' to quit.\n")
 
     while True:
         try:
-            user_input = input(f"[you] ").strip()
+            if initial_message is not None:
+                user_input = initial_message
+                initial_message = None
+            else:
+                user_input = input(f"[you] ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\n[TMB] Chat ended.")
             break
@@ -1710,6 +2316,7 @@ def chat():
         store.log_chat(session_id, "user", user_input)
         messages.append(HumanMessage(content=user_input))
 
+        # Tool loop — let LLM use file_inspect/search before responding
         for _ in range(10):
             response = llm_with_tools.invoke(messages)
             messages.append(response)
@@ -1734,6 +2341,7 @@ def chat():
                         tool_call_id=tc["id"],
                     ))
 
+        # Normalize content
         content = response.content
         if isinstance(content, list):
             content = "\n".join(
@@ -1741,45 +2349,76 @@ def chat():
                 for block in content
             )
 
+        # Parse for action signals
+        signal_type, signal_value, display_text = _extract_chat_signal(content)
+
+        # Log and display (always show the clean display_text)
         store.log_chat(session_id, "assistant", content)
-        print(f"\n[{planner_display}] {content}\n")
+        if display_text:
+            print(f"\n[{planner_display}] {display_text}\n")
 
-        if re.search(r"ready to plan\?", content, re.IGNORECASE):
+        # Handle action signals
+        if signal_type == "command" and signal_value:
+            if not _dispatch_chat_command(signal_value, store):
+                break  # Command signaled exit (e.g., plan mode)
+
+        elif signal_type == "quick_task" and signal_value:
             try:
-                confirm = input("[TMB] Escalate to planning? (y/n): ").strip().lower()
+                confirm = input("[TMB] Run this task? (y/n): ").strip().lower()
             except (KeyboardInterrupt, EOFError):
-                print("\n[TMB] Chat ended.")
-                break
+                print("\n[TMB] Skipped.")
+                continue
             if confirm in ("y", "yes"):
-                chat_history = store.get_chat_history(session_id)
-                summary_parts = []
-                for msg in chat_history:
-                    prefix = "User" if msg["role"] == "user" else "Planner"
-                    summary_parts.append(f"{prefix}: {msg['content']}")
-                chat_summary = "\n".join(summary_parts[-20:])
+                print("[TMB] Working on it...\n")
+                _quick_task(store, signal_value)
+                print()  # Blank line after task output
+                # Add task result context to chat
+                messages.append(HumanMessage(
+                    content="[system] The task has been executed. Continue chatting."
+                ))
 
-                instruction = (
-                    f"Based on the following chat discussion, plan and execute:\n\n"
-                    f"{chat_summary}"
-                )
-
-                issue_id = store.create_issue(
-                    instruction[:120].strip(), instruction,
-                )
-                store.mark_chat_escalated(session_id, issue_id)
-                store.log_chat(session_id, "system", f"Escalated to issue #{issue_id}")
-
-                print(f"\n[TMB] 🚀 Created issue #{issue_id} from chat — starting planning...")
-                print("-" * 40)
-                _quick_task(store, instruction)
+        elif signal_type == "plan" and signal_value:
+            try:
+                confirm = input("[TMB] Switch to plan mode? (y/n): ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                print("\n[TMB] Staying in chat.")
+                continue
+            if confirm in ("y", "yes"):
+                _prefill_goals_and_plan(store, signal_value, session_id)
                 break
 
 
-def run():
-    """Phase-aware entry point: resumes an open issue or starts fresh."""
-    if _is_first_run():
-        print("[TMB] First time? Let's get you set up, bro.\n")
-        setup()
+def _check_llm_config():
+    """Verify the LLM config will actually work before making any calls.
+
+    Catches the case where a user upgraded from an older version that didn't
+    write nodes.yaml during setup — they'd silently fall back to Anthropic
+    with no API key and crash.
+    """
+    import os
+    from tmb.config import load_nodes_config, _PROVIDERS
+
+    nodes_yaml = user_cfg_dir() / "nodes.yaml"
+    if nodes_yaml.exists():
+        return  # User has explicit config — trust it
+
+    # No nodes.yaml → using defaults (Anthropic). Check if that'll work.
+    try:
+        cfg = load_nodes_config()
+        provider = cfg.get("planner", {}).get("model", {}).get("provider", "anthropic")
+        _, _, env_var = _PROVIDERS.get(provider, (None, None, None))
+        if env_var and not os.environ.get(env_var):
+            print(f"[TMB] ⚠️  No LLM configured — no {env_var} found and no nodes.yaml.")
+            print(f"[TMB]    Run `bro setup` to pick your LLM provider.")
+            print()
+            setup()
+    except Exception:
+        pass
+
+
+def plan():
+    """Full planning workflow invoked via `bro plan`: resumes an open issue or starts fresh."""
+    _check_llm_config()
 
     ensure_dirs()
     store = Store()
@@ -1893,15 +2532,24 @@ def tokens(issue_id: int | None = None):
     print()
 
 
-_KNOWN_COMMANDS = {"setup", "log", "report", "tokens", "serve", "evolve", "chat", "scan", "help", "--help", "-h"}
+_KNOWN_COMMANDS = {"setup", "log", "report", "tokens", "serve", "evolve", "chat", "plan", "scan", "upgrade", "uninstall", "version", "help", "--help", "-h", "--version", "-v"}
 
 
 def main():
     if len(sys.argv) == 1:
-        run()
+        chat()
         return
 
     cmd = sys.argv[1]
+
+    if cmd in ("version", "--version", "-v"):
+        import importlib.metadata
+        try:
+            v = importlib.metadata.version("trustmybot")
+        except importlib.metadata.PackageNotFoundError:
+            v = "dev"
+        print(f"Trust Me Bro v{v}")
+        return
 
     if cmd == "setup":
         setup()
@@ -1925,8 +2573,21 @@ def main():
         _evolve(store, instruction)
     elif cmd == "chat":
         chat()
+    elif cmd == "plan":
+        plan()
     elif cmd == "scan":
         scan()
+    elif cmd == "upgrade":
+        upgrade()
+    elif cmd == "uninstall":
+        print()
+        print("  To uninstall Trust Me Bro:")
+        print()
+        print("    uv tool uninstall trustmybot")
+        print()
+        print("  This removes the bro/bot/tmb commands.")
+        print("  Your project files (bro/, .tmb/, .env) are untouched.")
+        print()
     elif cmd == "serve":
         from tmb.mcp.server import run_server
         if "--http" in sys.argv:
@@ -1938,23 +2599,27 @@ def main():
             run_server(transport="stdio")
     elif cmd not in _KNOWN_COMMANDS:
         instruction = " ".join(sys.argv[1:])
-        store = Store()
-        _quick_task(store, instruction)
+        chat(initial_message=instruction)
     else:
         print("TMB — AI Direction & Execution")
         print()
         print("Usage:")
-        print("  tmb                               Full workflow (reads bro/GOALS.md)")
-        print('  tmb "update FLOWCHART"             Quick task (full pipeline)')
-        print('  tmb evolve "instruction"           Self-evolution (modify TMB)')
-        print("  tmb setup                          Interactive project setup")
-        print("  tmb chat                           Interactive chat with the planner")
-        print("  tmb scan                           Scan project for TMB context")
-        print("  tmb log                            Show recent issues")
-        print("  tmb log <id>                       Show issue details + ledger")
-        print("  tmb report <id>                    Export full report as markdown")
-        print("  tmb tokens                         Show token usage across all issues")
-        print("  tmb tokens <id>                    Show token usage for one issue")
-        print("  tmb serve                          Start MCP server (stdio)")
-        print("  tmb serve --http 8080              Start MCP server (HTTP)")
+        print("  bro                               Chat mode (default — ask anything)")
+        print("  bro plan                          Full planning workflow (reads bro/GOALS.md)")
+        print("  bro chat                          Chat mode (explicit)")
+        print('  bro evolve "instruction"           Self-evolution (modify TMB)')
+        print("  bro setup                          Interactive project setup")
+        print("  bro scan                           Scan project for TMB context")
+        print("  bro log                            Show recent issues")
+        print("  bro log <id>                       Show issue details + ledger")
+        print("  bro report <id>                    Export full report as markdown")
+        print("  bro tokens                         Show token usage across all issues")
+        print("  bro tokens <id>                    Show token usage for one issue")
+        print("  bro serve                          Start MCP server (stdio)")
+        print("  bro serve --http 8080              Start MCP server (HTTP)")
+        print("  bro upgrade                        Upgrade to latest version")
+        print("  bro uninstall                      Uninstall instructions")
+        print("  bro version                        Show current version")
+        print()
+        print("  Tip: just type `bro` and ask — chat can run any command for you.")
         sys.exit(1)

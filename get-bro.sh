@@ -36,7 +36,7 @@ fi
 if [ "$CHANNEL" = "stable" ]; then
     echo "  Installing trustmybot (stable from PyPI)..."
     if ! uv tool install --upgrade trustmybot; then
-        echo "  ERROR: Failed to install trustmybot."
+        echo "  ERROR: Failed to install trustmybot from PyPI."
         exit 1
     fi
 else

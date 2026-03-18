@@ -4,7 +4,7 @@ set -eu
 # ── Channel ──────────────────────────────────────────────
 # "stable" = PyPI release   (main branch)
 # "dev"    = latest dev      (dev branch, installed from git)
-CHANNEL="dev"
+CHANNEL="stable"
 
 echo
 echo "  🤙  Installing Trust My Bot ($CHANNEL)..."

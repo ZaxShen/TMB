@@ -153,7 +153,25 @@ class TestProviderRegistration:
 # ── TestSetupMenu ─────────────────────────────────────────────────────────────
 
 class TestSetupMenu:
-    """Verify that the CLI setup menu includes Claude Code support."""
+    """Verify that the CLI setup menu structure and provider defaults."""
+
+    def test_three_category_menu(self):
+        """Setup menu has 3 top-level categories: Desktop, LLM API, Local."""
+        import tmb.cli as cli_mod
+        import inspect
+        source = inspect.getsource(cli_mod)
+        assert "Desktop coding tool" in source, "'Desktop coding tool' not in setup menu"
+        assert "LLM API" in source, "'LLM API' not in setup menu"
+        assert "Local model" in source, "'Local model' not in setup menu"
+
+    def test_api_sub_menu_exists(self):
+        """_setup_api_provider function exists with Vercel option."""
+        import tmb.cli as cli_mod
+        import inspect
+        source = inspect.getsource(cli_mod)
+        assert "_setup_api_provider" in source, "_setup_api_provider function not found"
+        assert "Vercel" in source, "'Vercel' not in API sub-menu"
+        assert "api.vercel.ai" in source, "'api.vercel.ai' not in API sub-menu"
 
     def test_claude_code_in_menu(self):
         """'Claude Code' and 'claude_code' must both appear in cli.py source."""
@@ -173,3 +191,35 @@ class TestSetupMenu:
         with patch("shutil.which", return_value=None) as mock_which:
             result = shutil.which("claude")
         assert not result  # falsy — CLI not found
+
+    def test_provider_defaults_model_split(self):
+        """_PROVIDER_DEFAULTS uses planner_name/executor_name, not just name."""
+        import tmb.cli as cli_mod
+        import inspect
+        source = inspect.getsource(cli_mod)
+        assert "planner_name" in source, "'planner_name' not in _PROVIDER_DEFAULTS"
+        assert "executor_name" in source, "'executor_name' not in _PROVIDER_DEFAULTS"
+        # Anthropic should have different planner/executor
+        assert "claude-sonnet-4-6" in source, "Anthropic planner model missing"
+        assert "claude-haiku-3-5" in source, "Anthropic executor model missing"
+        # OpenAI should have different planner/executor
+        assert "gpt-4o-mini" in source, "OpenAI executor model missing"
+
+
+# ── TestChatIdentity ─────────────────────────────────────────────────────────
+
+class TestChatIdentity:
+    """Verify chat mode identity and prompt."""
+
+    def test_chat_prompt_has_tmb_identity(self):
+        """Chat system prompt must contain 'Trust Me Bro' identity."""
+        from tmb.config import load_prompt
+        prompt = load_prompt("chat")
+        assert "Trust Me Bro" in prompt, "'Trust Me Bro' not found in chat prompt"
+
+    def test_chat_display_name_is_bro(self):
+        """chat() uses 'BRO' as display name, not 'PLANNER'."""
+        import tmb.cli as cli_mod
+        import inspect
+        source = inspect.getsource(cli_mod.chat)
+        assert 'planner_display = "BRO"' in source, "chat() should use 'BRO' display name"

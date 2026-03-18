@@ -81,3 +81,4 @@ evolve:
 #     temperature: 0.3
 #     base_url: http://localhost:11434
 #     timeout: 300  # seconds per LLM call (recommended for local models)
+#     num_gpu: 1    # GPU layers (auto-detected if omitted; 0 = CPU only)

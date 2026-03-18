@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import xml.etree.ElementTree as ET
 
 logger = logging.getLogger("tmb.planner")
@@ -274,6 +275,15 @@ EXPLORE_INSTRUCTION = (
     "5. **File formats encountered** — list every data/config format the project uses\n"
 )
 
+CLASSIFY_INSTRUCTION = (
+    "Does this task require reading or modifying the project's source code or files?\n"
+    "Answer ONLY 'yes' or 'no'.\n\n"
+    "YES examples: fix a bug, add a feature, refactor code, update config, "
+    "change tests, analyze data files, modify a script\n"
+    "NO examples: write an email, draft a document, summarize something, "
+    "brainstorm ideas, answer a question, create text content"
+)
+
 SKILL_PROVISION_INSTRUCTION = (
     "You have just explored the codebase. Now **provision skills** that the "
     "{role_executor} will need.\n\n"
@@ -530,12 +540,38 @@ def _planner_plan_impl(state: AgentState) -> dict:
     project_context = state.get("project_context", "")
     discussion = state.get("discussion", "")
     token_accum = TokenAccumulator()
+    start_time = time.monotonic()
 
     is_replan = bool(feedback)
 
+    # ── 0a. Classify task — does it need codebase exploration? ────
+    needs_codebase = True  # default: explore (safe fallback)
+    if tools and not is_replan:
+        classify_parts = [f"## Task\n{objective}"]
+        if discussion:
+            classify_parts.append(f"## Discussion Context\n{discussion[:500]}")
+        classify_parts.append(CLASSIFY_INSTRUCTION)
+
+        classify_resp = safe_llm_invoke(llm, [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content="\n\n".join(classify_parts)),
+        ], label="classify")
+        usage = extract_token_usage(classify_resp)
+        token_accum.add(usage)
+
+        answer = _normalize_content(classify_resp.content).strip().lower()
+        if "no" in answer and "yes" not in answer:
+            needs_codebase = False
+            print(f"[{planner_display}] 📝 Non-code task detected — skipping codebase exploration.")
+            store.log(issue_id, None, "planner", "exploration_skipped", {
+                "reason": "task_classification_no_code",
+            }, summary="Skipped exploration — non-code task")
+        else:
+            print(f"[{planner_display}] 💻 Code task detected — will explore codebase.")
+
     # ── 0. Explore the codebase ──────────────────────────────
     exploration_summary = ""
-    if tools and not is_replan:
+    if tools and not is_replan and needs_codebase:
         print(f"[{planner_display}] 🔍 Exploring codebase...")
         explore_parts = []
         if project_context:
@@ -570,17 +606,21 @@ def _planner_plan_impl(state: AgentState) -> dict:
             token_accum.add(usage)
             exploration_summary = _normalize_content(summary_resp.content)
 
-        store.log(issue_id, None, "planner", "codebase_explored", {
+        explore_elapsed = time.monotonic() - start_time
+        tool_count = sum(1 for m in explore_messages if hasattr(m, 'tool_call_id'))
+        store.log(issue_id, None, "planner", "exploration_complete", {
             "summary_length": len(exploration_summary),
-        }, summary="Explored codebase structure and key modules")
-        print(f"[{planner_display}] 🔍 Exploration complete ({len(exploration_summary)} chars)")
+            "elapsed_seconds": round(explore_elapsed),
+            "tool_calls": tool_count,
+        }, summary=f"Exploration complete: {tool_count} tool calls in {explore_elapsed:.0f}s")
+        print(f"[{planner_display}] 🔍 Exploration complete — {tool_count} tool calls in {explore_elapsed:.0f}s")
     elif is_replan:
         print(f"[{planner_display}] 🔄 Re-planning based on feedback...")
     else:
         print(f"[{planner_display}] 📋 Building blueprint from discussion...")
 
     # ── 0a. Skill provisioning ────────────────────────────────
-    if tools and not is_replan:
+    if tools and not is_replan and needs_codebase:
         available_skills = store.get_all_skills()
         existing_names = {s["name"] for s in available_skills}
         skill_section = ""
@@ -766,7 +806,7 @@ def _planner_plan_impl(state: AgentState) -> dict:
         HumanMessage(content="\n\n".join(parts)),
     ]
 
-    print(f"[{planner_display}] 📋 Generating blueprint...")
+    print(f"[{planner_display}] 📋 Generating blueprint... (waiting for LLM response)")
     response, messages = _run_tool_loop(
         llm_with_tools, messages, tool_map, 5, label="blueprint",
         token_accum=token_accum,
@@ -846,7 +886,12 @@ def _planner_plan_impl(state: AgentState) -> dict:
         exploration_summary, issue_id, store, token_accum, planner_display,
     )
 
-    print(f"[{planner_display}] ✅ Planning complete: {len(blueprint)} tasks")
+    total_elapsed = time.monotonic() - start_time
+    print(f"[{planner_display}] ✅ Planning complete: {len(blueprint)} tasks in {total_elapsed:.0f}s")
+    store.log(issue_id, None, "planner", "blueprint_generated", {
+        "task_count": len(blueprint),
+        "total_elapsed_seconds": round(total_elapsed),
+    }, summary=f"Blueprint: {len(blueprint)} tasks in {total_elapsed:.0f}s")
     store.log_tokens(issue_id, "planner", token_accum.input_tokens, token_accum.output_tokens)
 
     return {

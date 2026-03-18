@@ -30,19 +30,26 @@ _MAX_FILE_PREVIEW = 3000
 
 def _get_tree(root: Path, max_depth: int = 3) -> str:
     try:
+        cmd = [
+            "find", str(root),
+            "-maxdepth", str(max_depth),
+            "-not", "-path", "*/.git/*",
+            "-not", "-path", "*/.git",
+            "-not", "-path", "*/__pycache__/*",
+            "-not", "-path", "*/.venv/*",
+            "-not", "-path", "*/node_modules/*",
+            "-not", "-path", "*/.mypy_cache/*",
+            "-not", "-name", "*.pyc",
+            "-not", "-name", "uv.lock",
+        ]
+
+        # Add user-configured exclude patterns from project.yaml
+        exclude_patterns = load_project_config().get("exclude", [])
+        for pattern in exclude_patterns:
+            cmd.extend(["-not", "-path", f"*/{pattern}"])
+
         result = subprocess.run(
-            [
-                "find", str(root),
-                "-maxdepth", str(max_depth),
-                "-not", "-path", "*/.git/*",
-                "-not", "-path", "*/.git",
-                "-not", "-path", "*/__pycache__/*",
-                "-not", "-path", "*/.venv/*",
-                "-not", "-path", "*/node_modules/*",
-                "-not", "-path", "*/.mypy_cache/*",
-                "-not", "-name", "*.pyc",
-                "-not", "-name", "uv.lock",
-            ],
+            cmd,
             capture_output=True, text=True, timeout=10,
         )
         lines = sorted(result.stdout.strip().splitlines())

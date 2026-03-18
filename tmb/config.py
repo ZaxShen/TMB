@@ -176,6 +176,37 @@ _PROVIDERS: dict[str, tuple[str, str, str | None]] = {
 }
 
 
+def _detect_gpu_layers() -> int:
+    """Auto-detect GPU availability for Ollama.
+
+    Returns:
+        1 if GPU detected (Apple Silicon MPS or NVIDIA CUDA), 0 for CPU-only.
+    """
+    import platform
+    import shutil
+    import subprocess
+
+    # macOS: Apple Silicon has MPS (Metal Performance Shaders)
+    if platform.system() == "Darwin":
+        if platform.machine() == "arm64":
+            return 1  # Apple Silicon — MPS available
+        return 0  # Intel Mac — no MPS
+
+    # Linux/Windows: check for NVIDIA GPU via nvidia-smi
+    if shutil.which("nvidia-smi"):
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return 1  # NVIDIA GPU available
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+    return 0  # No GPU detected
+
+
 def get_llm(node_name: str):
     """Instantiate the LLM for a given node based on config/nodes.yaml.
 
@@ -222,6 +253,13 @@ def get_llm(node_name: str):
         else:
             # ChatAnthropic, ChatOpenAI, and most others accept `timeout`
             kwargs["timeout"] = timeout
+
+    # Auto-detect or use configured GPU layers for Ollama
+    if provider == "ollama":
+        num_gpu = cfg.get("num_gpu")
+        if num_gpu is None:
+            num_gpu = _detect_gpu_layers()
+        kwargs["num_gpu"] = num_gpu
 
     return cls(**kwargs)
 

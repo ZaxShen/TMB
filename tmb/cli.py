@@ -16,6 +16,11 @@ Usage:
 
 from __future__ import annotations
 
+# Suppress Pydantic V1 compat warning on Python 3.14+
+# (LangChain's transitive deps still use pydantic.v1 — harmless until they migrate)
+import warnings
+warnings.filterwarnings("ignore", message=".*Pydantic V1.*")
+
 import difflib
 import hashlib
 import json
@@ -1511,6 +1516,19 @@ def _setup_ollama(env_path) -> "tuple[str, str, str, str | None] | None":
 
     base_url = "http://localhost:11434"
     extra_pkg = "tmb[ollama]"
+
+    # Show GPU detection
+    from tmb.config import _detect_gpu_layers
+    import platform
+    gpu_layers = _detect_gpu_layers()
+    if gpu_layers > 0:
+        if platform.system() == "Darwin":
+            print("    GPU: Apple Silicon (MPS) detected — GPU acceleration enabled")
+        else:
+            print("    GPU: NVIDIA GPU detected — CUDA acceleration enabled")
+    else:
+        print("    GPU: No GPU detected — running on CPU")
+    print()
 
     # Try to connect to Ollama
     try:

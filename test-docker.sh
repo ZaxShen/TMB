@@ -9,6 +9,8 @@ set -euo pipefail
 
 CHANNEL="${1:-dev}"
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 cat <<'DOCKERFILE' > /tmp/bro-test.Dockerfile
 FROM debian:bookworm-slim
 
@@ -19,20 +21,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Nothing else — no Python, no uv, no pip
 # get-bro.sh should handle everything
 
-ARG CHANNEL=dev
-RUN curl -LsSf "https://raw.githubusercontent.com/ZaxShen/TMB/${CHANNEL}/get-bro.sh" | sh
+# Ensure uv/tool binaries are in PATH across all layers and docker run
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Use local get-bro.sh for testing (not the remote one on GitHub)
+COPY get-bro.sh /tmp/get-bro.sh
+RUN sh /tmp/get-bro.sh
 
 RUN mkdir /project && cd /project && git init
 
+# Verify all three aliases work
+RUN bro --version && bot --version && tmb --version
+
 WORKDIR /project
 DOCKERFILE
+
+# Copy local get-bro.sh to build context
+cp "${SCRIPT_DIR}/get-bro.sh" /tmp/get-bro.sh
 
 echo
 echo "  🧪 Building test image (${CHANNEL} channel)..."
 echo
 
 docker build \
-    --build-arg "CHANNEL=${CHANNEL}" \
+    --no-cache \
     -t "bro-test-${CHANNEL}" \
     -f /tmp/bro-test.Dockerfile \
     /tmp

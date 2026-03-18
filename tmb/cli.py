@@ -1437,18 +1437,53 @@ def _inject_tmb_dependency(toml_path: Path, content: str, tmb_rel: Path | None) 
 # ── Local model setup helpers ─────────────────────────────────────────────
 
 
+def _verify_ollama_model(base_url: str, model_name: str) -> bool:
+    """Verify an Ollama model exists and responds. Quick ping with tiny prompt."""
+    import urllib.request
+    import urllib.error
+
+    print(f"    Verifying {model_name}...")
+    try:
+        payload = json.dumps({"model": model_name, "prompt": "hi", "stream": False}).encode()
+        req = urllib.request.Request(
+            f"{base_url}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode())
+            if "error" in data:
+                print(f"    ❌ Model error: {data['error']}")
+                return False
+            print(f"    ✅ {model_name} is working.")
+            return True
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read().decode())
+            print(f"    ❌ {body.get('error', f'HTTP {e.code}')}")
+        except Exception:
+            print(f"    ❌ Ollama returned HTTP {e.code}")
+        return False
+    except (urllib.error.URLError, ConnectionError, OSError):
+        print(f"    ❌ Can't reach Ollama at {base_url}")
+        return False
+    except Exception as e:
+        print(f"    ❌ Verification failed: {e}")
+        return False
+
+
 def _pick_ollama_model() -> str:
     """Show recommended model menu and return the chosen model name."""
     print("    Recommended models:")
-    print("      1) llama3.2:8b        (default — good all-rounder)")
+    print("      1) llama3.1:8b        (default — good all-rounder)")
     print("      2) deepseek-r1:7b     (reasoning focused)")
     print("      3) qwen3:8b           (open-source, multilingual)")
     print("      4) Enter custom name")
     choice = input("    Choice [1]: ").strip() or "1"
-    _options = {"1": "llama3.2:8b", "2": "deepseek-r1:7b", "3": "qwen3:8b"}
+    _options = {"1": "llama3.1:8b", "2": "deepseek-r1:7b", "3": "qwen3:8b"}
     if choice == "4":
-        return input("    Model name: ").strip() or "llama3.2:8b"
-    return _options.get(choice, "llama3.2:8b")
+        return input("    Model name: ").strip() or "llama3.1:8b"
+    return _options.get(choice, "llama3.1:8b")
 
 
 def _ollama_pull(model_name: str):
@@ -1502,10 +1537,13 @@ def _setup_ollama(env_path) -> "tuple[str, str, str, str | None] | None":
 
     if not models:
         print("    Ollama is running but has no models.")
-        print()
-        model_name = _pick_ollama_model()
-        _ollama_pull(model_name)
-        return ("ollama", model_name, base_url, extra_pkg)
+        while True:
+            print()
+            model_name = _pick_ollama_model()
+            _ollama_pull(model_name)
+            if _verify_ollama_model(base_url, model_name):
+                return ("ollama", model_name, base_url, extra_pkg)
+            print("    Model verification failed. Let's try another.")
 
     # Show available models
     print()
@@ -1516,10 +1554,13 @@ def _setup_ollama(env_path) -> "tuple[str, str, str, str | None] | None":
     model_choice = input(f"    Pick a model [1]: ").strip() or "1"
 
     if model_choice.lower() == "p":
-        print()
-        model_name = _pick_ollama_model()
-        _ollama_pull(model_name)
-        return ("ollama", model_name, base_url, extra_pkg)
+        while True:
+            print()
+            model_name = _pick_ollama_model()
+            _ollama_pull(model_name)
+            if _verify_ollama_model(base_url, model_name):
+                return ("ollama", model_name, base_url, extra_pkg)
+            print("    Model verification failed. Let's try another.")
 
     try:
         idx = int(model_choice) - 1
@@ -1527,8 +1568,18 @@ def _setup_ollama(env_path) -> "tuple[str, str, str, str | None] | None":
     except (ValueError, IndexError):
         selected_model = models[0]
 
-    print(f"    ✅ Using: {selected_model}")
-    return ("ollama", selected_model, base_url, extra_pkg)
+    if _verify_ollama_model(base_url, selected_model):
+        return ("ollama", selected_model, base_url, extra_pkg)
+
+    # Existing model failed verification — let user pick another
+    print("    Model verification failed. Let's try another.")
+    while True:
+        print()
+        model_name = _pick_ollama_model()
+        _ollama_pull(model_name)
+        if _verify_ollama_model(base_url, model_name):
+            return ("ollama", model_name, base_url, extra_pkg)
+        print("    Model verification failed. Let's try another.")
 
 
 def _setup_local_model(env_path) -> "tuple[str, str, str, str | None] | None":
@@ -1618,7 +1669,7 @@ def setup():
         "groq":      {"name": "llama-3.3-70b-versatile", "temperature": 0.3},
         "mistral":   {"name": "mistral-large-latest", "temperature": 0.3},
         "deepseek":  {"name": "deepseek-chat", "temperature": 0.3},
-        "ollama":    {"name": "llama3.2:8b", "temperature": 0.3, "base_url": "http://localhost:11434"},
+        "ollama":    {"name": "llama3.1:8b", "temperature": 0.3, "base_url": "http://localhost:11434"},
     }
 
     env_path = project_root / ".env"

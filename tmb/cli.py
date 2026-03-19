@@ -2046,101 +2046,278 @@ def _human_bytes(n: int) -> str:
     return f"{n:.1f}TB"
 
 
-def _detect_install_channel() -> str:
-    """Detect whether TMB was installed from PyPI (stable) or git (dev).
+def _detect_install_info() -> dict:
+    """Detect how TMB was installed: channel, branch, and package manager method.
 
-    Reads PEP 610 direct_url.json from the installed distribution:
-      - Git URL containing '@dev' → "dev"
-      - Anything else (PyPI, editable, unknown) → "stable"
+    Returns a dict with keys:
+      - "channel": "brew" | "git" | "editable" | "stable"
+      - "branch": str | None  (set for git channel only)
+      - "method": "brew" | "uv_tool" | "pip" | "editable"
+
+    Detection order:
+      1. Homebrew (brew list trustmybot)
+      2. PEP 610 direct_url.json (vcs_info → git, dir_info editable → editable)
+      3. Fallback → stable
     """
     import importlib.metadata
+    import shutil
 
+    # 1. Homebrew check
+    try:
+        brew_check = subprocess.run(
+            ["brew", "list", "trustmybot"],
+            capture_output=True, timeout=5,
+        )
+        if brew_check.returncode == 0:
+            return {"channel": "brew", "branch": None, "method": "brew"}
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+        pass
+
+    # 2. PEP 610 direct_url.json
     try:
         dist = importlib.metadata.distribution("trustmybot")
         raw = dist.read_text("direct_url.json")
         if raw:
             info = json.loads(raw)
-            url = info.get("url", "")
-            vcs = info.get("vcs_info", {})
-            if "github.com" in url and vcs.get("requested_revision") == "dev":
-                return "dev"
+            vcs_info = info.get("vcs_info", {})
+            dir_info = info.get("dir_info", {})
+            if vcs_info:
+                branch = vcs_info.get("requested_revision", "unknown")
+                method = "uv_tool" if shutil.which("uv") else "pip"
+                return {"channel": "git", "branch": branch, "method": method}
+            if dir_info.get("editable"):
+                return {"channel": "editable", "branch": None, "method": "editable"}
     except Exception:
         pass
-    return "stable"
+
+    # 3. Fallback → stable
+    method = "uv_tool" if shutil.which("uv") else "pip"
+    return {"channel": "stable", "branch": None, "method": method}
 
 
-def upgrade():
+def _upgrade_stable(method: str) -> bool:
+    """Run the stable-channel upgrade command. Returns True on success."""
+    try:
+        if method == "uv_tool":
+            result = subprocess.run(
+                ["uv", "tool", "upgrade", "trustmybot"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode != 0:
+                # Older uv fallback
+                result = subprocess.run(
+                    ["uv", "tool", "install", "--upgrade", "--force", "trustmybot"],
+                    capture_output=True, text=True, timeout=120,
+                )
+        elif method == "pip":
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--upgrade", "trustmybot"],
+                capture_output=True, text=True, timeout=120,
+            )
+        else:
+            return False
+        if result.returncode != 0:
+            print(f"  Upgrade failed: {result.stderr[:200]}")
+            return False
+        return True
+    except FileNotFoundError:
+        # uv not found, fall back to pip
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--upgrade", "trustmybot"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode != 0:
+                print(f"  Upgrade failed: {result.stderr[:200]}")
+                return False
+            return True
+        except Exception as e:
+            print(f"  Upgrade failed: {e}")
+            return False
+    except subprocess.TimeoutExpired:
+        print("  Upgrade timed out.")
+        return False
+    except Exception as e:
+        print(f"  Upgrade failed: {e}")
+        return False
+
+
+def _print_upgrade_result(current: str) -> None:
+    """Check new version after upgrade and print result."""
+    try:
+        new_ver = subprocess.run(
+            ["bro", "--version"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if new_ver.returncode == 0:
+            raw = new_ver.stdout.strip()
+            # Parse "Trust Me Bro vX.Y.Z" → "X.Y.Z"
+            import re as _re
+            m = _re.search(r'v(\d+\.\d+\.\d+)', raw)
+            new_version = m.group(1) if m else raw
+            if new_version == current:
+                print("  Already on the latest version.")
+            else:
+                print(f"  Updated to v{new_version}")
+        else:
+            print("  Upgrade complete.")
+    except Exception:
+        print("  Upgrade complete.")
+    print()
+
+
+def upgrade(force_stable: bool = False):
     """Upgrade TMB to the latest version, respecting install channel."""
     import importlib.metadata
 
-    # Show current version
     try:
         current = importlib.metadata.version("trustmybot")
     except importlib.metadata.PackageNotFoundError:
         current = "unknown"
 
-    channel = _detect_install_channel()
+    info = _detect_install_info()
+    channel = info["channel"]
+    branch = info["branch"]
+    method = info["method"]
 
     print()
-    print(f"  🤙 Trust Me Bro ({channel})")
-    print(f"     Current version: {current}")
+    print(f"  Trust Me Bro v{current}")
     print()
 
-    # Dev channel: self-upgrade from git
-    if channel == "dev":
-        print("  Upgrading from dev branch...")
-        print()
+    # Stable / Brew / force_stable path
+    if force_stable or channel in ("stable", "brew"):
+        print("  Upgrading...")
+        success = False
+        if method == "brew":
+            try:
+                result = subprocess.run(
+                    ["brew", "upgrade", "trustmybot"],
+                    capture_output=True, text=True, timeout=120,
+                )
+                success = result.returncode == 0
+                if not success:
+                    print(f"  Upgrade failed: {result.stderr[:200]}")
+            except FileNotFoundError:
+                print("  brew not found. Trying uv...")
+                success = _upgrade_stable("uv_tool")
+            except subprocess.TimeoutExpired:
+                print("  Upgrade timed out.")
+            except Exception as e:
+                print(f"  Upgrade failed: {e}")
+        else:
+            success = _upgrade_stable(method)
+        if success:
+            _print_upgrade_result(current)
+        return
+
+    # Git channel path
+    if channel == "git":
+        print(f"  Upgrading from {branch} branch...")
         try:
             result = subprocess.run(
                 ["uv", "tool", "install", "--upgrade", "--reinstall",
-                 "--from", "git+https://github.com/ZaxShen/TMB@dev",
+                 "--from", f"git+https://github.com/ZaxShen/TMB@{branch}",
                  "trustmybot"],
                 capture_output=True, text=True, timeout=180,
             )
             if result.returncode == 0:
-                # Get the new version from a fresh process (our importlib cache is stale)
-                new_ver = subprocess.run(
-                    ["bro", "--version"],
-                    capture_output=True, text=True, timeout=10,
-                )
-                new_version = new_ver.stdout.strip() if new_ver.returncode == 0 else None
-                if new_version:
-                    print(f"  ✅ {new_version}")
+                _print_upgrade_result(current)
+                return
+            # Check if branch is gone
+            stderr_lower = result.stderr.lower()
+            if any(kw in stderr_lower for kw in ("branch", "not found", "fetch")):
+                print(f"  Branch '{branch}' is no longer available.")
+                try:
+                    answer = input("  Switch to stable? [Y/n] ").strip()
+                except (KeyboardInterrupt, EOFError):
+                    print()
+                    print("  Cancelled.")
+                    return
+                if answer == "" or answer.lower().startswith("y"):
+                    success = _upgrade_stable(method)
+                    if success:
+                        _print_upgrade_result(current)
                 else:
-                    print("  ✅ Upgrade complete.")
-                if current != "unknown" and new_version and current in new_version:
-                    print(f"     (already on latest)")
-            else:
-                print(f"  ⚠️  Upgrade failed: {result.stderr.strip()}")
-                print()
-                print("  Try manually:")
-                print('    uv tool install --upgrade --reinstall --from "git+https://github.com/ZaxShen/TMB@dev" trustmybot')
+                    print("  Upgrade cancelled.")
+                return
+            # Other failure
+            print(f"  Upgrade failed: {result.stderr[:200]}")
+            print(f"  Try manually:")
+            print(f"    uv tool install --upgrade --reinstall --from git+https://github.com/ZaxShen/TMB@{branch} trustmybot")
+            print()
         except FileNotFoundError:
-            print("  ⚠️  'uv' not found. Trying pip...")
-            try:
-                result = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "--upgrade",
-                     "trustmybot @ git+https://github.com/ZaxShen/TMB@dev"],
-                    capture_output=True, text=True, timeout=120,
-                )
-                if result.returncode == 0:
-                    print("  ✅ Upgrade complete.")
-                else:
-                    print(f"  ❌ Upgrade failed: {result.stderr.strip()}")
-            except Exception as e:
-                print(f"  ❌ Upgrade failed: {e}")
-        print()
+            print("  'uv' not found. Trying pip...")
+            success = _upgrade_stable("pip")
+            if success:
+                _print_upgrade_result(current)
+        except subprocess.TimeoutExpired:
+            print("  Upgrade timed out.")
+            print()
+        except Exception as e:
+            print(f"  Upgrade failed: {e}")
+            print()
+        return
 
-    # Stable channel: show manual instructions
-    else:
-        print("  To upgrade, run one of these:")
+    # Editable install
+    if channel == "editable":
+        print("  You're running a development install. Use 'git pull' to update.")
         print()
-        print("    uv tool upgrade trustmybot")
+        return
+
+
+def uninstall():
+    """Uninstall Trust Me Bro, using the appropriate method for the install channel."""
+    info = _detect_install_info()
+    channel = info["channel"]
+    method = info["method"]
+
+    print()
+    print("  Uninstalling Trust Me Bro...")
+    print("  This removes the bro, bot, and tmb commands.")
+    print("  Your project files are untouched.")
+    print()
+
+    try:
+        answer = input("  Continue? [y/N] ").strip()
+    except (KeyboardInterrupt, EOFError):
         print()
-        print("  or:")
-        print()
-        print("    pip install --upgrade trustmybot")
-        print()
+        print("  Cancelled.")
+        return
+
+    if not (answer.lower().startswith("y")):
+        print("  Cancelled.")
+        return
+
+    if channel == "editable":
+        print("  Dev install — remove it with: pip uninstall trustmybot")
+        return
+
+    try:
+        if method == "brew":
+            subprocess.run(
+                ["brew", "uninstall", "trustmybot"],
+                capture_output=True, text=True, timeout=120,
+            )
+            # Also remove uv tool entry if present (suppress errors)
+            subprocess.run(
+                ["uv", "tool", "uninstall", "trustmybot"],
+                capture_output=True, text=True, timeout=30,
+            )
+        elif method == "uv_tool":
+            subprocess.run(
+                ["uv", "tool", "uninstall", "trustmybot"],
+                capture_output=True, text=True, timeout=120,
+            )
+        else:
+            subprocess.run(
+                ["pip", "uninstall", "-y", "trustmybot"],
+                capture_output=True, text=True, timeout=120,
+            )
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
+        print(f"  Uninstall error: {e}")
+        return
+
+    print("  Uninstalled. Thanks for using Trust Me Bro!")
 
 
 def _extract_chat_signal(content: str) -> tuple[str | None, str | None, str]:
@@ -2601,16 +2778,10 @@ def main():
     elif cmd == "scan":
         scan()
     elif cmd == "upgrade":
-        upgrade()
+        force_stable = "--stable" in sys.argv
+        upgrade(force_stable=force_stable)
     elif cmd == "uninstall":
-        print()
-        print("  To uninstall Trust Me Bro:")
-        print()
-        print("    uv tool uninstall trustmybot")
-        print()
-        print("  This removes the bro/bot/tmb commands.")
-        print("  Your project files (bro/, .tmb/, .env) are untouched.")
-        print()
+        uninstall()
     elif cmd == "serve":
         from tmb.mcp.server import run_server
         if "--http" in sys.argv:

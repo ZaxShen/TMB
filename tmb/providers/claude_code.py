@@ -88,7 +88,11 @@ class ChatClaudeCode(BaseChatModel):
         """Run the Claude Code CLI and return a ChatResult."""
         system_prompt, user_prompt = self._format_messages(messages)
 
-        cmd: list[str] = ["claude", "-p", user_prompt, "--output-format", "json"]
+        cmd: list[str] = [
+            "claude", "-p", user_prompt,
+            "--output-format", "json",
+            "--permission-mode", "bypassPermissions",
+        ]
 
         if system_prompt:
             cmd += ["--append-system-prompt", system_prompt]

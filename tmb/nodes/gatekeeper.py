@@ -63,9 +63,15 @@ def _get_tree(root: Path, max_depth: int = 3) -> str:
 
 def _read_key_files(root: Path) -> str:
     sections = []
+    seen: set[str] = set()
     for name in _KEY_FILES:
         path = root / name
+        # Deduplicate on case-insensitive filesystems (macOS)
+        key = name.lower()
+        if key in seen:
+            continue
         if path.is_file():
+            seen.add(key)
             try:
                 content = path.read_text()[:_MAX_FILE_PREVIEW]
                 sections.append(f"--- {name} ---\n{content}")

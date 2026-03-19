@@ -41,7 +41,10 @@ def get_role_name(key: str) -> str:
 
 def _role_template_vars() -> dict[str, str]:
     """Build template variables for prompt substitution."""
-    return {f"role_{k}": get_role_name(k) for k in _DEFAULT_ROLE_NAMES}
+    vars = {f"role_{k}": get_role_name(k) for k in _DEFAULT_ROLE_NAMES}
+    cfg = load_project_config()
+    vars["project_purpose"] = cfg.get("purpose", "")
+    return vars
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -107,6 +110,10 @@ def load_prompt(name: str) -> str:
 
     for var, display in _role_template_vars().items():
         text = text.replace(f"{{{var}}}", display)
+
+    # Clean up blank lines left by empty template vars (e.g. no project_purpose)
+    while "\n\n\n" in text:
+        text = text.replace("\n\n\n", "\n\n")
 
     return text
 

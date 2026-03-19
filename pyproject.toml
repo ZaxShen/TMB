@@ -1,6 +1,6 @@
 [project]
 name = "trustmybot"
-version = "0.5.3"
+version = "0.5.6"
 description = "Multi-agent workflow engine for industrial-grade software projects: Project Owner → Planner → Executor → Validator."
 readme = "README.md"
 license = "AGPL-3.0-only"

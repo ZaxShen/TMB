@@ -1932,23 +1932,12 @@ def setup():
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
     print(f"    Saved config → {config_path}")
 
-    # Generate or copy tailored prompts based on detected preset + project snapshot
-    prompt_source = purpose or (snapshot["is_empty"] == "False")
-    if prompt_source and llm_configured:
-        print()
-        print("  === Cooking up custom prompts... 🧪 ===")
-        generated = _generate_prompts(purpose or name, preset=detected_preset, snapshot=snapshot)
-        if not generated:
-            # LLM generation failed — fall back to copying the sample
-            if _copy_sample_prompts(detected_preset):
-                print(f"    Used {detected_preset} sample as base — still solid. 📋")
-            else:
-                print("    No worries, using defaults. Re-run `tmb setup` anytime to retry.")
-    elif prompt_source:
-        # No LLM available — copy the matched sample directly
+    # Copy sample prompts if a matching preset was detected (no LLM call — fast)
+    if detected_preset != "generic":
         if _copy_sample_prompts(detected_preset):
             print(f"    Copied {detected_preset} prompts → .tmb/prompts/ 📋")
-            print("    Hook up an API key and re-run `tmb setup` for fully custom ones.")
+        else:
+            print("    Using default prompts.")
 
     goals_path = docs_dir() / "GOALS.md"
     if not goals_path.exists():
@@ -1960,23 +1949,8 @@ def setup():
         )
         print(f"    Created {goals_path}")
 
-    # ── Web Search ────────────────────────────────────────────
-    print()
-    print("  === Web Search ===")
-    print()
-    print("    Your bro can Google stuff while planning.")
-    print("    Tavily (tavily.com) gives the best results — free tier: 1K searches/month.")
-    print("    Without a key, DuckDuckGo is used as fallback. Still works, just less sharp.")
-    print()
-    tavily_key = input("    TAVILY_API_KEY (Enter to skip): ").strip()
-    if tavily_key:
-        existing_env = env_path.read_text() if env_path.exists() else ""
-        if "TAVILY_API_KEY" not in existing_env:
-            with open(env_path, "a") as f:
-                f.write(f"\nTAVILY_API_KEY={tavily_key}\n")
-            print("    Added Tavily key to .env — search game strong. 🔍")
-    else:
-        print("    Skipped — DuckDuckGo fallback it is.")
+    # Web search uses DuckDuckGo by default (no key needed).
+    # Power users can add TAVILY_API_KEY to .env for better results.
 
     # ── Project-level pyproject.toml (dev installs only) ─────
     is_local_install = TMB_ROOT.resolve().is_relative_to(project_root.resolve())

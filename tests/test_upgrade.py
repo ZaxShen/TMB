@@ -133,7 +133,7 @@ class TestUpgrade:
     def test_upgrade_stable_uv(self, capsys):
         """Stable/uv_tool: runs uv tool upgrade trustmybot."""
         uv_result = _mock_run_result(returncode=0)
-        ver_result = _mock_run_result(returncode=0, stdout="Trust Me Bro v0.5.7")
+        ver_result = _mock_run_result(returncode=0, stdout="Trust My Bot v0.5.7")
 
         with patch("tmb.cli._detect_install_info", return_value={"channel": "stable", "branch": None, "method": "uv_tool"}), \
              patch("importlib.metadata.version", return_value="0.5.6"), \
@@ -146,7 +146,7 @@ class TestUpgrade:
     def test_upgrade_brew(self, capsys):
         """Brew channel: runs brew upgrade trustmybot."""
         brew_result = _mock_run_result(returncode=0)
-        ver_result = _mock_run_result(returncode=0, stdout="Trust Me Bro v0.5.7")
+        ver_result = _mock_run_result(returncode=0, stdout="Trust My Bot v0.5.7")
 
         with patch("tmb.cli._detect_install_info", return_value={"channel": "brew", "branch": None, "method": "brew"}), \
              patch("importlib.metadata.version", return_value="0.5.6"), \
@@ -159,7 +159,7 @@ class TestUpgrade:
     def test_upgrade_git_dev(self, capsys):
         """Git/dev: runs uv tool install from git+...@dev."""
         git_result = _mock_run_result(returncode=0)
-        ver_result = _mock_run_result(returncode=0, stdout="Trust Me Bro v0.5.7")
+        ver_result = _mock_run_result(returncode=0, stdout="Trust My Bot v0.5.7")
 
         with patch("tmb.cli._detect_install_info", return_value={"channel": "git", "branch": "dev", "method": "uv_tool"}), \
              patch("importlib.metadata.version", return_value="0.5.6"), \
@@ -172,7 +172,7 @@ class TestUpgrade:
     def test_upgrade_force_stable_overrides_git(self, capsys):
         """force_stable=True: runs stable upgrade even when channel is git."""
         uv_result = _mock_run_result(returncode=0)
-        ver_result = _mock_run_result(returncode=0, stdout="Trust Me Bro v0.5.7")
+        ver_result = _mock_run_result(returncode=0, stdout="Trust My Bot v0.5.7")
 
         with patch("tmb.cli._detect_install_info", return_value={"channel": "git", "branch": "dev", "method": "uv_tool"}), \
              patch("importlib.metadata.version", return_value="0.5.6"), \
@@ -196,7 +196,7 @@ class TestUpgrade:
     def test_upgrade_shows_current_version(self, capsys):
         """Output includes the current version number."""
         uv_result = _mock_run_result(returncode=0)
-        ver_result = _mock_run_result(returncode=0, stdout="Trust Me Bro v0.5.7")
+        ver_result = _mock_run_result(returncode=0, stdout="Trust My Bot v0.5.7")
 
         with patch("tmb.cli._detect_install_info", return_value={"channel": "stable", "branch": None, "method": "uv_tool"}), \
              patch("importlib.metadata.version", return_value="0.5.6"), \
@@ -209,7 +209,7 @@ class TestUpgrade:
     def test_upgrade_already_latest(self, capsys):
         """Same version before/after → 'Already on the latest version'."""
         uv_result = _mock_run_result(returncode=0)
-        ver_result = _mock_run_result(returncode=0, stdout="Trust Me Bro v0.5.6")
+        ver_result = _mock_run_result(returncode=0, stdout="Trust My Bot v0.5.6")
 
         with patch("tmb.cli._detect_install_info", return_value={"channel": "stable", "branch": None, "method": "uv_tool"}), \
              patch("importlib.metadata.version", return_value="0.5.6"), \
@@ -223,7 +223,7 @@ class TestUpgrade:
         """Git branch deleted → prompts user → switches to stable."""
         fail_result = _mock_run_result(returncode=1, stderr="failed to fetch branch")
         uv_result = _mock_run_result(returncode=0)
-        ver_result = _mock_run_result(returncode=0, stdout="Trust Me Bro v0.5.7")
+        ver_result = _mock_run_result(returncode=0, stdout="Trust My Bot v0.5.7")
 
         with patch("tmb.cli._detect_install_info", return_value={"channel": "git", "branch": "feature-x", "method": "uv_tool"}), \
              patch("importlib.metadata.version", return_value="0.5.6"), \

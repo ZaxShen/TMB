@@ -2151,7 +2151,7 @@ def _print_upgrade_result(current: str) -> None:
         )
         if new_ver.returncode == 0:
             raw = new_ver.stdout.strip()
-            # Parse "Trust Me Bro vX.Y.Z" → "X.Y.Z"
+            # Parse "Trust My Bot vX.Y.Z" → "X.Y.Z"
             import re as _re
             m = _re.search(r'v(\d+\.\d+\.\d+)', raw)
             new_version = m.group(1) if m else raw
@@ -2181,7 +2181,7 @@ def upgrade(force_stable: bool = False):
     method = info["method"]
 
     print()
-    print(f"  Trust Me Bro v{current}")
+    print(f"  Trust My Bot v{current}")
     print()
 
     # Stable / Brew / force_stable path
@@ -2266,13 +2266,13 @@ def upgrade(force_stable: bool = False):
 
 
 def uninstall():
-    """Uninstall Trust Me Bro, using the appropriate method for the install channel."""
+    """Uninstall Trust My Bot, using the appropriate method for the install channel."""
     info = _detect_install_info()
     channel = info["channel"]
     method = info["method"]
 
     print()
-    print("  Uninstalling Trust Me Bro...")
+    print("  Uninstalling Trust My Bot...")
     print("  This removes the bro, bot, and tmb commands.")
     print("  Your project files are untouched.")
     print()
@@ -2317,7 +2317,7 @@ def uninstall():
         print(f"  Uninstall error: {e}")
         return
 
-    print("  Uninstalled. Thanks for using Trust Me Bro!")
+    print("  Uninstalled. Thanks for using Trust My Bot!")
 
 
 def _extract_chat_signal(content: str) -> tuple[str | None, str | None, str]:
@@ -2382,7 +2382,7 @@ def _dispatch_chat_command(command_str: str, store: Store) -> bool:
                 v = importlib.metadata.version("trustmybot")
             except importlib.metadata.PackageNotFoundError:
                 v = "dev"
-            print(f"Trust Me Bro v{v}")
+            print(f"Trust My Bot v{v}")
 
         # Interactive commands — confirm first
         elif cmd == "setup":
@@ -2748,7 +2748,7 @@ def main():
             v = importlib.metadata.version("trustmybot")
         except importlib.metadata.PackageNotFoundError:
             v = "dev"
-        print(f"Trust Me Bro v{v}")
+        print(f"Trust My Bot v{v}")
         return
 
     if cmd == "setup":

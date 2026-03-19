@@ -120,7 +120,22 @@ def _read_owner_answer(path) -> str:
     if _ANSWER_MARKER not in content:
         return ""
     answer = content.split(_ANSWER_MARKER, 1)[1].strip()
-    return answer
+    if not answer:
+        return ""
+    # Strip instruction remnants that editors may displace below the marker
+    _INSTRUCTION_PHRASES = ["write your answer", "do not edit", "save the file"]
+    lines = answer.split("\n")
+    cleaned = []
+    for line in lines:
+        stripped = line.strip()
+        # Skip displaced blockquote instructions
+        if stripped.startswith(">") and any(p in stripped.lower() for p in _INSTRUCTION_PHRASES):
+            continue
+        # Skip displaced "## Your Answer" header
+        if stripped == "## Your Answer":
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()
 
 
 def _has_questions(message: str) -> bool:
@@ -131,6 +146,37 @@ def _has_questions(message: str) -> bool:
     # Question marks (at least one)
     if '?' in message:
         return True
+    return False
+
+
+# Patterns that indicate the planner is ready to build (fallback beyond exact signal)
+_READY_PATTERNS = [
+    r"trust\s+me\s+bro",                                      # partial signal
+    r"(?:ready|going)\s+to\s+(?:build|create|write)\s+(?:the\s+)?(?:blueprint|plan)",
+    r"proceed\s+(?:to|with)\s+(?:the\s+)?(?:blueprint|build|execution|plan)",
+    r"let['\u2019]?s\s+(?:get\s+)?build(?:ing)?\b",
+    r"hand\s+(?:this\s+)?(?:off\s+)?to\s+the\s+executor",
+    r"kick\s+(?:it|this|things)\s+off",
+    r"shall\s+(?:i|we)\s+(?:go\s+ahead|proceed|start|build)",
+    r"want\s+me\s+to\s+(?:go\s+ahead|proceed|start|kick|build)",
+    r"fully\s+aligned",
+    r"i['\u2019]?(?:ve| have)\s+(?:got\s+)?(?:the\s+)?full\s+picture",
+]
+
+
+def _is_ready_to_build(message: str) -> bool:
+    """Detect if the planner is signaling readiness to build the blueprint.
+
+    Primary: exact _READY_SIGNAL phrase.
+    Fallback: common readiness patterns from LLM paraphrasing.
+    """
+    upper = message.upper()
+    if _READY_SIGNAL in upper:
+        return True
+    lower = message.lower()
+    for pattern in _READY_PATTERNS:
+        if re.search(pattern, lower):
+            return True
     return False
 
 
@@ -299,7 +345,7 @@ def _run_discussion_impl(goals_md: str, project_context: str, store: Store, issu
 
             print(f"\n[{planner_display}]:\n{planner_msg}")
 
-            if _READY_SIGNAL in planner_msg.upper():
+            if _is_ready_to_build(planner_msg):
                 rounds = len(store.get_discussions(issue_id))
                 store.log(issue_id, None, "planner", "discussion_complete", {
                     "rounds": rounds,
@@ -325,7 +371,7 @@ def _run_discussion_impl(goals_md: str, project_context: str, store: Store, issu
                     auto_response = "Please finalize your analysis and say TRUST ME BRO, LET'S BUILD."
                 else:
                     print(f"  [DISCUSSION] No questions — proceeding automatically.")
-                    auto_response = "No questions to answer. Proceed with your best judgment."
+                    auto_response = "Continue."
 
                 store.add_discussion(issue_id, "owner", auto_response)
                 messages.append(HumanMessage(content=auto_response))

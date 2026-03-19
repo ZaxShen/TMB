@@ -2190,8 +2190,18 @@ def upgrade(force_stable: bool = False):
         success = False
         if method == "brew":
             try:
+                # Refresh tap so brew sees the latest formula
+                subprocess.run(
+                    ["brew", "update"],
+                    capture_output=True, text=True, timeout=120,
+                )
                 result = subprocess.run(
                     ["brew", "upgrade", "trustmybot"],
+                    capture_output=True, text=True, timeout=120,
+                )
+                # Brew wrapper delegates to uv tool — also upgrade that
+                subprocess.run(
+                    ["uv", "tool", "upgrade", "trustmybot"],
                     capture_output=True, text=True, timeout=120,
                 )
                 success = result.returncode == 0

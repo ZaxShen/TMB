@@ -144,17 +144,19 @@ class TestUpgrade:
         assert first_call == ["uv", "tool", "upgrade", "trustmybot"]
 
     def test_upgrade_brew(self, capsys):
-        """Brew channel: runs brew upgrade trustmybot."""
-        brew_result = _mock_run_result(returncode=0)
+        """Brew channel: runs brew update, brew upgrade, then uv tool upgrade."""
+        ok_result = _mock_run_result(returncode=0)
         ver_result = _mock_run_result(returncode=0, stdout="Trust My Bot v0.5.7")
 
         with patch("tmb.cli._detect_install_info", return_value={"channel": "brew", "branch": None, "method": "brew"}), \
              patch("importlib.metadata.version", return_value="0.5.6"), \
-             patch("tmb.cli.subprocess.run", side_effect=[brew_result, ver_result]) as mock_run:
+             patch("tmb.cli.subprocess.run", side_effect=[ok_result, ok_result, ok_result, ver_result]) as mock_run:
             upgrade()
 
-        first_call = mock_run.call_args_list[0][0][0]
-        assert first_call == ["brew", "upgrade", "trustmybot"]
+        calls = [c[0][0] for c in mock_run.call_args_list]
+        assert ["brew", "update"] in calls
+        assert ["brew", "upgrade", "trustmybot"] in calls
+        assert ["uv", "tool", "upgrade", "trustmybot"] in calls
 
     def test_upgrade_git_dev(self, capsys):
         """Git/dev: runs uv tool install from git+...@dev."""

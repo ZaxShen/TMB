@@ -125,6 +125,16 @@ class TestChatClaudeCode:
         tool_calls = getattr(result, "tool_calls", [])
         assert not tool_calls
 
+    def test_permission_mode_bypass(self):
+        """CLI command must include --permission-mode bypassPermissions for non-interactive use."""
+        llm = ChatClaudeCode()
+        with patch("subprocess.run", return_value=_make_completed_process()) as mock_run:
+            llm.invoke([HumanMessage(content="Hi")])
+        cmd = mock_run.call_args[0][0]
+        assert "--permission-mode" in cmd
+        idx = cmd.index("--permission-mode")
+        assert cmd[idx + 1] == "bypassPermissions"
+
 
 # ── TestProviderRegistration ──────────────────────────────────────────────────
 
